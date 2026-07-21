@@ -8,6 +8,9 @@ infrastructure lives in ``src.api.{security,models,helpers,state}``.
 
 from __future__ import annotations
 
+import faulthandler
+faulthandler.enable(file=open("/tmp/vibe-fault.log", "w"), all_threads=True)
+
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -126,15 +129,20 @@ from src.api.scheduled_routes import (  # noqa: E402
 
 async def _run_startup_preflight() -> None:
     """Run preflight checks on server startup."""
-    from src.preflight import run_preflight
-
     from src.config import migrate as _migrate
 
     try:
         _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
     except Exception:  # pragma: no cover — best-effort
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
-    run_preflight(console)
+    # Local fix: preflight SIGBUS on Apple Silicon (yfinance/fast_info) — keep
+    # the upstream preflight on other platforms.
+    if not (_sys.platform == "darwin" and _sys.machine() == "arm64"):
+        from src.preflight import run_preflight
+
+        run_preflight(console)
+    else:
+        logging.getLogger(__name__).warning("Preflight skipped on Apple Silicon (yfinance fast_info SIGBUS)")
     _start_scheduled_research_executor()
     from src.config.accessor import get_env_config
 
@@ -183,6 +191,12 @@ app.middleware("http")(_apply_security_headers)
 
 
 # Route registration + re-exports
+
+# Register this module as "api_server" so route modules can resolve
+# shared dependencies via sys.modules (covers both ``python -m api_server``
+# and ``python api_server.py`` where it is loaded as ``__main__``).
+import sys as _sys_api  # noqa: E402
+_sys_api.modules.setdefault("api_server", _sys_api.modules[__name__])
 
 # --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
@@ -387,7 +401,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info", loop="asyncio")
     finally:
         if vite_proc:
             vite_proc.terminate()

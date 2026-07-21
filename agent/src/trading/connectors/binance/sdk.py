@@ -98,6 +98,7 @@ class BinanceConfig:
     testnet_host: str = DEFAULT_TESTNET_HOST
     timeout: float = 15.0
     readonly: bool = True
+    proxy: str = ""
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None = None) -> "BinanceConfig":
@@ -113,6 +114,7 @@ class BinanceConfig:
             testnet_host=str(payload.get("testnet_host") or DEFAULT_TESTNET_HOST).strip(),
             timeout=float(payload.get("timeout") or 15.0),
             readonly=bool(payload.get("readonly", True)),
+            proxy=str(payload.get("proxy") or "").strip(),
         )
 
     def with_overrides(
@@ -628,14 +630,15 @@ def _symbol_required_errors() -> tuple[type[BaseException], ...]:
 def _exchange(cfg: BinanceConfig):
     """Build a ccxt ``binance`` client bound to the configured environment."""
     ccxt = _require_ccxt()
-    ex = ccxt.binance(
-        {
-            "apiKey": cfg.api_key,
-            "secret": cfg.api_secret,
-            "enableRateLimit": True,
-            "timeout": int(cfg.timeout * 1000),
-        }
-    )
+    config: dict[str, Any] = {
+        "apiKey": cfg.api_key,
+        "secret": cfg.api_secret,
+        "enableRateLimit": True,
+        "timeout": int(cfg.timeout * 1000),
+    }
+    if cfg.proxy:
+        config["proxies"] = {"https": cfg.proxy, "http": cfg.proxy}
+    ex = ccxt.binance(config)
     ex.set_sandbox_mode(cfg.is_testnet)
     return ex
 
