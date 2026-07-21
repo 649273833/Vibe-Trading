@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -742,14 +743,19 @@ def register_sessions_routes(app: FastAPI) -> None:
 
         try:
             import weasyprint
-            pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+            font_config = _weasyprint_font_config()
+            doc = weasyprint.HTML(string=html).render(font_config=font_config)
+            pdf_bytes = doc.write_pdf()
+            safe_name = re.sub(r"[\\/:*?\"<>|]", "_", title)[:80]
+            filename = safe_name if safe_name else "chat_export"
+            encoded = f"attachment; filename*=UTF-8''{urllib.parse.quote(filename)}.pdf"
             return Response(
                 content=pdf_bytes,
                 media_type="application/pdf",
-                headers={"Content-Disposition": f'attachment; filename="chat_export.pdf"'},
+                headers={"Content-Disposition": encoded},
             )
         except Exception:
-            pass
+            logger.warning("PDF export via weasyprint failed, falling back to HTML", exc_info=True)
 
         html_bytes = html.encode("utf-8")
         return Response(
@@ -832,66 +838,192 @@ def register_sessions_routes(app: FastAPI) -> None:
         )
 
 
+def _weasyprint_font_config():
+    """Build a FontConfiguration for PDF export with CJK font support."""
+    from weasyprint.text.fonts import FontConfiguration
+
+    return FontConfiguration()
+
+
 def _markdown_to_html(md: str, title: str) -> str:
-    """Convert chat export markdown to styled HTML for PDF/mobile viewing."""
-    escaped = md.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    lines = escaped.split("\n")
-    out: list[str] = []
-    in_para = False
+    """Convert chat export markdown to styled HTML for PDF/mobile viewing.
 
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("# ") and not stripped.startswith("## "):
-            if in_para:
-                out.append("</p>")
-                in_para = False
-            out.append(f'<h1>{stripped[2:]}</h1>')
-        elif stripped.startswith("## "):
-            if in_para:
-                out.append("</p>")
-                in_para = False
-            out.append(f'<h2>{stripped[3:]}</h2>')
-        elif stripped.startswith("> "):
-            if in_para:
-                out.append("</p>")
-                in_para = False
-            out.append(f'<blockquote>{stripped[2:]}</blockquote>')
-        elif stripped == "":
-            if in_para:
-                out.append("</p>")
-                in_para = False
+    Uses Python-Markdown with GFM extensions to match the frontend's
+    react-markdown + remark-gfm + rehype-highlight rendering pipeline.
+    """
+    import hashlib
+
+    import markdown as _markdown
+
+    # ------------------------------------------------------------------
+    # Phase 1 — protect math blocks so the markdown parser leaves them alone
+    # ------------------------------------------------------------------
+    _MATH_PLACEHOLDER = "%%MATH_{}%%"
+    _math_blocks: dict[str, str] = {}
+
+    def _stash_math(m: re.Match) -> str:
+        uid = hashlib.md5(m.group(0).encode()).hexdigest()[:8]
+        key = _MATH_PLACEHOLDER.format(uid)
+        _math_blocks[key] = m.group(0)
+        return key
+
+    # Display math: $$...$$ or \[...\]
+    protected = re.sub(r"(\$\$[\s\S]+?\$\$)", _stash_math, md)
+    protected = re.sub(r"(\\\[[\s\S]+?\\\])", _stash_math, protected)
+    # Inline math: $...$ (but not $$ which is handled above)
+    protected = re.sub(r"(?<!\$)\$(?!\$)([^$]+?)\$(?!\$)", _stash_math, protected)
+
+    # ------------------------------------------------------------------
+    # Phase 2 — convert markdown → HTML (tables, code highlight, lists…)
+    # ------------------------------------------------------------------
+    extensions = [
+        "markdown.extensions.tables",
+        "markdown.extensions.fenced_code",
+        "markdown.extensions.codehilite",
+        "pymdownx.highlight",
+        "pymdownx.superfences",
+        "pymdownx.tilde",
+        "pymdownx.tasklist",
+    ]
+    ext_configs = {
+        "pymdownx.highlight": {
+            "linenums": False,
+            "guess_lang": True,
+            "noclasses": False,
+        },
+        "pymdownx.superfences": {},
+        "pymdownx.tasklist": {"custom_checkbox": True, "clickable_checkbox": False},
+    }
+
+    body = _markdown.markdown(protected, extensions=extensions, extension_configs=ext_configs)
+
+    # ------------------------------------------------------------------
+    # Phase 3 — restore math blocks as styled <code>/<pre> wrappers
+    # ------------------------------------------------------------------
+    for key, content in _math_blocks.items():
+        content = content.strip()
+        if content.startswith("$$") or content.startswith("\\["):
+            # Display math → block-level
+            body = body.replace(key, f'<pre class="math-block">{_escape_html(content)}</pre>')
         else:
-            if not in_para:
-                out.append("<p>")
-                in_para = True
-            out.append(stripped)
-            out.append("<br>")
-    if in_para:
-        out.append("</p>")
+            # Inline math
+            body = body.replace(key, f'<code class="math-inline">{_escape_html(content)}</code>')
 
-    body = "\n".join(out)
-    # Handle inline code (backticks)
-    body = re.sub(r"`([^`]+)`", r"<code>\1</code>", body)
-    # Handle bold (**text**)
-    body = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", body)
-
+    # ------------------------------------------------------------------
+    # Phase 4 — build the final HTML document
+    # ------------------------------------------------------------------
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
+<title>{_escape_html(title)}</title>
 <style>
-  body {{ font-family: -apple-system, "PingFang SC", "Noto Sans", sans-serif; max-width: 720px; margin: 0 auto; padding: 24px 16px; color: #1a1a1a; line-height: 1.7; font-size: 15px; }}
+  /* ---- CJK font stack ---- */
+  @font-face {{
+    font-family: 'CJK';
+    src: local('PingFang SC'), local('Heiti SC'), local('STHeitiSC-Light'),
+         local('Hiragino Sans GB'), local('Microsoft YaHei'),
+         local('Noto Sans CJK SC'), local('WenQuanYi Micro Hei'),
+         local('Arial Unicode MS'), local('SimHei');
+  }}
+  body {{
+    font-family: 'CJK', -apple-system, "PingFang SC", "Noto Sans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    max-width: 720px; margin: 0 auto; padding: 24px 16px;
+    color: #1a1a1a; line-height: 1.7; font-size: 15px;
+  }}
   h1 {{ font-size: 22px; border-bottom: 2px solid #e5e5e5; padding-bottom: 8px; }}
   h2 {{ font-size: 17px; margin-top: 28px; color: #333; }}
+  h3 {{ font-size: 15px; margin-top: 22px; color: #444; }}
+  h4, h5, h6 {{ font-size: 14px; margin-top: 18px; color: #555; }}
   p {{ margin: 8px 0; }}
-  blockquote {{ background: #f5f5f5; border-left: 3px solid #6366f1; margin: 10px 0; padding: 8px 14px; color: #555; font-size: 14px; }}
-  code {{ background: #eee; padding: 1px 5px; border-radius: 4px; font-size: 13px; }}
+  a {{ color: #6366f1; text-decoration: underline; }}
+
+  /* ---- Blockquotes ---- */
+  blockquote {{
+    background: #f5f5f5; border-left: 3px solid #6366f1;
+    margin: 10px 0; padding: 8px 14px; color: #555; font-size: 14px;
+  }}
+  blockquote p {{ margin: 4px 0; }}
+
+  /* ---- Code ---- */
+  code, pre, pre code, .math-block, .math-inline {{
+    font-family: "PingFang SC", "Heiti SC", "Hiragino Sans GB", "Menlo", "SF Mono", "Monaco", "Cascadia Code", "Consolas", "Courier New", monospace;
+  }}
+  code {{
+    background: #f0f0f0; padding: 1px 5px; border-radius: 4px;
+    font-size: 13px; word-break: break-word;
+  }}
+  pre {{
+    background: #f8f8f8; border: 1px solid #e5e5e5; border-radius: 8px;
+    padding: 12px 16px; overflow-x: auto; font-size: 13px;
+    line-height: 1.5; margin: 12px 0;
+  }}
+  pre code {{ background: none; padding: 0; font-size: inherit; }}
+
+  /* ---- Math ---- */
+  pre.math-block {{
+    background: #fafafa; border-left: 3px solid #a78bfa;
+    font-family: "SF Mono", "Cascadia Code", "Menlo", monospace;
+    font-size: 13px; color: #555;
+  }}
+  code.math-inline {{
+    background: #f5f3ff; color: #6d28d9; font-size: 13px;
+  }}
+
+  /* ---- Tables ---- */
+  table {{
+    width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px;
+  }}
+  thead {{ background: #f5f5f5; }}
+  th {{
+    border: 1px solid #ddd; padding: 8px 12px;
+    text-align: left; font-weight: 600;
+  }}
+  td {{
+    border: 1px solid #ddd; padding: 6px 12px;
+  }}
+  tr:nth-child(even) {{ background: #fafafa; }}
+
+  /* ---- Lists ---- */
+  ul, ol {{ padding-left: 24px; margin: 8px 0; }}
+  li {{ margin: 4px 0; line-height: 1.6; }}
+  ul.task-list {{ list-style: none; padding-left: 8px; }}
+  ul.task-list li {{ margin: 4px 0; }}
+  ul.task-list li input[type="checkbox"] {{ margin-right: 8px; }}
+
+  /* ---- Images ---- */
+  img {{ max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; }}
+
+  /* ---- Horizontal rules ---- */
+  hr {{ border: none; border-top: 1px solid #e5e5e5; margin: 20px 0; }}
+
+  /* ---- Strong / emphasis ---- */
+  strong {{ font-weight: 600; }}
+
+  /* ---- Pygments code highlighting (auto-generated CSS class names) ---- */
+  .highlight {{ background: #f8f8f8; border-radius: 8px; margin: 12px 0; }}
+  .highlight pre {{ margin: 0; border: none; background: none; }}
+  {_pygments_css()}
 </style>
 </head>
 <body>
-<h1>{title}</h1>
+<h1>{_escape_html(title)}</h1>
 {body}
 </body>
 </html>"""
+
+
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters in text."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _pygments_css() -> str:
+    """Return CSS for Pygments syntax highlighting (native theme adapted for light bg)."""
+    try:
+        from pygments.formatters import HtmlFormatter
+
+        return HtmlFormatter(style="default").get_style_defs(".highlight")
+    except Exception:
+        return ""

@@ -65,6 +65,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "matplotlib>=3.7.0",
     "weasyprint>=60.0",
+    "markdown>=3.7",
+    "pymdown-extensions>=10.0",
     "prompt_toolkit>=3.0.0",
 ]
 

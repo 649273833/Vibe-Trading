@@ -1549,12 +1549,19 @@ export function Agent() {
     if (messages.length === 0 || !sessionId) return;
     try {
       const md = buildExportMarkdown();
-      const title = `Chat Export - ${new Date().toLocaleDateString()}`;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      // Extract dialogue title from first user message (truncate to 40 chars)
+      const firstUserMsg = messages.find(m => m.type === "user");
+      const dialogueTitle = firstUserMsg
+        ? firstUserMsg.content.slice(0, 40).replace(/[\\/:*?"<>|]/g, "").trim()
+        : "chat";
+      const title = `${dialogueTitle} - ${dateStr}`;
       const blob = await api.exportSessionPdf(sessionId, md, title);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `chat_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const safeTitle = dialogueTitle || "chat";
+      a.download = `chat_${dateStr}_${safeTitle}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
