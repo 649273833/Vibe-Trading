@@ -79,7 +79,10 @@ def _first_proxy_env(*names: str) -> str:
 
 
 def _ccxt_proxy_config() -> dict[str, str]:
-    """Build CCXT proxy settings from conventional proxy environment variables."""
+    """Build CCXT proxy settings, respecting dedicated CCXT_PROXY env var first."""
+    dedicated = os.environ.get("VIBE_TRADING_CCXT_PROXY", "").strip()
+    if dedicated:
+        return {"http": dedicated, "https": dedicated}
     all_proxy = _first_proxy_env("ALL_PROXY", "all_proxy")
     http_proxy = _first_proxy_env("HTTP_PROXY", "http_proxy") or all_proxy
     https_proxy = _first_proxy_env("HTTPS_PROXY", "https_proxy") or all_proxy or http_proxy

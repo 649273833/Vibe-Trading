@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.session.service import SessionBusyError
@@ -43,7 +43,7 @@ class SessionResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     """Send chat message: natural-language strategy description."""
-    content: str = Field(..., description="Natural language strategy description", min_length=1, max_length=5000)
+    content: str = Field(..., description="Natural language strategy description", min_length=1, max_length=100000)
 
 
 class MessageResponse(BaseModel):
@@ -684,6 +684,8 @@ def register_sessions_routes(app: FastAPI) -> None:
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def send_message(session_id: str, payload: SendMessageRequest, http_request: Request):
         """Send a user message and start the agent loop (natural language strategy)."""
+        if not payload.content.strip():
+            logger.warning("send_message received empty content for session %s", session_id)
         _host_validate_path_param(session_id, "session_id")
         svc = _host_get_session_service()
         if not svc:
@@ -713,6 +715,35 @@ def register_sessions_routes(app: FastAPI) -> None:
         if not cancelled:
             return {"status": "no_active_loop"}
         return {"status": "cancelled"}
+
+    @app.post("/sessions/{session_id}/export/pdf", dependencies=[Depends(require_auth)])
+    async def export_session_pdf(session_id: str, body: dict[str, Any]):
+        """Export chat session as a mobile-friendly PDF."""
+        _host_validate_path_param(session_id, "session_id")
+        markdown = (body.get("markdown") or "").strip()
+        if not markdown:
+            raise HTTPException(status_code=400, detail="markdown content required")
+        title = (body.get("title") or "Chat Export").strip()
+
+        html = _markdown_to_html(markdown, title)
+
+        try:
+            import weasyprint
+            pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="chat_export.pdf"'},
+            )
+        except Exception:
+            pass
+
+        html_bytes = html.encode("utf-8")
+        return Response(
+            content=html_bytes,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=chat_export.html"},
+        )
 
     @app.get("/sessions/{session_id}/messages", response_model=List[MessageResponse], dependencies=[Depends(require_auth)])
     async def get_messages(session_id: str, limit: int = Query(100, ge=1, le=1000)):
@@ -786,3 +817,68 @@ def register_sessions_routes(app: FastAPI) -> None:
                 "X-Accel-Buffering": "no",
             },
         )
+
+
+def _markdown_to_html(md: str, title: str) -> str:
+    """Convert chat export markdown to styled HTML for PDF/mobile viewing."""
+    escaped = md.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    lines = escaped.split("\n")
+    out: list[str] = []
+    in_para = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            if in_para:
+                out.append("</p>")
+                in_para = False
+            out.append(f'<h1>{stripped[2:]}</h1>')
+        elif stripped.startswith("## "):
+            if in_para:
+                out.append("</p>")
+                in_para = False
+            out.append(f'<h2>{stripped[3:]}</h2>')
+        elif stripped.startswith("> "):
+            if in_para:
+                out.append("</p>")
+                in_para = False
+            out.append(f'<blockquote>{stripped[2:]}</blockquote>')
+        elif stripped == "":
+            if in_para:
+                out.append("</p>")
+                in_para = False
+        else:
+            if not in_para:
+                out.append("<p>")
+                in_para = True
+            out.append(stripped)
+            out.append("<br>")
+    if in_para:
+        out.append("</p>")
+
+    body = "\n".join(out)
+    # Handle inline code (backticks)
+    body = re.sub(r"`([^`]+)`", r"<code>\1</code>", body)
+    # Handle bold (**text**)
+    body = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", body)
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  body {{ font-family: -apple-system, "PingFang SC", "Noto Sans", sans-serif; max-width: 720px; margin: 0 auto; padding: 24px 16px; color: #1a1a1a; line-height: 1.7; font-size: 15px; }}
+  h1 {{ font-size: 22px; border-bottom: 2px solid #e5e5e5; padding-bottom: 8px; }}
+  h2 {{ font-size: 17px; margin-top: 28px; color: #333; }}
+  p {{ margin: 8px 0; }}
+  blockquote {{ background: #f5f5f5; border-left: 3px solid #6366f1; margin: 10px 0; padding: 8px 14px; color: #555; font-size: 14px; }}
+  code {{ background: #eee; padding: 1px 5px; border-radius: 4px; font-size: 13px; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+{body}
+</body>
+</html>"""

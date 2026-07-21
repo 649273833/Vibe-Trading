@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  ChevronDown,
   Download,
   Landmark,
   Loader2,
@@ -62,6 +63,7 @@ interface Props {
   onSubmit: (prompt: string, attachment: ComposerAttachment | null) => void;
   onCancel: () => void;
   onExport: () => void;
+  onExportPdf: () => void;
   onStartGoal: () => void;
   onCancelGoal: () => void;
   onStartSwarm: () => void;
@@ -80,6 +82,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
   onSubmit,
   onCancel,
   onExport,
+  onExportPdf,
   onStartGoal,
   onCancelGoal,
   onStartSwarm,
@@ -96,6 +99,20 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const uploadMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  /* Close the export dropdown on outside click. */
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showExportMenu]);
 
   const focus = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -375,15 +392,36 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
           readOnly={streaming}
         />
         {showExport && (
-          <button
-            type="button"
-            onClick={onExport}
-            disabled={!canExport}
-            className="h-10 px-3 rounded-xl border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-30 disabled:pointer-events-none"
-            title={t("agent.exportChat")}
-          >
-            <Download className="h-4 w-4" />
-          </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              disabled={!canExport}
+              className="h-10 px-3 rounded-xl border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1"
+              title={t("agent.exportChat")}
+            >
+              <Download className="h-4 w-4" />
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {showExportMenu && (
+              <div className="absolute bottom-full mb-2 right-0 bg-popover border rounded-xl shadow-lg z-50 min-w-[170px]">
+                <button
+                  type="button"
+                  className="w-full text-left px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-t-xl"
+                  onClick={() => { onExport(); setShowExportMenu(false); }}
+                >
+                  Markdown (.md)
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-left px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-b-xl"
+                  onClick={() => { onExportPdf(); setShowExportMenu(false); }}
+                >
+                  PDF (.pdf)
+                </button>
+              </div>
+            )}
+          </div>
         )}
         {streaming ? (
           <button

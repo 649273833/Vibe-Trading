@@ -149,6 +149,16 @@ export const api = {
   autoTitleSession: (sid: string) => request<{ status: string; title: string }>(`/sessions/${sid}/title/auto`, { method: "POST" }),
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
+  exportSessionPdf: async (sid: string, markdown: string, title?: string): Promise<Blob> => {
+    const url = withAuthQuery(`${BASE}/sessions/${sid}/export/pdf`);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ markdown, title }),
+    });
+    if (!res.ok) throw new ApiError(await res.text().catch(() => "export failed"), res.status);
+    return res.blob();
+  },
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
   createGoal: (sid: string, body: CreateGoalRequest) =>
     request<GoalSnapshot>(`/sessions/${sid}/goal`, {

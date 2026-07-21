@@ -239,6 +239,8 @@ export function Agent() {
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
   const [goalComposerActive, setGoalComposerActive] = useState(false);
   const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null);
+  const [goalEditActive, setGoalEditActive] = useState(false);
+  const [goalEditValue, setGoalEditValue] = useState("");
 
   /* Connector runtime channel state (SPEC Consent §1/§4/§5) */
   const [liveItems, setLiveItems] = useState<LiveItem[]>([]);
@@ -435,6 +437,7 @@ export function Agent() {
   }, [status]);
 
   /* Track scroll position to show/hide scroll button */
+
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -1508,8 +1511,7 @@ export function Agent() {
     setSwarmPreset(null);
   }, []);
 
-  const handleExport = useCallback(() => {
-    if (messages.length === 0) return;
+  const buildExportMarkdown = () => {
     const lines: string[] = [`# Chat Export`, ``, `Export time: ${new Date().toLocaleString()}`, ``];
     for (const msg of messages) {
       const time = new Date(msg.timestamp).toLocaleString();
@@ -1528,13 +1530,42 @@ export function Agent() {
         lines.push(`> Backtest complete: ${msg.runId || ""}`, ``);
       }
     }
-    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    return lines.join("\n");
+  };
+
+  const handleExportMd = () => {
+    if (messages.length === 0) return;
+    const md = buildExportMarkdown();
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `chat_${new Date().toISOString().slice(0, 10)}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = async () => {
+    if (messages.length === 0 || !sessionId) return;
+    try {
+      const md = buildExportMarkdown();
+      const title = `Chat Export - ${new Date().toLocaleDateString()}`;
+      const blob = await api.exportSessionPdf(sessionId, md, title);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat_${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error("PDF export failed, falling back to HTML");
+      handleExportMd();
+    }
+  };
+
+  /* Export entry for the Composer toolbar button (upstream structure): markdown. */
+  const handleExport = useCallback(() => {
+    handleExportMd();
   }, [messages, swarmRuns]);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
@@ -1787,6 +1818,7 @@ export function Agent() {
               onSubmit={runPrompt}
               onCancel={handleCancel}
               onExport={handleExport}
+              onExportPdf={handleExportPdf}
               onStartGoal={handleStartGoal}
               onCancelGoal={handleCancelGoalComposer}
               onStartSwarm={handleStartSwarm}
