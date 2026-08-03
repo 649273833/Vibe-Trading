@@ -12,6 +12,7 @@ import faulthandler
 faulthandler.enable(file=open("/tmp/vibe-fault.log", "w"), all_threads=True)
 
 import logging
+import platform
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict
@@ -137,7 +138,7 @@ async def _run_startup_preflight() -> None:
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
     # Local fix: preflight SIGBUS on Apple Silicon (yfinance/fast_info) — keep
     # the upstream preflight on other platforms.
-    if not (_sys.platform == "darwin" and _sys.machine() == "arm64"):
+    if not (_sys.platform == "darwin" and platform.machine() == "arm64"):
         from src.preflight import run_preflight
 
         run_preflight(console)

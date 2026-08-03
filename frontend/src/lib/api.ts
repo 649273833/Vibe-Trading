@@ -157,8 +157,7 @@ export const api = {
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   exportSessionPdf: async (sid: string, markdown: string, title?: string): Promise<Blob> => {
-    const url = withAuthQuery(`${BASE}/sessions/${sid}/export/pdf`);
-    const res = await fetch(url, {
+    const res = await fetch(`${BASE}/sessions/${sid}/export/pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ markdown, title }),
