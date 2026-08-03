@@ -572,18 +572,29 @@ class GroundingLedger:
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
 
-    def validate_final_answer(self, content: str) -> ValidationResult:
+    def validate_final_answer(
+        self,
+        content: str,
+        *,
+        allow_unresolved_identity: bool = False,
+    ) -> ValidationResult:
         """Validate identity assertions and numeric price claims.
 
         Args:
             content: Candidate assistant answer.
+            allow_unresolved_identity: When the identity circuit breaker is
+                active the model is instructed to ask the user to disambiguate
+                instead of concluding — such a clarification carries no market
+                conclusion, so identity checks are waived (price claims are
+                still enforced).
 
         Returns:
             A deterministic validation result. A record containing only the
             answer hash and structured issues is appended to the artifact.
         """
         issues: list[dict[str, Any]] = []
-        issues.extend(self._validate_identity(content))
+        if not allow_unresolved_identity:
+            issues.extend(self._validate_identity(content))
         issues.extend(self._validate_price_claims(content))
         result = ValidationResult(valid=not issues, issues=issues)
         self._validations.append(
