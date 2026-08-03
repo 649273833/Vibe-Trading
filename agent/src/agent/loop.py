@@ -18,6 +18,7 @@ import copy
 import json
 import logging
 import queue
+import re
 import sys
 import threading
 import time as _time
@@ -54,6 +55,15 @@ SESSIONS_DIR = get_sessions_dir()
 KEEP_RECENT = 3
 TOOL_RESULT_LIMIT = 10_000
 LLM_USAGE_ARTIFACT = "llm_usage.json"
+
+# Models sometimes render a tool call as prose (literal "<tool_calls>" /
+# "<invoke name=...>" blocks) instead of native function calling. Such a
+# response is not an answer; the loop rejects it and asks for a native call.
+_PROSE_TOOL_CALL_RE = re.compile(
+    r"<tool_calls>|<invoke\s+name=|\btool_calls?\s*[:：]|"
+    r"(?:调用|使用)(?:一下|一次|了)?\s*[A-Za-z_]\w*\s*(?:工具|函数)|"
+    r"(?:调用|使用)(?:一下|一次|了)?(?:工具|函数)\s*[（(]?\s*[A-Za-z_]\w*"
+)
 
 COLLAPSE_PRESERVE_RECENT = 6
 COLLAPSE_TEXT_MIN = 2400
@@ -910,6 +920,27 @@ class AgentLoop:
                             }
                         )
                         break
+                    # Some models render a tool call as prose (e.g. a literal
+                    # "<tool_calls><invoke name=...>" block) instead of issuing
+                    # a native tool call. Treat that as a malformed turn: tell
+                    # the model to use native function calling and keep going
+                    # instead of ending the run with a non-answer.
+                    if _PROSE_TOOL_CALL_RE.search(final_content):
+                        trace.write(
+                            {"type": "prose_tool_call", "iter": current_iter}
+                        )
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "你刚才把工具调用写成了普通文本（例如 `<tool_calls>` / "
+                                    "`<invoke name=...>` 标记），并没有真正发起工具调用。"
+                                    "请使用原生 function calling 真正调用工具，"
+                                    "不要在回答文本里描述或模拟工具调用。"
+                                ),
+                            }
+                        )
+                        continue
                     if self._grounding is not None:
                         validation = self._grounding.validate_final_answer(
                             final_content,
@@ -1231,7 +1262,12 @@ class AgentLoop:
                     batch_identity_status=batch_identity_status,
                 )
                 if not authorization.allowed:
-                    if authorization.error_code.startswith("identity_") and not self._identity_breaker:
+                    # Only identity_conflict (ambiguous/conflicting/invalidated)
+                    # accumulates toward the breaker: those are cases where the
+                    # identity CANNOT be locked, so retrying is a dead loop.
+                    # identity_required just means "lock it first" — the next
+                    # turn can legitimately succeed after a search_symbol.
+                    if authorization.error_code == "identity_conflict" and not self._identity_breaker:
                         self._identity_block_count += 1
                         if self._identity_block_count >= 3:
                             # Circuit breaker: identity cannot be auto-locked
