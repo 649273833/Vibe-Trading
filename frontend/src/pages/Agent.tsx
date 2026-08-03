@@ -239,8 +239,6 @@ export function Agent() {
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
   const [goalComposerActive, setGoalComposerActive] = useState(false);
   const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null);
-  const [goalEditActive, setGoalEditActive] = useState(false);
-  const [goalEditValue, setGoalEditValue] = useState("");
 
   /* Connector runtime channel state (SPEC Consent §1/§4/§5) */
   const [liveItems, setLiveItems] = useState<LiveItem[]>([]);
