@@ -165,6 +165,15 @@ _DERIVATION_RE = re.compile(
     r"(?:\bderived\b|\bcalculated\b|\bformula\b|\bbased on\b|计算|推导|公式|基于)",
     re.IGNORECASE,
 )
+# Analyst targets, costs, support/resistance and valuation figures come from
+# research/aggregate sources, not the OHLC feed — they must not be compared
+# against observed OHLC evidence.
+_NON_OHLC_CLAIM_RE = re.compile(
+    r"目标价|分析师|预期|成本|支撑位?|阻力位?|估值|市盈率|市净率|市销率|"
+    r"市值|成交量|成交额|换手率|收益率|年化|增速|涨跌幅?|概率|胜率|回撤|"
+    r"倍|bps|元/kg|元／kg",
+    re.IGNORECASE,
+)
 _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?![A-Za-z0-9_])"
@@ -1507,6 +1516,11 @@ class GroundingLedger:
             line_symbol = self._symbol_for_claim(line, records)
             for segment in _CLAUSE_SEPARATOR_RE.split(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
+                    continue
+                # Analyst targets / costs / support & resistance / valuation
+                # figures are sourced from research, not the OHLC feed — never
+                # compare them against observed OHLC evidence.
+                if _NON_OHLC_CLAIM_RE.search(segment):
                     continue
                 values = self._numbers_without_dates_or_percent(segment)
                 if not values:
