@@ -699,6 +699,12 @@ class AgentLoop:
         content_filter_count = 0
         consecutive_content_filter_count = 0
         content_filter_circuit_breaker = False
+        # Identity-gate circuit breaker: repeated identity_required/conflict
+        # blocks mean the model cannot auto-lock the instrument (e.g. dual
+        # listings). Stop retrying tools and ask the user to disambiguate
+        # instead of burning iterations on a dead loop.
+        self._identity_block_count = 0
+        self._identity_breaker = False
         empty_model_response_iter: int | None = None
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
@@ -809,7 +815,13 @@ class AgentLoop:
 
                 # On last iteration, drop tool definitions to force text output
                 is_last_iteration = (iteration == self.max_iterations)
-                tool_defs = None if is_last_iteration else self.registry.get_definitions()
+                # Identity breaker: also drop tools so the model cannot retry
+                # the dead identity loop and must answer the user's question.
+                tool_defs = (
+                    None
+                    if is_last_iteration or self._identity_breaker
+                    else self.registry.get_definitions()
+                )
                 if is_last_iteration:
                     trace.write({"type": "forced_text_only", "iter": current_iter})
 
@@ -957,7 +969,10 @@ class AgentLoop:
                         )
                         break
                     if self._grounding is not None:
-                        validation = self._grounding.validate_final_answer(final_content)
+                        validation = self._grounding.validate_final_answer(
+                            final_content,
+                            allow_unresolved_identity=self._identity_breaker,
+                        )
                         if not validation.valid:
                             trace.write_text_entry(
                                 {
@@ -1244,6 +1259,8 @@ class AgentLoop:
         if self._cancel_event.is_set():
             return compact_requested, focus_topic
 
+        breaker_payload: dict[str, Any] | None = None
+
         for tc in tool_calls:
             # Layer 4: compact tool — mark then defer execution
             if tc.name == "compact":
@@ -1272,6 +1289,36 @@ class AgentLoop:
                     batch_identity_status=batch_identity_status,
                 )
                 if not authorization.allowed:
+                    if authorization.error_code.startswith("identity_") and not self._identity_breaker:
+                        self._identity_block_count += 1
+                        if self._identity_block_count >= 3:
+                            # Circuit breaker: identity cannot be auto-locked
+                            # (e.g. ambiguous dual listings). Execute nothing
+                            # this turn, but still emit a tool response for
+                            # every call so the provider sees each tool_call_id
+                            # answered, then force the model to ask the user.
+                            # The instruction rides inside the tool result —
+                            # inserting a user message between the assistant
+                            # tool_calls and its tool responses breaks the
+                            # provider's message ordering contract (HTTP 400).
+                            self._identity_breaker = True
+                            breaker_payload = json.dumps({
+                                "status": "error",
+                                "error_code": "identity_breaker",
+                                "message": (
+                                    "[IDENTITY BREAKER] 标的身份无法通过工具调用自动锁定"
+                                    "（通常因为同一名称对应多个上市代码/交易所，例如"
+                                    "A 股与港股双重上市）。请立即停止调用任何工具，"
+                                    "用自然语言向用户说明情况，列出候选的代码+交易所，"
+                                    "请用户确认选择哪一个后再继续分析。"
+                                ),
+                            }, ensure_ascii=False)
+                            # Already-authorized calls keep their slot so every
+                            # tool_call_id still gets a response message; only
+                            # the remaining gated calls become breaker results.
+                    if breaker_payload is not None:
+                        execution_plan.append((tc, breaker_payload))
+                        continue
                     execution_plan.append(
                         (
                             tc,
