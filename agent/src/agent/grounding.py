@@ -102,7 +102,19 @@ _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?![A-Za-z0-9_])"
 )
-_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+# CJK characters count as \w, so \b between a date and a Chinese char never
+# fires — use lookbehind instead of \b at the start, and no trailing boundary.
+_DATE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}"
+    r"(?:[Tt ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+)
+_CHINESE_DATE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])(?:\d{2,4}\s*年|\d{1,2}\s*[月日点时])"
+)
+# Standalone clock times ("00:00", "16:30:05+08:00") — same ISO leak as above.
+_TIME_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
 _TABLE_SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 
 _TABLE_FIELD_ALIASES = {
@@ -1391,6 +1403,11 @@ class GroundingLedger:
     def _numbers_without_dates_or_percent(text: str) -> list[float]:
         """Extract numbers while excluding dates and percentages."""
         without_dates = _DATE_RE.sub(" ", text)
+        # Chinese calendar expressions ("8 月 2 日 0 点") — strip the numeral
+        # together with its unit so date/time components never read as prices.
+        without_dates = _CHINESE_DATE_RE.sub(" ", without_dates)
+        # Standalone clock times without a date prefix ("00:00").
+        without_dates = _TIME_RE.sub(" ", without_dates)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
             tail = without_dates[match.end() :].lstrip()

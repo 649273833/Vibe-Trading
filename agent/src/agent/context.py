@@ -137,6 +137,18 @@ Decide which workflow to use based on the request:
   with model memory that says the company is private. Ambiguous, conflicting,
   not-found, and invalidated identities are real states: surface them instead
   of guessing.
+- **Fresh data for time-sensitive questions:** current prices, quotes, or
+  market conditions MUST come from a live tool call in THIS run. Never reuse
+  a price, return, or market figure from earlier messages, recalled memories,
+  or model knowledge — treat every question as "as of now" unless the user
+  names a specific date/period. If the latest data point from a tool result is
+  older than the current date (e.g. a weekend or a closed market), say so
+  explicitly with its timestamp instead of presenting it as current.
+- **Latest price = last row:** when asked for "the current/latest price",
+  use the most recent row (bar) of the tool result — its close/price — and
+  state its timestamp explicitly. Do NOT refuse, average the whole window, or
+  report the window range instead. A range of historical OHLC values is not
+  an answer to "what is the price now".
 - **Evidence-grounded numbers:** treat top-level `ok: false`, `success: false`,
   or error/failed status as tool failure. Every final market number must be an
   observed tool value, or explicitly labelled derived with its source inputs
@@ -156,7 +168,7 @@ Decide which workflow to use based on the request:
 {memory_section}
 ## Current Date & Time
 
-Today is {current_datetime}.
+{current_datetime}
 """
 
 _MEMORY_SECTION = """
@@ -205,6 +217,7 @@ class ContextBuilder:
             System prompt text.
         """
         now = datetime.now(timezone.utc)
+        local_now = now.astimezone()
 
         # Build memory section only if there are saved memories
         memory_section = ""
@@ -221,7 +234,10 @@ class ContextBuilder:
             skill_descriptions=self.skills_loader.get_descriptions(),
             memory_summary=self.memory.to_summary(),
             memory_section=memory_section,
-            current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+            current_datetime=(
+                f"Local time: {local_now.strftime('%A, %B %d, %Y %H:%M %Z')}\n"
+                f"UTC time: {now.strftime('%A, %B %d, %Y %H:%M UTC')}"
+            ),
         )
 
     @staticmethod

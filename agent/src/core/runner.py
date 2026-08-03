@@ -523,6 +523,12 @@ class Runner:
             # ephemeral HOME does not force a full re-download every run.
             if real_home is not None:
                 env["XDG_CACHE_HOME"] = str(real_home / ".cache")
+                # The subprocess runs with an ephemeral HOME, but runs are stored
+                # under the real ~/.vibe-trading/runs (#925). Point the runtime-root
+                # resolver at the real root so safe_run_dir's whitelist still
+                # matches; only path resolution changes — .env, sessions.db,
+                # memory/, live/ stay hidden behind the sandbox HOME.
+                env["VIBE_TRADING_HOME"] = str(real_home / ".vibe-trading")
 
         run_kwargs: dict[str, Any] = dict(
             cwd=str(effective_cwd),
