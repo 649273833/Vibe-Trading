@@ -215,6 +215,16 @@ class TestAdd:
         assert len(results) == 1
         assert results[0].title == "人民币汇率"
 
+    def test_update_index_exact_title_match(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("Ref", "referencing main", "project", description="See details in [Main]")
+        pm.add("Main", "main content", "project", description="Main memory entry")
+        index_content = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
+        lines = [line for line in index_content.splitlines() if line.strip()]
+        assert len(lines) == 2
+        assert any(line.startswith("- [Ref](") for line in lines)
+        assert any(line.startswith("- [Main](") for line in lines)
+
 
 # ---------------------------------------------------------------------------
 # PersistentMemory.find_relevant
@@ -248,6 +258,19 @@ class TestFindRelevant:
             pm.add(f"stock-{i}", f"stock analysis number {i}", "project", description=f"stock {i}")
         results = pm.find_relevant("stock analysis", max_results=3)
         assert len(results) == 3
+
+    def test_max_results_with_semantic_links(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VT_MEMORY_LINKS", "true")
+        pm = PersistentMemory(memory_dir=tmp_path)
+        p1 = pm.add("stock-0", "stock analysis zero", "project", description="stock zero")
+        p2 = pm.add("stock-1", "stock analysis one", "project", description="stock one")
+        p3 = pm.add("stock-2", "stock analysis two", "project", description="stock two")
+        assert p1 is not None and p2 is not None and p3 is not None
+        from src.memory.semantic_links import SemanticLinker
+        linker = SemanticLinker(tmp_path)
+        linker.save_relations(p1, [(str(p3), 0.95)])
+        results = pm.find_relevant("stock analysis", max_results=2)
+        assert len(results) == 2
 
     def test_metadata_weighted_higher(self, tmp_path: Path) -> None:
         pm = PersistentMemory(memory_dir=tmp_path)
