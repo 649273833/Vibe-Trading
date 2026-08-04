@@ -197,6 +197,9 @@ _PERCENT_RANGE_RE = re.compile(
 _LOCALIZED_DATE_RE = re.compile(
     r"(?:(?:19|20)\d{2}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?:19|20)\d{2}\s*年"
 )
+_LOCALIZED_DATE_RE = re.compile(
+    r"(?:(?:19|20)\d{2}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?:19|20)\d{2}\s*年"
+)
 # An aggregate amount is not a quoted price. "100 股成本 820 CNY" states a
 # position cost; comparing 820 against a per-share OHLC range is a category
 # error. The tradeoff is that a per-share figure written only as "成本 8.20"
@@ -293,6 +296,9 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
 # parentheses are deliberately not separators: an explicit derivation such as
 # "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
 _CLAUSE_SEPARATOR_RE = re.compile(r"[,，;；。、\n（）【】]")
+# Markdown section/list numbers ("**2. 价格端", "### 3、", "1. 结论") — the
+# numeral is structural, never a price.
+_SECTION_NUMBER_RE = re.compile(r"^[\s#>*\-]*\d{1,2}\s*[.、．]\s*")
 _TABLE_SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 
 _TABLE_FIELD_ALIASES = {
@@ -1515,6 +1521,9 @@ class GroundingLedger:
                 continue
             line_symbol = self._symbol_for_claim(line, records)
             for segment in _CLAUSE_SEPARATOR_RE.split(line):
+                # Markdown section numbers ("**2. 价格端") are structure, not
+                # prices — strip the leading numeral before extracting.
+                segment = _SECTION_NUMBER_RE.sub(" ", segment)
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
                 # Analyst targets / costs / support & resistance / valuation

@@ -56,13 +56,26 @@ SESSIONS_DIR = get_sessions_dir()
 KEEP_RECENT = 3
 LLM_USAGE_ARTIFACT = "llm_usage.json"
 
-# Models sometimes render a tool call as prose (literal "<tool_calls>" /
-# "<invoke name=...>" blocks) instead of native function calling. Such a
-# response is not an answer; the loop rejects it and asks for a native call.
+# Models sometimes render a tool call as prose instead of native function
+# calling: literal "<tool_calls>"/"<invoke name=...>" blocks, or DeepSeek
+# DSML blocks ("<||DSML||tool_calls>", full-width variant "＜｜｜DSML｜｜…").
+# When the chat provider could not turn such text into real tool calls, the
+# response is not an answer — the loop rejects it and asks for a native call.
+_DSML_BAR_PAT = r"(?:\|\||｜｜)"
 _PROSE_TOOL_CALL_RE = re.compile(
-    r"<tool_calls>|<invoke\s+name=|\btool_calls?\s*[:：]|"
-    r"(?:调用|使用)(?:一下|一次|了)?\s*[A-Za-z_]\w*\s*(?:工具|函数)|"
-    r"(?:调用|使用)(?:一下|一次|了)?(?:工具|函数)\s*[（(]?\s*[A-Za-z_]\w*"
+    rf"<tool_calls>|<invoke\s+name=|\btool_calls?\s*[:：]|"
+    rf"<\s*{_DSML_BAR_PAT}\s*DSML\s*{_DSML_BAR_PAT}\s*(?:tool_calls|invoke)\b|"
+    rf"(?:调用|使用)(?:一下|一次|了)?\s*[A-Za-z_]\w*\s*(?:工具|函数)|"
+    rf"(?:调用|使用)(?:一下|一次|了)?(?:工具|函数)\s*[（(]?\s*[A-Za-z_]\w*",
+    re.IGNORECASE,
+)
+# "Promise" answers: no tool calls, no content — just a commitment to act
+# ("I'll now fetch the latest prices..."). Never a valid final answer.
+_PROMISE_ACTION_RE = re.compile(
+    r"(?:现在|接下来|马上|稍后|这就|先)(?:我)?(?:就|要|会|将|去|来)?(?:拉取|获取|查询|更新|同步|重新|调用|读取|继续分析|展开分析|输出报告)|"
+    r"我先(?:去|要|会|将)?(?:拉|获取|查询|更新|同步|重新|调用|读取|确认|锁定)|"
+    r"收到[，,。]?(?:身份)?(?:已)?(?:锁定|确认)|"
+    r"(?:好的|明白|收到)[，,。]*(?:我)?(?:现在|接下来|马上)?(?:就)?(?:去|要|会)?(?:拉取|获取|查询|更新|分析)"
 )
 
 COLLAPSE_PRESERVE_RECENT = 6
@@ -980,10 +993,11 @@ class AgentLoop:
                         break
                     # Some models render a tool call as prose (e.g. a literal
                     # "<tool_calls><invoke name=...>" block) instead of issuing
-                    # a native tool call. Treat that as a malformed turn: tell
-                    # the model to use native function calling and keep going
-                    # instead of ending the run with a non-answer.
-                    if _PROSE_TOOL_CALL_RE.search(final_content):
+                    # a native tool call. Others just promise to act ("I'll now
+                    # fetch the latest prices") without calling anything. Both
+                    # are malformed turns: tell the model what to do instead and
+                    # keep going rather than ending the run with a non-answer.
+                    if _PROSE_TOOL_CALL_RE.search(final_content) or _PROMISE_ACTION_RE.search(final_content):
                         trace.write(
                             {"type": "prose_tool_call", "iter": current_iter}
                         )
@@ -991,10 +1005,13 @@ class AgentLoop:
                             {
                                 "role": "user",
                                 "content": (
-                                    "你刚才把工具调用写成了普通文本（例如 `<tool_calls>` / "
-                                    "`<invoke name=...>` 标记），并没有真正发起工具调用。"
-                                    "请使用原生 function calling 真正调用工具，"
-                                    "不要在回答文本里描述或模拟工具调用。"
+                                    "你刚才没有真正发起工具调用，也没有给出实质分析"
+                                    "（要么把工具调用写成了文本，要么只是承诺拉取/更新"
+                                    "数据）。请二选一：1) 需要数据就用原生 function "
+                                    "calling 真正调用工具（身份未锁定时先单独调用 "
+                                    "search_symbol 锁定，不要声称已锁定）；"
+                                    "2) 直接输出完整的分析结论。"
+                                    "不要在回答文本里描述、模拟或承诺工具调用。"
                                 ),
                             }
                         )
