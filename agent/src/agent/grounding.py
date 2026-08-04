@@ -124,6 +124,9 @@ _CHINESE_DATE_RE = re.compile(
 _TIME_RE = re.compile(
     r"(?<![A-Za-z0-9_.])\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
 )
+# Markdown section/list numbers ("**2. 价格端", "### 3、", "1. 结论") — the
+# numeral is structural, never a price.
+_SECTION_NUMBER_RE = re.compile(r"^[\s#>*\-]*\d{1,2}\s*[.、．]\s*")
 _TABLE_SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 
 _TABLE_FIELD_ALIASES = {
@@ -1147,9 +1150,12 @@ class GroundingLedger:
             if index in table_lines or "|" in line:
                 continue
             line_symbol = self._symbol_for_claim(line, records)
-            for segment in re.split(r"[,，;；。\n]", line):
-                if not _PRICE_CONTEXT_RE.search(segment):
+            for raw_segment in re.split(r"[,，;；。\n]", line):
+                if not _PRICE_CONTEXT_RE.search(raw_segment):
                     continue
+                # Markdown section numbers ("**2. 价格端") are structure, not
+                # prices — strip the leading numeral before extracting.
+                segment = _SECTION_NUMBER_RE.sub(" ", raw_segment)
                 # Analyst targets / costs / support & resistance / valuation
                 # figures are sourced from research, not the OHLC feed — never
                 # compare them against observed OHLC evidence.
