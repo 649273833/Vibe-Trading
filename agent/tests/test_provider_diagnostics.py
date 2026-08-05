@@ -93,7 +93,7 @@ def test_spark_capabilities_use_generic_openai_path() -> None:
 
 def test_novita_capabilities_use_generic_openai_path() -> None:
     """Novita AI rides the plain OpenAI-compatible path with no capability flags."""
-    novita = get_provider_capabilities("novita", "deepseek/deepseek-v3.2")
+    novita = get_provider_capabilities("novita", "moonshotai/kimi-k3")
 
     assert novita.name == "novita"
     assert novita.api_key_env == "NOVITA_API_KEY"

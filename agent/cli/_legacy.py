@@ -5046,7 +5046,7 @@ _PROVIDER_CHOICES: list[dict[str, str | None]] = [
         "key_env": "NOVITA_API_KEY",
         "base_env": "NOVITA_BASE_URL",
         "base_url": "https://api.novita.ai/openai",
-        "model": "deepseek/deepseek-v3.2",
+        "model": "moonshotai/kimi-k3",
         "key_prefix": "sk_",
         "key_placeholder": "sk_...",
     },
