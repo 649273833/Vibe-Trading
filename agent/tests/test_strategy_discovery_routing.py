@@ -2,9 +2,9 @@
 
 AC2 (routing validated at startup): ``ContextBuilder.build_system_prompt()``
 must include the Strategy Discovery routing block when — and only when — all
-three tools are present in the tool registry, and must degrade to a clean
-prompt (no block, no crash) when ``src.strategy_discovery`` cannot be
-imported. The expected block text is derived from
+four tools (three read-only plus ``refresh_strategy_evidence``) are present
+in the tool registry, and must degrade to a clean prompt (no block, no
+crash) when ``src.strategy_discovery`` cannot be imported. The expected block text is derived from
 ``src.strategy_discovery.guard.routing_block`` so these tests stay decoupled
 from the block's exact wording.
 
@@ -34,7 +34,12 @@ except ImportError:
     sd_guard = None
     GUARD_AVAILABLE = False
 
-SD_TOOLS = ("list_strategies", "query_strategies", "get_strategy_evidence")
+SD_TOOLS = (
+    "list_strategies",
+    "query_strategies",
+    "get_strategy_evidence",
+    "refresh_strategy_evidence",
+)
 
 
 class _StubTool(BaseTool):
