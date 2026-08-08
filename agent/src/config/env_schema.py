@@ -133,6 +133,9 @@ class LLMConfig(_EnvBase):
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
     langchain_reasoning_effort: str = Field(alias="LANGCHAIN_REASONING_EFFORT", default="")
+    langchain_use_responses_api: EnvBool | None = Field(
+        alias="LANGCHAIN_USE_RESPONSES_API", default=None
+    )
     vibe_trading_deepseek_adapter: str = Field(alias="VIBE_TRADING_DEEPSEEK_ADAPTER", default="auto")
     moonshot_user_agent: str = Field(alias="MOONSHOT_USER_AGENT", default="")
     openai_codex_base_url: str = Field(

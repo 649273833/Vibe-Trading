@@ -11,9 +11,9 @@ The setting has two mutually exclusive delivery paths:
       in /v1/chat/completions. To use function tools, use /v1/responses or set
       reasoning_effort to 'none'.
 
-Every other OpenAI-compatible provider must receive neither, because a stale
-global effort value would otherwise ride along on payloads that can reject the
-unknown field (DeepSeek is the documented case in ``test_provider_diagnostics``).
+Any ChatOpenAI-compatible provider/model with an effort and no explicit
+transport setting uses the Responses API; explicit ``false`` retains the
+legacy Chat Completions path for endpoints that do not expose Responses.
 """
 
 from __future__ import annotations
@@ -121,6 +121,7 @@ class TestDirectOpenAI:
                 "OPENAI_API_KEY": "sk-test",
                 "LANGCHAIN_MODEL_NAME": "gpt-5.6-sol",
                 "LANGCHAIN_REASONING_EFFORT": "none",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -134,6 +135,7 @@ class TestDirectOpenAI:
                 "OPENAI_API_KEY": "sk-test",
                 "LANGCHAIN_MODEL_NAME": "gpt-5.6-sol",
                 "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -165,6 +167,7 @@ class TestUnsupportedProviders:
                 "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro",
                 "LANGCHAIN_REASONING_EFFORT": "high",
                 "VIBE_TRADING_DEEPSEEK_ADAPTER": "openai-compatible",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -180,6 +183,7 @@ class TestUnsupportedProviders:
                 "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
                 "LANGCHAIN_MODEL_NAME": "gemini-3.5-flash",
                 "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -195,6 +199,7 @@ class TestUnsupportedProviders:
                 "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro",
                 "LANGCHAIN_REASONING_EFFORT": "high",
                 "VIBE_TRADING_DEEPSEEK_ADAPTER": "openai-compatible",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -208,6 +213,7 @@ class TestUnsupportedProviders:
                 "OPENAI_API_KEY": "sk-test",
                 "LANGCHAIN_MODEL_NAME": "house-model-1",
                 "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -225,6 +231,7 @@ class TestRelayOptIn:
                 "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
                 "LANGCHAIN_MODEL_NAME": "deepseek/deepseek-v4-pro",
                 "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -239,6 +246,7 @@ class TestRelayOptIn:
                 "REQUESTY_BASE_URL": "https://router.requesty.ai/v1",
                 "LANGCHAIN_MODEL_NAME": "openai/gpt-4o-mini",
                 "LANGCHAIN_REASONING_EFFORT": "medium",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -266,6 +274,73 @@ class TestRequestPayload:
     def test_absent_effort_is_dropped_from_the_request(self) -> None:
         """None must not serialize as a null field on unsupported providers."""
         assert "reasoning_effort" not in self._payload(None)
+
+
+class TestResponsesAPI:
+    def test_reasoning_effort_auto_selects_responses_for_any_chat_model(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "some-openai-compatible-gateway",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "arbitrary-reasoning-model",
+                "LANGCHAIN_REASONING_EFFORT": "high",
+            }
+        )
+
+        assert kwargs["use_responses_api"] is True
+        assert kwargs["output_version"] == "responses/v1"
+        assert kwargs["reasoning"] == {"effort": "high"}
+        assert kwargs["reasoning_effort"] is None
+
+    def test_any_provider_and_model_can_opt_into_responses_reasoning(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "openai",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "arbitrary-reasoning-model",
+                "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "true",
+            }
+        )
+
+        assert kwargs["use_responses_api"] is True
+        assert kwargs["output_version"] == "responses/v1"
+        assert kwargs["reasoning"] == {"effort": "high"}
+        assert kwargs["reasoning_effort"] is None
+
+    def test_explicit_chat_mode_remains_available_for_legacy_endpoints(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "some-openai-compatible-gateway",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "arbitrary-reasoning-model",
+                "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
+            }
+        )
+
+        assert kwargs["use_responses_api"] is False
+        assert kwargs["reasoning"] is None
+
+    def test_responses_payload_does_not_assume_chat_messages(self) -> None:
+        if llm_mod.ChatOpenAIWithReasoning is None:
+            pytest.skip("langchain-openai is not installed")
+        from langchain_core.messages import HumanMessage
+
+        instance = llm_mod.ChatOpenAIWithReasoning(
+            model="arbitrary-reasoning-model",
+            api_key="sk-test",
+            use_responses_api=True,
+            output_version="responses/v1",
+            reasoning={"effort": "high"},
+        )
+
+        payload = instance._get_request_payload([HumanMessage(content="hi")])
+
+        assert payload["reasoning"] == {"effort": "high"}
 
 
 class TestSettingsAllowlist:

@@ -1253,9 +1253,14 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     ):
         logger.info("Forcing temperature=1.0 for %s (provider requirement)", name)
         temperature = 1.0
-    # Optional reasoning activation for relays requiring opt-in (e.g. OpenRouter).
-    # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     effort = get_env_config().llm.langchain_reasoning_effort.strip().lower()
+    # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
+    configured_responses_api = get_env_config().llm.langchain_use_responses_api
+    use_responses_api = (
+        configured_responses_api
+        if configured_responses_api is not None
+        else bool(effort)
+    )
     creds = get_llm_credentials(provider, name)
     api_key = creds["api_key"]
     _validate_authorization_credential(
@@ -1270,9 +1275,16 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         "timeout": get_env_config().llm.timeout_seconds,
         "max_retries": get_env_config().llm.max_retries,
         "callbacks": callbacks,
+        "output_version": "responses/v1" if use_responses_api else None,
+        "use_responses_api": use_responses_api,
+        "reasoning": (
+            {"effort": effort}
+            if use_responses_api and effort
+            else None
+        ),
         "extra_body": (
             {"reasoning": {"effort": effort}}
-            if effort and caps.openrouter_reasoning_body
+            if effort and not use_responses_api and caps.openrouter_reasoning_body
             else None
         ),
         # Direct OpenAI takes the effort as a top-level request field instead
@@ -1281,7 +1293,11 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         # payload without the field.
         "reasoning_effort": (
             effort
-            if effort and _supports_top_level_reasoning_effort(provider, caps.name)
+            if (
+                effort
+                and not use_responses_api
+                and _supports_top_level_reasoning_effort(provider, caps.name)
+            )
             else None
         ),
         "vibe_provider": provider,
