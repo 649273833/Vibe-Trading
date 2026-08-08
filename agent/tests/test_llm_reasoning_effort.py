@@ -12,8 +12,8 @@ The setting has two mutually exclusive delivery paths:
       reasoning_effort to 'none'.
 
 Any ChatOpenAI-compatible provider/model with an effort and no explicit
-transport setting uses the Responses API; explicit ``false`` retains the
-legacy Chat Completions path for endpoints that do not expose Responses.
+transport setting uses Chat Completions; explicit ``true`` selects the
+Responses API for endpoints that support it.
 """
 
 from __future__ import annotations
@@ -111,8 +111,6 @@ def _capture_kwargs(env: dict[str, str]) -> dict[str, Any]:
 
 
 class TestDirectOpenAI:
-    """Direct OpenAI is the one provider verified to take the top-level field."""
-
     def test_explicit_none_is_forwarded(self) -> None:
         """'none' is a real value here, not a synonym for unset."""
         kwargs = _capture_kwargs(
@@ -136,6 +134,19 @@ class TestDirectOpenAI:
                 "LANGCHAIN_MODEL_NAME": "gpt-5.6-sol",
                 "LANGCHAIN_REASONING_EFFORT": "high",
                 "LANGCHAIN_USE_RESPONSES_API": "false",
+            }
+        )
+
+        assert kwargs["reasoning_effort"] == "high"
+
+    def test_openai_compatible_endpoint_receives_effort(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "openai",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "gpt-5.6-luna",
+                "LANGCHAIN_REASONING_EFFORT": "high",
             }
         )
 
@@ -277,21 +288,20 @@ class TestRequestPayload:
 
 
 class TestResponsesAPI:
-    def test_reasoning_effort_auto_selects_responses_for_any_chat_model(self) -> None:
+    def test_reasoning_effort_defaults_to_chat_completions(self) -> None:
         kwargs = _capture_kwargs(
             {
-                "LANGCHAIN_PROVIDER": "some-openai-compatible-gateway",
+                "LANGCHAIN_PROVIDER": "openai",
                 "OPENAI_API_KEY": "sk-test",
-                "OPENAI_BASE_URL": "https://gateway.example/v1",
-                "LANGCHAIN_MODEL_NAME": "arbitrary-reasoning-model",
+                "LANGCHAIN_MODEL_NAME": "gpt-5.6-sol",
                 "LANGCHAIN_REASONING_EFFORT": "high",
             }
         )
 
-        assert kwargs["use_responses_api"] is True
-        assert kwargs["output_version"] == "responses/v1"
-        assert kwargs["reasoning"] == {"effort": "high"}
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs["use_responses_api"] is False
+        assert kwargs["output_version"] is None
+        assert kwargs["reasoning"] is None
+        assert kwargs["reasoning_effort"] == "high"
 
     def test_any_provider_and_model_can_opt_into_responses_reasoning(self) -> None:
         kwargs = _capture_kwargs(

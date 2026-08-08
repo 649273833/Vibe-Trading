@@ -833,7 +833,7 @@ Copy `agent/.env.example` to `agent/.env` and uncomment the provider block you w
 | `<PROVIDER>_BASE_URL` | Yes | API endpoint URL |
 | `LANGCHAIN_MODEL_NAME` | Yes | Model name (e.g. `deepseek-v4-pro`) |
 | `LANGCHAIN_REASONING_EFFORT` | No | Reasoning effort (`none`, `low`, `medium`, `high`, or `max`) |
-| `LANGCHAIN_USE_RESPONSES_API` | No | Responses transport override: unset auto-selects it when reasoning effort is set, `true` forces it, and `false` keeps legacy Chat Completions |
+| `LANGCHAIN_USE_RESPONSES_API` | No | Responses transport override: `true` uses Responses; unset or `false` uses Chat Completions |
 | `TUSHARE_TOKEN` | No | Tushare Pro token for A-share data (falls back to AKShare) |
 | `TIMEOUT_SECONDS` | No | LLM call timeout, default 120s |
 | `API_AUTH_KEY` | Recommended for network deployments | Bearer token required when the API is reachable from non-local clients |

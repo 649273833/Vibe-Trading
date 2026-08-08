@@ -1031,43 +1031,20 @@ def _sync_provider_env() -> None:
 def _supports_top_level_reasoning_effort(provider: str, caps_name: str) -> bool:
     """Report whether a provider accepts a top-level ``reasoning_effort`` field.
 
-    Direct OpenAI is the only verified consumer: its ``gpt-5.6-*`` models reject
-    function tools on ``/v1/chat/completions`` unless the request carries an
-    explicit ``reasoning_effort`` — including the literal ``"none"``. Every other
-    OpenAI-compatible provider (DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu,
-    NVIDIA, Spark, MiniMax, …) may reject the unknown field, so this is a
-    positive allowlist, never "everything without ``openrouter_reasoning_body``".
-    Relays that take the field inside ``extra_body.reasoning`` (OpenRouter,
-    Requesty) keep that path and are excluded here.
+    Endpoints configured as ``openai`` use the OpenAI Chat Completions field.
+    Named or model-inferred third-party providers remain excluded because they
+    may reject it; relays that use ``extra_body.reasoning`` keep that path.
 
     Args:
         provider: Configured ``LANGCHAIN_PROVIDER`` value.
         caps_name: Canonical capability name resolved for the provider/model.
 
     Returns:
-        True only for direct OpenAI. The configured name is checked alongside the
-        resolved capability because unknown provider names fall back to OpenAI
-        capabilities — an unverified gateway must not inherit the field — while
-        the capability name check drops model-inferred providers (e.g. provider
-        ``openai`` with a ``deepseek-*`` model resolves to DeepSeek).
+        True only for a configured OpenAI endpoint with OpenAI capabilities. The
+        configured name check prevents unknown provider names from inheriting the
+        field, while the capability check excludes model-inferred providers.
     """
-    if caps_name != "openai" or provider.strip().lower() not in {"", "openai"}:
-        return False
-    # A base-URL override points the OpenAI client at some other gateway
-    # (Ollama, LiteLLM, a corporate proxy). Those speak the OpenAI wire format
-    # but need not accept this field, so the label alone is not enough.
-    try:
-        base_url = (
-            get_llm_credentials("openai", get_env_config().llm.langchain_model_name)
-            .get("base_url")
-            or ""
-        ).strip()
-    except Exception:  # noqa: BLE001 - a credential lookup must not break the check
-        return False
-    if not base_url:
-        return True
-    host = urlparse(base_url if "//" in base_url else f"https://{base_url}").hostname or ""
-    return host.lower() in {"api.openai.com", "openai.com"}
+    return caps_name == "openai" and provider.strip().lower() in {"", "openai"}
 
 
 def provider_diagnostics() -> dict[str, Any]:
@@ -1256,11 +1233,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     effort = get_env_config().llm.langchain_reasoning_effort.strip().lower()
     # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     configured_responses_api = get_env_config().llm.langchain_use_responses_api
-    use_responses_api = (
-        configured_responses_api
-        if configured_responses_api is not None
-        else bool(effort)
-    )
+    use_responses_api = configured_responses_api is True
     creds = get_llm_credentials(provider, name)
     api_key = creds["api_key"]
     _validate_authorization_credential(
