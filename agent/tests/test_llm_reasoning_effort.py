@@ -4,7 +4,7 @@ The setting has two mutually exclusive delivery paths:
 
 * Relays that require an opt-in (OpenRouter, Requesty) receive
   ``extra_body={"reasoning": {"effort": ...}}``.
-* Direct OpenAI receives a top-level ``reasoning_effort``. Its ``gpt-5.6-*``
+* ChatOpenAI-compatible providers receive a top-level ``reasoning_effort``. Its ``gpt-5.6-*``
   models reject function tools on ``/v1/chat/completions`` without one::
 
       Function tools with reasoning_effort are not supported for gpt-5.6-sol
@@ -180,39 +180,35 @@ class TestDirectOpenAI:
 
 
 class TestUnsupportedProviders:
-    """A configured effort must never leak onto unverified providers."""
-
-    def test_deepseek_never_receives_top_level_effort(self) -> None:
-        """DeepSeek's documented invariant covers both delivery paths."""
+    def test_deepseek_openai_compatible_receives_top_level_effort(self) -> None:
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "deepseek",
                 "DEEPSEEK_API_KEY": "ds-test",
-                "DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
-                "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro",
+                "DEEPSEEK_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "deepseek-v4-flash",
                 "LANGCHAIN_REASONING_EFFORT": "high",
                 "VIBE_TRADING_DEEPSEEK_ADAPTER": "openai-compatible",
                 "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs["reasoning_effort"] == "high"
         assert kwargs["extra_body"] is None
 
-    def test_gemini_never_receives_top_level_effort(self) -> None:
-        """Second unsupported provider: Gemini's OpenAI-compatible endpoint."""
+    def test_gemini_openai_compatible_receives_top_level_effort(self) -> None:
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "gemini",
                 "GEMINI_API_KEY": "gm-test",
-                "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "GEMINI_BASE_URL": "https://gateway.example/v1",
                 "LANGCHAIN_MODEL_NAME": "gemini-3.5-flash",
                 "LANGCHAIN_REASONING_EFFORT": "high",
                 "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs["reasoning_effort"] == "high"
         assert kwargs["extra_body"] is None
 
     def test_explicit_openai_provider_keeps_effort_for_deepseek_model(self) -> None:
@@ -229,8 +225,9 @@ class TestUnsupportedProviders:
 
         assert kwargs["reasoning_effort"] == "high"
 
-    def test_unknown_provider_does_not_inherit_openai_fallback(self) -> None:
-        """Unknown names fall back to OpenAI capabilities but stay unverified."""
+    def test_unknown_openai_compatible_provider_receives_top_level_effort(
+        self,
+    ) -> None:
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "some-openai-compatible-gateway",
@@ -241,7 +238,7 @@ class TestUnsupportedProviders:
             }
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs["reasoning_effort"] == "high"
 
 
 class TestRelayOptIn:
@@ -348,14 +345,15 @@ class TestResponsesAPI:
         assert kwargs["reasoning"] == {"effort": "high"}
         assert kwargs["reasoning_effort"] is None
 
-    def test_deepseek_flash_can_opt_into_responses_reasoning(self) -> None:
+    def test_named_deepseek_can_opt_into_responses_reasoning(self) -> None:
         kwargs = _capture_kwargs(
             {
-                "LANGCHAIN_PROVIDER": "openai",
-                "OPENAI_API_KEY": "sk-test",
-                "OPENAI_BASE_URL": "https://gateway.example/v1",
-                "LANGCHAIN_MODEL_NAME": "deepseek-v4-flash-0731",
+                "LANGCHAIN_PROVIDER": "deepseek",
+                "DEEPSEEK_API_KEY": "ds-test",
+                "DEEPSEEK_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "deepseek-v4-flash",
                 "LANGCHAIN_REASONING_EFFORT": "max",
+                "VIBE_TRADING_DEEPSEEK_ADAPTER": "openai-compatible",
                 "LANGCHAIN_USE_RESPONSES_API": "true",
             }
         )

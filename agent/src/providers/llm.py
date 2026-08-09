@@ -18,6 +18,7 @@ from pydantic import PrivateAttr
 
 from src.config.accessor import get_env_config, reset_env_config
 from src.providers.capabilities import (
+    ProviderCapabilities,
     get_llm_credentials,
     get_provider_capabilities,
 )
@@ -1028,21 +1029,8 @@ def _sync_provider_env() -> None:
         os.environ["OPENAI_BASE_URL"] = base_url
 
 
-def _supports_top_level_reasoning_effort(provider: str) -> bool:
-    """Report whether a provider accepts a top-level ``reasoning_effort`` field.
-
-    An explicit ``openai`` provider selects the OpenAI-compatible wire contract,
-    including gateway base URLs and model names that resemble third-party
-    providers. Named providers remain responsible for their own mappings, such
-    as relays that use ``extra_body.reasoning``.
-
-    Args:
-        provider: Configured ``LANGCHAIN_PROVIDER`` value.
-
-    Returns:
-        True for the default or explicitly configured OpenAI-compatible adapter.
-    """
-    return provider.strip().lower() in {"", "openai"}
+def _supports_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
+    return caps.name not in {"anthropic", "openai-codex"} and not caps.openrouter_reasoning_body
 
 
 def provider_diagnostics() -> dict[str, Any]:
@@ -1153,7 +1141,10 @@ def provider_diagnostics() -> dict[str, Any]:
             "send_reasoning_content": caps.send_reasoning_content,
             "gemini_thought_signatures": caps.gemini_thought_signatures,
             "openrouter_reasoning_body": caps.openrouter_reasoning_body,
-            "top_level_reasoning_effort": _supports_top_level_reasoning_effort(provider),
+            "top_level_reasoning_effort": (
+                adapter_type == "openai-compatible"
+                and _supports_top_level_reasoning_effort(caps)
+            ),
         },
     }
 
@@ -1256,16 +1247,12 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             if effort and not use_responses_api and caps.openrouter_reasoning_body
             else None
         ),
-        # Direct OpenAI takes the effort as a top-level request field instead
-        # (gpt-5.6-* require it, even "none", to accept function tools).
-        # None is dropped by langchain-openai, so unsupported providers keep a
-        # payload without the field.
         "reasoning_effort": (
             effort
             if (
                 effort
                 and not use_responses_api
-                and _supports_top_level_reasoning_effort(provider)
+                and _supports_top_level_reasoning_effort(caps)
             )
             else None
         ),
