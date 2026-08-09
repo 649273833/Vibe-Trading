@@ -10,6 +10,42 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from src.tools.redaction import redact_text
+
+
+_PUBLIC_METADATA_MAX_LENGTH = 128
+_REDACTED_METADATA = "[redacted]"
+_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "max"})
+
+
+def public_metadata_value(
+    value: str | None,
+    *,
+    allowed_values: frozenset[str] | None = None,
+) -> str | None:
+    """Return a bounded, credential-free value for public run metadata."""
+    if value is None:
+        return None
+    metadata = value.strip()
+    if not metadata:
+        return None
+    if len(metadata) > _PUBLIC_METADATA_MAX_LENGTH:
+        return _REDACTED_METADATA
+    if not metadata.isprintable() or "://" in metadata or metadata.startswith("//"):
+        return _REDACTED_METADATA
+    if allowed_values is not None and metadata not in allowed_values:
+        return _REDACTED_METADATA
+    if redact_text(metadata) != metadata:
+        return _REDACTED_METADATA
+    return metadata
+
+
+def public_reasoning_effort(value: str | None) -> str | None:
+    return public_metadata_value(
+        value.lower() if value is not None else None,
+        allowed_values=_REASONING_EFFORTS,
+    )
+
 
 class TaskStatus(str, Enum):
     """SwarmTask lifecycle status.
@@ -190,6 +226,8 @@ class SwarmRun(BaseModel):
     total_output_tokens: int = 0
     provider: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
+    use_responses_api: bool | None = None
     grounding_data: dict[str, list[dict]] | None = None
 
 

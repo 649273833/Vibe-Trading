@@ -125,6 +125,98 @@ def test_get_swarm_status_surfaces_live_progress(tmp_path, monkeypatch):
     assert payload["is_stale"] is False
 
 
+def test_get_swarm_status_surfaces_llm_request_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.provider = "openai"
+    run.model = "reasoning-model"
+    run.reasoning_effort = "max"
+    run.use_responses_api = True
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.get_swarm_status(run.id))
+
+    assert payload["provider"] == "openai"
+    assert payload["model"] == "reasoning-model"
+    assert payload["reasoning_effort"] == "max"
+    assert payload["use_responses_api"] is True
+
+
+def test_get_swarm_status_redacts_sensitive_llm_request_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.provider = "openai"
+    run.model = "api_key=must-not-be-returned"
+    run.reasoning_effort = "max"
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.get_swarm_status(run.id))
+
+    assert payload["provider"] == "openai"
+    assert payload["model"] == "[redacted]"
+    assert payload["reasoning_effort"] == "max"
+
+
+def test_get_swarm_status_redacts_url_shaped_provider_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.provider = "https://provider.example/path?session=private"
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.get_swarm_status(run.id))
+
+    assert payload["provider"] == "[redacted]"
+
+
+def test_get_swarm_status_redacts_control_character_model_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.model = "model\x00must-not-be-returned"
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.get_swarm_status(run.id))
+
+    assert payload["model"] == "[redacted]"
+
+
+def test_list_runs_redacts_sensitive_llm_request_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.provider = "openai"
+    run.model = "api_key=must-not-be-returned"
+    run.reasoning_effort = "max"
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.list_runs())
+
+    assert payload[0]["provider"] == "openai"
+    assert payload[0]["model"] == "[redacted]"
+    assert payload[0]["reasoning_effort"] == "max"
+
+
+def test_list_runs_surfaces_llm_request_metadata(tmp_path, monkeypatch):
+    store = SwarmStore(base_dir=tmp_path)
+    run = _base_run()
+    run.provider = "openai"
+    run.model = "reasoning-model"
+    run.reasoning_effort = "max"
+    run.use_responses_api = False
+    store.create_run(run)
+    monkeypatch.setattr(mcp_server, "_get_swarm_store", lambda: store)
+
+    payload = json.loads(mcp_server.list_runs())
+
+    assert payload[0]["provider"] == "openai"
+    assert payload[0]["model"] == "reasoning-model"
+    assert payload[0]["reasoning_effort"] == "max"
+    assert payload[0]["use_responses_api"] is False
+
+
 # ``test_get_swarm_status_flags_silent_run_as_stale`` from v2 was removed in
 # v3 — read paths now auto-reconcile, so a zombie surfaces as ``status=failed``
 # immediately (see ``test_get_swarm_status_auto_recovers_zombie`` below). The
