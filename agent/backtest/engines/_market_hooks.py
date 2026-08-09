@@ -35,6 +35,9 @@ _MARKET_PATTERNS = [
     # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
     # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
+    # Vietnam equities: HOSE (VIC.VN). Tickers are three letters in practice;
+    # the class stays broad to admit fund certificates and ETF codes.
+    (re.compile(r"^[A-Z0-9]+\.VN$", re.I), "vietnam_equity"),
     (re.compile(r"^[A-Z]+-USDT$", re.I), "crypto"),
     (re.compile(r"^[A-Z]+/USDT$", re.I), "crypto"),
     # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from

@@ -50,18 +50,6 @@ class TestFallbackChain:
         assert "vietnam_equity" in DataLoader.markets
 
 
-class TestSymbolsAreNotAutoRouted:
-    """``.VN`` deliberately does not auto-detect yet.
-
-    Classifying ``.VN`` as ``vietnam_equity`` without an execution engine to
-    match would route a HOSE backtest through engine selection that has no
-    Vietnam branch. Detection lands with the engine, not with the data.
-    """
-
-    def test_vn_is_not_yet_classified_as_vietnam_equity(self) -> None:
-        assert _detect_market("VIC.VN") != "vietnam_equity"
-
-
 class TestFetch:
     """The loader returns a normalized frame for a HOSE symbol."""
 

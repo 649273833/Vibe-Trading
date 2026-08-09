@@ -556,7 +556,7 @@ Paper-vs-live is a **structural per-broker runtime guard** (account-id format, h
 </details>
 
 <details>
-<summary><b>Backtest Engines</b> <sub>9 engines + options portfolio, cross-market composite</sub></summary>
+<summary><b>Backtest Engines</b> <sub>10 engines + options portfolio, cross-market composite</sub></summary>
 
 | Engine | Market | Notes |
 |--------|--------|-------|
@@ -564,6 +564,7 @@ Paper-vs-live is a **structural per-broker runtime guard** (account-id format, h
 | **GlobalEquity** | US / HK / カナダ | 同一セッション売買、市場別のロット・呼値・コスト |
 | **IndiaEquity** | India (NSE/BSE) | T+1, circuit bands, config-driven STT / stamp / SEBI / GST cost stack |
 | **KoreaEquity** | 韓国（KRX：KOSPI/KOSDAQ） | ロングオンリー、統一呼値グリッド上で ±30% 制限値幅を約定時点に判定、2026 年 0.20% の証券取引税 |
+| **VietnamEquity** | ベトナム（HOSE） | ロングオンリー、T+2 決済ホールド、10/50/100 ドンの呼値グリッド上で ±7% 制限値幅、100 株単元、売却側 0.1% 課税 |
 | **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
 | **ChinaFutures** · **GlobalFutures** | futures | margin, contract multipliers |
 | **Forex** | FX / metals | via the `mt5` loader |

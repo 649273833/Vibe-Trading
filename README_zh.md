@@ -553,7 +553,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 </details>
 
 <details>
-<summary><b>Backtest Engines</b> <sub>9 个引擎 + options portfolio，跨市场 composite</sub></summary>
+<summary><b>Backtest Engines</b> <sub>10 个引擎 + options portfolio，跨市场 composite</sub></summary>
 
 | 引擎 | 市场 | 说明 |
 |------|------|------|
@@ -561,6 +561,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | **GlobalEquity** | 美股 / 港股 / 加拿大 | 支持日内往返；按市场应用手数、最小价位和成本 |
 | **IndiaEquity** | 印度（NSE/BSE） | T+1、熔断带、config 驱动的 STT / 印花税 / SEBI / GST 成本栈 |
 | **KoreaEquity** | 韩国（KRX：KOSPI/KOSDAQ） | 只做多，统一最小价位网格上于成交时刻判定 ±30% 涨跌停，2026 年 0.20% 证券交易税 |
+| **VietnamEquity** | 越南（HOSE） | 只做多，T+2 交收锁定，10/50/100 越南盾最小价位网格上 ±7% 涨跌停，100 股整手，0.1% 卖出方税 |
 | **Crypto** | 加密现货 / USD-M 永续 | 资金费结算、成交价/标记价分离 |
 | **ChinaFutures** · **GlobalFutures** | 期货 | 保证金、合约乘数 |
 | **Forex** | 外汇 / 贵金属 | 经 `mt5` loader |

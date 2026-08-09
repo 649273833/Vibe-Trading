@@ -556,7 +556,7 @@ Paper-vs-live는 **구조적 브로커별 런타임 가드**(account-id 형식, 
 </details>
 
 <details>
-<summary><b>백테스트 엔진</b> <sub>9개 엔진 + 옵션 포트폴리오, 크로스마켓 composite</sub></summary>
+<summary><b>백테스트 엔진</b> <sub>10개 엔진 + 옵션 포트폴리오, 크로스마켓 composite</sub></summary>
 
 | Engine | Market | Notes |
 |--------|--------|-------|
@@ -564,6 +564,7 @@ Paper-vs-live는 **구조적 브로커별 런타임 가드**(account-id 형식, 
 | **GlobalEquity** | US / HK / 캐나다 | 동일 세션 거래, 시장별 주문 단위·호가·비용 |
 | **IndiaEquity** | India (NSE/BSE) | T+1, circuit bands, config-driven STT / stamp / SEBI / GST cost stack |
 | **KoreaEquity** | 한국 (KRX: KOSPI/KOSDAQ) | 롱 온리, 통합 호가 단위에서 ±30% 가격제한폭을 체결 시점에 판정, 2026년 0.20% 증권거래세 |
+| **VietnamEquity** | 베트남 (HOSE) | 롱 온리, T+2 결제 보유, 10/50/100 VND 호가 단위에서 ±7% 가격제한폭, 100주 단위, 매도측 0.1% 세금 |
 | **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
 | **ChinaFutures** · **GlobalFutures** | futures | margin, contract multipliers |
 | **Forex** | FX / metals | via the `mt5` loader |
