@@ -800,6 +800,7 @@ _MARKET_TO_SOURCE = {
     "india_equity": "yahoo",
     "kr_equity": "pykrx",
     "ca_equity": "yahoo",
+    "vietnam_equity": "yahoo",
     "crypto": "okx",
     "futures": "tushare",
     "fund": "tushare",
