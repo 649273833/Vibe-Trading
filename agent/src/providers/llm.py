@@ -1028,23 +1028,21 @@ def _sync_provider_env() -> None:
         os.environ["OPENAI_BASE_URL"] = base_url
 
 
-def _supports_top_level_reasoning_effort(provider: str, caps_name: str) -> bool:
+def _supports_top_level_reasoning_effort(provider: str) -> bool:
     """Report whether a provider accepts a top-level ``reasoning_effort`` field.
 
-    Endpoints configured as ``openai`` use the OpenAI Chat Completions field.
-    Named or model-inferred third-party providers remain excluded because they
-    may reject it; relays that use ``extra_body.reasoning`` keep that path.
+    An explicit ``openai`` provider selects the OpenAI-compatible wire contract,
+    including gateway base URLs and model names that resemble third-party
+    providers. Named providers remain responsible for their own mappings, such
+    as relays that use ``extra_body.reasoning``.
 
     Args:
         provider: Configured ``LANGCHAIN_PROVIDER`` value.
-        caps_name: Canonical capability name resolved for the provider/model.
 
     Returns:
-        True only for a configured OpenAI endpoint with OpenAI capabilities. The
-        configured name check prevents unknown provider names from inheriting the
-        field, while the capability check excludes model-inferred providers.
+        True for the default or explicitly configured OpenAI-compatible adapter.
     """
-    return caps_name == "openai" and provider.strip().lower() in {"", "openai"}
+    return provider.strip().lower() in {"", "openai"}
 
 
 def provider_diagnostics() -> dict[str, Any]:
@@ -1155,9 +1153,7 @@ def provider_diagnostics() -> dict[str, Any]:
             "send_reasoning_content": caps.send_reasoning_content,
             "gemini_thought_signatures": caps.gemini_thought_signatures,
             "openrouter_reasoning_body": caps.openrouter_reasoning_body,
-            "top_level_reasoning_effort": _supports_top_level_reasoning_effort(
-                provider, caps.name
-            ),
+            "top_level_reasoning_effort": _supports_top_level_reasoning_effort(provider),
         },
     }
 
@@ -1269,7 +1265,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             if (
                 effort
                 and not use_responses_api
-                and _supports_top_level_reasoning_effort(provider, caps.name)
+                and _supports_top_level_reasoning_effort(provider)
             )
             else None
         ),

@@ -152,6 +152,20 @@ class TestDirectOpenAI:
 
         assert kwargs["reasoning_effort"] == "high"
 
+    def test_deepseek_flash_model_keeps_effort_on_openai_wire(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "openai",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "deepseek-v4-flash-0731",
+                "LANGCHAIN_REASONING_EFFORT": "max",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
+            }
+        )
+
+        assert kwargs["reasoning_effort"] == "max"
+
     def test_unset_effort_stays_absent(self) -> None:
         kwargs = _capture_kwargs(
             {
@@ -201,8 +215,7 @@ class TestUnsupportedProviders:
         assert kwargs["reasoning_effort"] is None
         assert kwargs["extra_body"] is None
 
-    def test_model_inferred_provider_wins_over_openai_default(self) -> None:
-        """provider=openai + a deepseek model resolves to DeepSeek, not OpenAI."""
+    def test_explicit_openai_provider_keeps_effort_for_deepseek_model(self) -> None:
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "openai",
@@ -214,7 +227,7 @@ class TestUnsupportedProviders:
             }
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs["reasoning_effort"] == "high"
 
     def test_unknown_provider_does_not_inherit_openai_fallback(self) -> None:
         """Unknown names fall back to OpenAI capabilities but stay unverified."""
@@ -286,6 +299,21 @@ class TestRequestPayload:
         """None must not serialize as a null field on unsupported providers."""
         assert "reasoning_effort" not in self._payload(None)
 
+    def test_deepseek_flash_effort_is_serialized_for_chat_completions(self) -> None:
+        if llm_mod.ChatOpenAIWithReasoning is None:
+            pytest.skip("langchain-openai is not installed")
+        from langchain_core.messages import HumanMessage
+
+        instance = llm_mod.ChatOpenAIWithReasoning(
+            model="deepseek-v4-flash-0731",
+            api_key="sk-test",
+            reasoning_effort="max",
+        )
+
+        payload = instance._get_request_payload([HumanMessage(content="hi")])
+
+        assert payload["reasoning_effort"] == "max"
+
 
 class TestResponsesAPI:
     def test_reasoning_effort_defaults_to_chat_completions(self) -> None:
@@ -318,6 +346,21 @@ class TestResponsesAPI:
         assert kwargs["use_responses_api"] is True
         assert kwargs["output_version"] == "responses/v1"
         assert kwargs["reasoning"] == {"effort": "high"}
+        assert kwargs["reasoning_effort"] is None
+
+    def test_deepseek_flash_can_opt_into_responses_reasoning(self) -> None:
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "openai",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://gateway.example/v1",
+                "LANGCHAIN_MODEL_NAME": "deepseek-v4-flash-0731",
+                "LANGCHAIN_REASONING_EFFORT": "max",
+                "LANGCHAIN_USE_RESPONSES_API": "true",
+            }
+        )
+
+        assert kwargs["reasoning"] == {"effort": "max"}
         assert kwargs["reasoning_effort"] is None
 
     def test_explicit_chat_mode_remains_available_for_legacy_endpoints(self) -> None:
