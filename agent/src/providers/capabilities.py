@@ -95,9 +95,9 @@ _NVIDIA_CAPABILITIES = ProviderCapabilities(
 
 # GLM thinking models (glm-4.5+/glm-5.x) stream the chain-of-thought as
 # ``reasoning_content`` with the final answer in ``content``. Capture the
-# reasoning like DeepSeek; do NOT replay it on assistant turns —
+# reasoning like DeepSeek.
 # ``send_reasoning_content`` stays off until verified live against bigmodel
-# (DeepSeek rejects replayed reasoning; zhipu is unconfirmed). See #458.
+# (zhipu is unconfirmed). See #458.
 _ZHIPU_CAPABILITIES = ProviderCapabilities(
     "zhipu",
     "ZHIPU_API_KEY",
@@ -148,6 +148,7 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         "DEEPSEEK_API_KEY",
         "DEEPSEEK_BASE_URL",
         capture_reasoning=True,
+        send_reasoning_content=True,
         native_adapter_package="langchain-deepseek",
     ),
     "siliconflow-cn": ProviderCapabilities(

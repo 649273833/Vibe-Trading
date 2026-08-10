@@ -599,10 +599,36 @@ def _build_native_deepseek(
         )
         return None
 
+    # DeepSeek v4-pro requires reasoning_content to be passed back in multi-turn
+    # conversations.  The native ChatDeepSeek._get_request_payload (as of
+    # langchain-deepseek 1.1.0) does not re-inject it, causing a 400 error:
+    #   "The reasoning_content in the thinking mode must be passed back to the API."
+    # We subclass ChatDeepSeek to preserve its DeepSeek-specific fixes (tool
+    # message JSON serialization, assistant content list → string conversion,
+    # Azure tool_choice fix) while also round-tripping reasoning_content.
+    class _ChatDeepSeekWithReasoning(chat_deepseek):
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            try:
+                messages = super()._convert_input(input_).to_messages()
+            except Exception:
+                return payload
+            for i, m in enumerate(payload.get("messages", ())):
+                if m.get("role") != "assistant":
+                    continue
+                try:
+                    source = messages[i]
+                    rc = source.additional_kwargs.get("reasoning_content", "")
+                except (IndexError, AttributeError):
+                    continue
+                if rc:
+                    m["reasoning_content"] = rc
+            return payload
+
     creds = get_llm_credentials("deepseek", model)
     api_key = creds["api_key"]
     base_url = creds["base_url"]
-    return chat_deepseek(
+    return _ChatDeepSeekWithReasoning(
         model=model,
         temperature=temperature,
         timeout=get_env_config().llm.timeout_seconds,
