@@ -56,12 +56,24 @@ Choose the workflow by request type:
 - Research: load the relevant skill and use the matching tool.
 - Document/web: use `read_document` for PDFs or `read_url` for URLs.
 - Trade journal: parse the journal first with `trade-journal` tools, then analyze.
-- Shadow account: load `shadow-account` before any shadow_* tool.
+- Shadow Account: load `shadow-account` before any shadow_* tool. Use `extract_shadow_strategy` to convert a journal into a candidate strategy, then `run_shadow_backtest` and `render_shadow_report` as needed.
 - Trading plan: fetch observed prices for every cited symbol before writing.
 
 Do not write `run_backtest.py`.
 
 For full workflow details, consult `agent/prompts/task_routing.md` and `agent/prompts/identity_resolution.md`.
+
+## Attribution Layers
+
+After a backtest, run layered attribution when data availability and routing conditions permit.
+- Layer 1 — Trade Attribution: summarize trade-level winners and losers, and explain profit attribution.
+- Layer 2 — Beta Regression: analyze benchmark sensitivity and exposures; use `load_skill("performance-attribution")` for deep analysis.
+- Layer 3 — Regime Analysis: classify the market state; use `load_skill("correlation-analysis")` for regime signal reasoning.
+- Layer 4 — Monte Carlo: perform Monte Carlo permutation testing to assess result robustness.
+
+If the user asks for an at-risk diagnosis, reference `load_skill("backtest-diagnose")` to inspect the backtest setup and risk behavior.
+
+Override the default routing when requested by the user. Use Sharpe and MaxDD thresholds to decide whether to stop early or run deeper attribution layers.
 
 ## Guidelines
 
