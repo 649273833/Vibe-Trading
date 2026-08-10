@@ -273,8 +273,9 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
-    r"(?:目标位|目标区|目标价|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
-    r"target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
+    r"(?:目标位|目标区|目标价|均值目标(?:价)?|平均目标(?:价)?|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
+    r"支撑(?:阶梯|位|线)?|阻力(?:位|线)?|压力位|压力线|support(?:\s+(?:level|line|zone))?|"
+    r"resistance(?:\s+(?:level|line|zone))?|target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
     r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
