@@ -28,6 +28,7 @@ from src.trading.connectors.etoro.copy_trading import (
 )
 from src.trading.connectors.etoro.instruments import (
     get_instrument_metadata,
+    get_instrument_types,
     list_instruments_by_type,
     resolve_instrument_id,
     search_instruments,
@@ -62,6 +63,7 @@ __all__ = [
     "copy_close",
     "search_instruments",
     "list_instruments_by_type",
+    "get_instrument_types",
     "get_instrument_metadata",
     "EtoroConfig",
     "EtoroConfigError",

@@ -30,6 +30,7 @@ PAPER_GUARD = "path_separated_key_bound"
 
 # Market-data routes are profile-neutral (no demo/real path prefix).
 MARKET_DATA_INSTRUMENTS_PATH = "/api/v1/market-data/instruments"
+MARKET_DATA_INSTRUMENT_TYPES_PATH = "/api/v1/market-data/instrument-types"
 MARKET_DATA_RATES_PATH = "/api/v1/market-data/instruments/rates"
 MARKET_DATA_SEARCH_PATH = "/api/v1/market-data/search"
 
@@ -217,7 +218,8 @@ def positions_root(cfg: EtoroConfig) -> str:
 
 
 def copy_root(cfg: EtoroConfig) -> str:
-    return "/api/v2/trading/copy/demo" if cfg.is_paper else "/api/v2/trading/copy"
+    """Copy-trading routes share one path for demo and real (no ``/demo`` prefix)."""
+    return "/api/v2/trading/copy"
 
 
 class EtoroClient:

@@ -19,6 +19,7 @@ ETORO_TOOL_CLASS: dict[str, ToolClass] = {
     "get_historical_bars": ToolClass.READ,
     "search_instruments": ToolClass.READ,
     "list_instruments_by_type": ToolClass.READ,
+    "get_instrument_types": ToolClass.READ,
     "get_instrument_metadata": ToolClass.READ,
     "copy_poll": ToolClass.READ,
     "copy_precheck": ToolClass.READ,
