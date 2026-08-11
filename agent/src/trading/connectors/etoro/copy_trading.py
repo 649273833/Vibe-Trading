@@ -13,6 +13,11 @@ from src.trading.connectors.etoro.client import EtoroAPIError, EtoroConfig, copy
 
 _REFERENCE_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,35}$")
 
+COPY_TRADING_PAPER_UNSUPPORTED = (
+    "eToro Public API copy trading is not available on demo (paper) accounts. "
+    "Use a live profile (e.g. etoro-live-trade) with a real account."
+)
+
 
 def _base(cfg: EtoroConfig) -> dict[str, Any]:
     return {
@@ -26,6 +31,16 @@ def _error(cfg: EtoroConfig, message: str, **extra: Any) -> dict[str, Any]:
     return {"status": "error", "error": message, **_base(cfg), **extra}
 
 
+def _reject_copy_on_paper(cfg: EtoroConfig) -> dict[str, Any] | None:
+    if cfg.is_paper:
+        return _error(
+            cfg,
+            COPY_TRADING_PAPER_UNSUPPORTED,
+            error_code="copy_unavailable_on_paper",
+        )
+    return None
+
+
 def copy_precheck(
     config: EtoroConfig | None = None,
     *,
@@ -36,6 +51,9 @@ def copy_precheck(
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
+    blocked = _reject_copy_on_paper(cfg)
+    if blocked is not None:
+        return blocked
     try:
         clean_amount = float(amount)
     except (TypeError, ValueError, OverflowError):
@@ -65,6 +83,9 @@ def copy_start_or_adjust(
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
+    blocked = _reject_copy_on_paper(cfg)
+    if blocked is not None:
+        return blocked
     try:
         clean_amount = float(amount)
     except (TypeError, ValueError, OverflowError):
@@ -111,6 +132,9 @@ def copy_poll(
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
+    blocked = _reject_copy_on_paper(cfg)
+    if blocked is not None:
+        return blocked
     ref = str(reference_id or "").strip()
     if not ref:
         return _error(cfg, "reference_id is required")
@@ -135,6 +159,9 @@ def copy_close(
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
+    blocked = _reject_copy_on_paper(cfg)
+    if blocked is not None:
+        return blocked
     action = str(unregister_type or "Close").strip()
     if action not in ("Close", "Detach"):
         return _error(cfg, "unregister_type must be 'Close' or 'Detach'")
@@ -168,6 +195,9 @@ def copy_poll_until_complete(
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
+    blocked = _reject_copy_on_paper(cfg)
+    if blocked is not None:
+        return blocked
     deadline = time.monotonic() + max(1.0, float(timeout_s))
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:

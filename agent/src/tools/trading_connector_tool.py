@@ -740,7 +740,10 @@ class EtoroEditPositionStopsTool(BaseTool):
 
 class EtoroCopyPrecheckTool(BaseTool):
     name = "etoro_copy_precheck"
-    description = "Dry-run whether the account can copy an investor with an account-currency amount."
+    description = (
+        "Dry-run whether the account can copy an investor with an account-currency amount. "
+        "Live accounts only — not supported on demo (paper) profiles."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -777,7 +780,10 @@ class EtoroCopyPrecheckTool(BaseTool):
 
 class EtoroCopyStartTool(BaseTool):
     name = "etoro_copy_start"
-    description = "Start copying an investor or adjust an existing copy allocation."
+    description = (
+        "Start copying an investor or adjust an existing copy allocation. "
+        "Live accounts only — not supported on demo (paper) profiles."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -822,7 +828,10 @@ class EtoroCopyStartTool(BaseTool):
 
 class EtoroCopyPollTool(BaseTool):
     name = "etoro_copy_poll"
-    description = "Poll the outcome of an asynchronous eToro copy operation."
+    description = (
+        "Poll the outcome of an asynchronous eToro copy operation. "
+        "Live accounts only — not supported on demo (paper) profiles."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -855,7 +864,10 @@ class EtoroCopyPollTool(BaseTool):
 
 class EtoroCopyCloseTool(BaseTool):
     name = "etoro_copy_close"
-    description = "Close or detach an eToro copy relationship by mirror id."
+    description = (
+        "Close or detach an eToro copy relationship by mirror id. "
+        "Live accounts only — not supported on demo (paper) profiles."
+    )
     parameters = {
         "type": "object",
         "properties": {
