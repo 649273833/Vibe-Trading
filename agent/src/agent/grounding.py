@@ -887,16 +887,65 @@ class GroundingLedger:
             if self._match_authorized_symbol(symbol, authorized) is None
         )
         if mismatched:
+            message = (
+                "Consumer symbol/venue differs from the locked resolver identity; "
+                "silent suffix or exchange rewrites are forbidden."
+            )
+            hints = [
+                hint
+                for symbol in mismatched
+                for hint in self._venue_mismatch_hints(symbol, authorized)
+            ]
+            if hints:
+                message += " " + " ".join(hints)
             return ToolAuthorization(
                 allowed=False,
                 error_code="identity_mismatch",
-                message=(
-                    "Consumer symbol/venue differs from the locked resolver identity; "
-                    "silent suffix or exchange rewrites are forbidden."
-                ),
+                message=message,
                 symbols=mismatched,
             )
         return ToolAuthorization(allowed=True, symbols=symbols)
+
+    @staticmethod
+    def _venue_mismatch_hints(
+        requested_symbol: str,
+        authorized_symbols: Iterable[str],
+    ) -> list[str]:
+        """Turn a same-issuer venue mismatch into an actionable resolver hint.
+
+        ``BLDP.US`` against a locked ``BLDP.TO`` is not a typo of one identity;
+        it is a second listing of the same company that was never resolved.
+        Naming the exact ``search_symbol`` query keeps the model from retrying
+        the identical unauthorized call. A bare ticker that collides with
+        several locked venues gets a "use the full suffix" hint instead.
+        """
+        requested = _normalize_symbol(requested_symbol)
+        authorized = {_normalize_symbol(item) for item in authorized_symbols}
+        if "." in requested:
+            base = requested.rsplit(".", 1)[0]
+            same_issuer = sorted(
+                item
+                for item in authorized
+                if "." in item and item.rsplit(".", 1)[0] == base
+            )
+            if same_issuer:
+                return [
+                    f"[{requested_symbol} is a second venue of {', '.join(same_issuer)}; "
+                    f"call search_symbol('{requested_symbol}') in a separate turn "
+                    f"before querying it.]"
+                ]
+            return []
+        matches = sorted(
+            item
+            for item in authorized
+            if "." in item and item.rsplit(".", 1)[0] == requested
+        )
+        if len(matches) > 1:
+            return [
+                f"[{requested_symbol} matches multiple locked identities "
+                f"({', '.join(matches)}); use the full venue-suffixed symbol.]"
+            ]
+        return []
 
     @staticmethod
     def _match_authorized_symbol(
