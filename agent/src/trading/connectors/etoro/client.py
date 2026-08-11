@@ -28,6 +28,11 @@ CONFIG_FILENAME = "etoro.json"
 BASE_URL = "https://public-api.etoro.com"
 PAPER_GUARD = "path_separated_key_bound"
 
+# Market-data routes are profile-neutral (no demo/real path prefix).
+MARKET_DATA_INSTRUMENTS_PATH = "/api/v1/market-data/instruments"
+MARKET_DATA_RATES_PATH = "/api/v1/market-data/instruments/rates"
+MARKET_DATA_SEARCH_PATH = "/api/v1/market-data/search"
+
 PROFILE_ENVIRONMENTS = {
     "paper": "paper",
     "live-readonly": "live",

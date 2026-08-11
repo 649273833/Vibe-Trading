@@ -550,19 +550,31 @@ class EtoroSearchInstrumentsTool(BaseTool):
 
     name = "etoro_search_instruments"
     description = (
-        "Search eToro instruments by ticker (BTC, AAPL) or free text. "
-        "Tickers use exact internalSymbolFull lookup; discovery uses fuzzy search."
+        "Search eToro instruments by ticker (BTC, AAPL), free text, or asset class "
+        "(crypto, stocks, forex). Tickers use exact internalSymbolFull lookup; "
+        "asset-class labels browse via instrumentTypeId on /market-data/instruments."
     )
     parameters = {
         "type": "object",
         "properties": {
             **ETORO_TOOL_PARAMETERS,
-            "query": {"type": "string", "description": "Ticker or search text (e.g. BTC, Apple)."},
+            "query": {
+                "type": "string",
+                "description": "Ticker, search text (e.g. Apple), or asset class (e.g. crypto).",
+            },
             "limit": {"type": "integer", "description": "Max results (default 10, max 50)."},
             "mode": {
                 "type": "string",
-                "enum": ["auto", "symbol", "discover"],
-                "description": "auto: ticker exact lookup then fuzzy; symbol: exact only; discover: fuzzy only.",
+                "enum": ["auto", "symbol", "discover", "type"],
+                "description": "auto: ticker exact lookup then fuzzy; symbol: exact only; discover: fuzzy only; type: browse by instrument_type_id.",
+            },
+            "instrument_type_id": {
+                "type": "integer",
+                "description": "eToro instrumentTypeID (1=Forex … 10=Crypto). Browse mode when set.",
+            },
+            "include_rates": {
+                "type": "boolean",
+                "description": "When browsing by type, attach bid/ask/last from /market-data/instruments/rates.",
             },
         },
         "required": ["query"],
@@ -575,6 +587,8 @@ class EtoroSearchInstrumentsTool(BaseTool):
             overrides = _etoro_overrides(kwargs)
             limit = _int_or_none(kwargs.get("limit"), "limit") or 10
             mode = str(kwargs.get("mode") or "auto")
+            instrument_type_id = _int_or_none(kwargs.get("instrument_type_id"), "instrument_type_id")
+            include_rates = bool(kwargs.get("include_rates", False))
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
         try:
@@ -584,6 +598,8 @@ class EtoroSearchInstrumentsTool(BaseTool):
                     _connection(kwargs.get("connection")),
                     limit=limit,
                     mode=mode,
+                    instrument_type_id=instrument_type_id,
+                    include_rates=include_rates,
                     **overrides,
                 )
             )

@@ -153,6 +153,8 @@ def search_instruments(
     *,
     limit: int = 10,
     mode: str = "auto",
+    instrument_type_id: int | None = None,
+    include_rates: bool = False,
     **overrides: Any,
 ) -> dict[str, Any]:
     """Search tradable instruments (eToro Public API)."""
@@ -167,6 +169,8 @@ def search_instruments(
             module.build_config(profile.config, overrides),
             limit=limit,
             mode=mode,
+            instrument_type_id=instrument_type_id,
+            include_rates=include_rates,
         ),
     )
 

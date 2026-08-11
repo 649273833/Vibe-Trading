@@ -245,6 +245,7 @@ def test_classification_registered() -> None:
     assert classify_tool("unknown_etoro_op", None, curated) is ToolClass.UNKNOWN
     assert ETORO_TOOL_CLASS["copy_close"] is ToolClass.WRITE
     assert ETORO_TOOL_CLASS["get_instrument_metadata"] is ToolClass.READ
+    assert ETORO_TOOL_CLASS["list_instruments_by_type"] is ToolClass.READ
 
 
 def test_resolve_btc_uses_internal_symbol_full(monkeypatch) -> None:
@@ -295,6 +296,103 @@ def test_fuzzy_search_filters_sentinel_ids(monkeypatch) -> None:
     result = search_instruments("bitcoin", cfg, limit=5, mode="discover")
     assert result["status"] == "ok"
     assert result["instruments"][0]["instrument_id"] == 100000
+
+
+def test_crypto_query_browses_instrument_type_catalog(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        captured.append((url, dict(kwargs.get("params") or {})))
+        if "/market-data/instruments" in url and kwargs.get("params", {}).get("instrumentTypeId") == 10:
+            return _FakeResponse(
+                200,
+                {
+                    "instrumentDisplayDatas": [
+                        {
+                            "instrumentID": 100000,
+                            "symbolFull": "BTC",
+                            "instrumentDisplayName": "Bitcoin",
+                            "instrumentTypeID": 10,
+                        },
+                        {
+                            "instrumentID": 5,
+                            "symbolFull": "00001.HK",
+                            "instrumentDisplayName": "CK Hutchison",
+                            "instrumentTypeID": 5,
+                        },
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected request {method} {url} {kwargs.get('params')}")
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    from src.trading.connectors.etoro.instruments import search_instruments
+
+    result = search_instruments("crypto", cfg, limit=5)
+    assert result["status"] == "ok"
+    assert result["mode"] == "type"
+    assert result["instrument_type_id"] == 10
+    assert result["instruments"][0]["symbol"] == "BTC"
+    assert all(row.get("instrument_type_id") == 10 for row in result["instruments"])
+    assert not any("/market-data/search" in url for url, _ in captured)
+    assert any(params.get("instrumentTypeId") == 10 for _, params in captured)
+
+
+def test_crypto_browse_can_attach_flat_market_data_rates(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="live-readonly", api_key="k", user_key="u")
+    captured_urls: list[str] = []
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        captured_urls.append(url)
+        if "/market-data/instruments" in url and "rates" not in url:
+            return _FakeResponse(
+                200,
+                {
+                    "instrumentDisplayDatas": [
+                        {
+                            "instrumentID": 100000,
+                            "symbolFull": "BTC",
+                            "instrumentTypeID": 10,
+                        },
+                    ],
+                },
+            )
+        if "/market-data/instruments/rates" in url:
+            return _FakeResponse(
+                200,
+                {"rates": [{"instrumentID": 100000, "bid": 1.0, "ask": 2.0, "lastExecution": 1.5}]},
+            )
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    from src.trading.connectors.etoro.instruments import search_instruments
+
+    result = search_instruments("crypto", cfg, limit=5, include_rates=True)
+    assert result["instruments"][0]["quote"] == {"bid": 1.0, "ask": 2.0, "last": 1.5}
+    assert any("/market-data/instruments/rates" in url for url in captured_urls)
+    assert not any(url.endswith("/api/v1/instruments") for url in captured_urls)
+
+
+def test_get_quote_uses_flat_rates_on_readonly_profile(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="live-readonly", api_key="k", user_key="u")
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        if "/market-data/search" in url:
+            return _FakeResponse(200, {"items": [{"instrumentId": 100000, "internalSymbolFull": "BTC"}]})
+        if "/market-data/instruments/rates" in url:
+            return _FakeResponse(200, {"rates": [{"instrumentID": 100000, "bid": 1.0, "ask": 2.0}]})
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    result = etoro_sdk.get_quote("BTC", config=cfg)
+    assert result["status"] == "ok"
+    assert result["quote"]["bid"] == 1.0
+
+    service_result = service.get_quote("BTC", "etoro-live-sdk-readonly", api_key="k", user_key="u")
+    assert service_result["status"] == "ok"
+    assert service_result["profile_id"] == "etoro-live-sdk-readonly"
+    assert service_result["quote"]["ask"] == 2.0
 
 
 def test_get_open_orders_reads_portfolio_orders(monkeypatch) -> None:
