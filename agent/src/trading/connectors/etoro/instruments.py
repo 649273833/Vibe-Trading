@@ -3,7 +3,7 @@
 eToro Public API conventions (see eToro builders docs):
 - Exact ticker lookup: ``GET /market-data/search?internalSymbolFull=BTC``
 - Fuzzy discovery: ``GET /market-data/search?search=<query>&limit=<n>``
-- Asset-class browse: ``GET /market-data/instruments?instrumentTypeId=<n>``
+- Asset-class browse: ``GET /market-data/instruments?instrumentTypeIds=<n>``
 - Search responses use ``items[]`` with ``instrumentId`` (lowercase ``d``).
 - Metadata enrichment: ``GET /market-data/instruments?instrumentIds=...``
 - Quotes (all profiles): ``GET /market-data/instruments/rates?instrumentIds=...``
@@ -108,7 +108,8 @@ def search_instruments(
             ``discover`` (fuzzy ``search`` param only), or ``type`` (browse by
             ``instrument_type_id`` / asset-class alias).
         instrument_type_id: Optional eToro ``instrumentTypeID`` filter (e.g. ``10``
-            for crypto). When set, uses ``GET /market-data/instruments``.
+            for crypto). When set, uses ``GET /market-data/instruments`` with
+            ``instrumentTypeIds``.
         include_rates: When browsing by type, attach bid/ask/last from the flat
             ``/market-data/instruments/rates`` endpoint (works on all profiles).
     """
@@ -192,7 +193,7 @@ def list_instruments_by_type(
     payload = make_client(cfg).request(
         "GET",
         MARKET_DATA_INSTRUMENTS_PATH,
-        params={"instrumentTypeId": type_id},
+        params={"instrumentTypeIds": type_id},
         allow_retry=True,
     )
     items = _extract_metadata_items(payload)
@@ -203,7 +204,6 @@ def list_instruments_by_type(
     ]
     normalized = [_normalize_metadata_row(item) for item in filtered]
     normalized = [row for row in normalized if row.get("instrument_id") is not None]
-    normalized.sort(key=lambda row: str(row.get("symbol") or row.get("display_name") or ""))
     instruments = normalized[:clean_limit]
     if include_rates:
         _attach_rates(cfg, instruments)

@@ -552,7 +552,7 @@ class EtoroSearchInstrumentsTool(BaseTool):
     description = (
         "Search eToro instruments by ticker (BTC, AAPL), free text, or asset class "
         "(crypto, stocks, forex). Tickers use exact internalSymbolFull lookup; "
-        "asset-class labels browse via instrumentTypeId on /market-data/instruments."
+        "asset-class labels browse via instrumentTypeIds on /market-data/instruments."
     )
     parameters = {
         "type": "object",

@@ -304,7 +304,7 @@ def test_crypto_query_browses_instrument_type_catalog(monkeypatch) -> None:
 
     def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
         captured.append((url, dict(kwargs.get("params") or {})))
-        if "/market-data/instruments" in url and kwargs.get("params", {}).get("instrumentTypeId") == 10:
+        if "/market-data/instruments" in url and kwargs.get("params", {}).get("instrumentTypeIds") == 10:
             return _FakeResponse(
                 200,
                 {
@@ -336,7 +336,7 @@ def test_crypto_query_browses_instrument_type_catalog(monkeypatch) -> None:
     assert result["instruments"][0]["symbol"] == "BTC"
     assert all(row.get("instrument_type_id") == 10 for row in result["instruments"])
     assert not any("/market-data/search" in url for url, _ in captured)
-    assert any(params.get("instrumentTypeId") == 10 for _, params in captured)
+    assert any(params.get("instrumentTypeIds") == 10 for _, params in captured)
 
 
 def test_crypto_browse_can_attach_flat_market_data_rates(monkeypatch) -> None:
