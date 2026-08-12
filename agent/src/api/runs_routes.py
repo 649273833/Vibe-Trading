@@ -89,6 +89,9 @@ def _build_response_from_run_dir(
     else:
         response.status = "unknown"
 
+    request_data = _load_json_file(run_dir / "req.json") or {}
+    response.prompt = request_data.get("prompt") or request_data.get("request")
+
     planner_path = run_dir / "planner_output.json"
     response.planner_output = _load_json_file(planner_path)
 
