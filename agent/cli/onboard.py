@@ -14,6 +14,7 @@ directly so Esc / Left-arrow can be bound to a back-step sentinel.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from dataclasses import dataclass
@@ -129,14 +130,20 @@ def _render_env(values: dict[str, str]) -> str:
 
 
 def _save_partial(values: dict[str, str]) -> None:
-    """Best-effort write to ``.env.partial`` (crash-resilience nicety)."""
+    """Best-effort write to ``.env.partial`` (crash-resilience nicety).
+
+    The mode is applied at creation, as ``_finalize`` already does via
+    ``mkstemp``.
+    """
     try:
         _env_dir().mkdir(parents=True, exist_ok=True)
-        _partial_path().write_text(_render_env(values), encoding="utf-8")
-        try:
-            _partial_path().chmod(0o600)
-        except OSError:
-            pass
+        path = _partial_path()
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        # O_CREAT does not apply the mode to an existing file.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(_render_env(values))
     except OSError:
         pass
 
