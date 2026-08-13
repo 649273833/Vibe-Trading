@@ -235,7 +235,7 @@ _QUANTITY_WITH_UNIT_RE = re.compile(
     r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
     r"\s*[-–—]?\s*"
     r"(?:"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次)"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|个交易日|项|行)"
     r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
     r"wks?|weeks?|months?|days?|years?|yrs?)\b"
     r")",
@@ -265,6 +265,73 @@ _INDICATOR_VALUE_RE = re.compile(
     r"[-+]?\d[\d,]*(?:\.\d+)?",
     re.IGNORECASE,
 )
+# A currency token may sit between a level marker or comparison operator and
+# the number: "收盘 <$2.86", "目标位 C$6.80", "trigger at $119.68". Without
+# it, the number survives masking and is compared against observed OHLC as a
+# price claim even though it is a prospective level, not an observed quote.
+_CURRENCY_TOKEN = r"(?:\$|US\$|C\$|HK\$|CAD|USD|CNY|HKD|¥|￥)?"
+# A historical reference names a price the instrument once traded at — an
+# all-time high, a 52-week extreme — and the answer is not claiming it as
+# today's observed quote. "8/12 高 149.60 为 6/16 ATH 225.64 以来最高" was
+# rejected because 225.64 (the June ATH) fell outside this session's observed
+# OHLC range. The marker must be adjacent to the number, so a plain field
+# reading such as "8/12 高 149.60" stays checked: its 高 carries no historical
+# qualifier. "创历史新高" shares the 历史新高 marker and is masked with it; the
+# relaxation follows the same trade-off as prospective levels — the historical
+# extreme is a reference, not an assertion about the current bar.
+_REFERENCE_LEVEL_RE = re.compile(
+    r"(?:"
+    r"\bATH\b|all[- ]?time\s+(?:high|low)|"
+    r"52\s*[- ]?W(?:EEK)?\s*(?:high|low)|52\s*[- ]?W(?:EEK)?\s*高(?:点|位)?|"
+    r"52\s*周(?:高|低)(?:点|位)?|"
+    r"历史(?:最高|最低|新高|新低|高|低)(?:点|位|价)?|"
+    r"上市以来(?:最高|最低)(?:点|位|价)?"
+    r")"
+    r"\s*(?:of|为|是|约|at)?\s*[:：]?\s*\(?"
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# A date-anchored reference puts the historical extreme after the number:
+# "7/10(150.57)以来最高" and "highest since 7/10 (150.57)". The parenthesized
+# value is the earlier high/low, not a current quote, and was rejected against
+# the session's observed window (which does not reach back to July).
+_SINCE_REFERENCE_RE = re.compile(
+    r"[-+]?\d[\d,]*(?:\.\d+)?\s*\)?\s*以来(?:最高|最低|高|低)(?:点|位)?"
+    # Dates are masked before this runs, so "since 7/10 (150.57)" has lost its
+    # date digits by the time the connector is matched.
+    r"|(?:highest|lowest)\s+since[^0-9\n]{0,16}"
+    r"[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# A validation report cites a plan file by line number — "~line 206",
+# "第 206 行" — and the number is a document location, not a price. Before
+# this mask, "**文档 ~line 206「…」不成立" contributed 206.0 as a candidate
+# price claim and was rejected against the observed OHLC range.
+_LINE_REFERENCE_RE = re.compile(
+    r"(?:~\s*)?\blines?\b\s*[:#]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?"
+    r"|第\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?\s*行"
+    r"|行\s*[:：]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?",
+    re.IGNORECASE,
+)
+# A numbered markdown heading ("### 6. 关键价位") names a section index, not
+# a price. The ordered-list mask only covers line-leading "1." and stops at
+# the "### " prefix, so the section number was extracted as a claim.
+_NUMBERED_HEADING_RE = re.compile(r"(?m)^\s*#{1,6}\s*\d+(?:[.、．])?\s*")
+# A ratio ("6:1 折算", "10:1") names a conversion basis, not a quote price.
+_RATIO_RE = re.compile(r"\d+(?:\.\d+)?\s*[:：]\s*\d+(?:\.\d+)?")
+# A currency conversion cited inside a report ("USD/CAD≈1.36") is a basis, not
+# an instrument quote. But `EUR/USD` IS this project's canonical forex symbol
+# (``backtest/engines/forex.py``, and akshare_loader accepts the slash form), so
+# masking every ``AAA/BBB <number>`` would stop checking real FX quotes on a
+# first-class market — an invented rate would pass. The pair form therefore
+# requires an approximation marker, which a conversion basis carries and a quote
+# does not: "USD/CAD≈1.36" is masked, bare "USD/CAD 1.36" stays checked. The
+# labelled 汇率 / "exchange rate" form is unambiguous and needs no marker.
+_FX_RATE_RE = re.compile(
+    r"[A-Z]{3}\s*/\s*[A-Z]{3}\s*(?:≈|~|约)\s*\d+(?:\.\d+)?"
+    r"|(?:汇率|FX\s*rate|exchange\s+rate)\s*(?:≈|~|=|为|是)?\s*\d+(?:\.\d+)?",
+    re.IGNORECASE,
+)
 # A trading plan quotes levels it does not claim to have observed. In the
 # committee report attached to #983, "收盘 ≥6.45 且量 ≥35M手" is an entry
 # trigger, "年线 4.63 成目标区" is a target zone, and neither asserts anything
@@ -286,15 +353,19 @@ _INDICATOR_VALUE_RE = re.compile(
 _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
-    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)"
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
-    r"(?:目标位|目标区|目标价|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
-    r"target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
-    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:目标位|目标区|目标价|均值目标(?:价)?|平均目标(?:价)?|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
+    r"支撑(?:阶梯|位|线)?|阻力(?:位|线)?|压力位|压力线|support(?:\s+(?:level|line|zone))?|"
+    r"resistance(?:\s+(?:level|line|zone))?|target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
+    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*"
+    + _CURRENCY_TOKEN
+    + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
-    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"" + _CURRENCY_TOKEN + r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach
@@ -902,16 +973,65 @@ class GroundingLedger:
             if self._match_authorized_symbol(symbol, authorized) is None
         )
         if mismatched:
+            message = (
+                "Consumer symbol/venue differs from the locked resolver identity; "
+                "silent suffix or exchange rewrites are forbidden."
+            )
+            hints = [
+                hint
+                for symbol in mismatched
+                for hint in self._venue_mismatch_hints(symbol, authorized)
+            ]
+            if hints:
+                message += " " + " ".join(hints)
             return ToolAuthorization(
                 allowed=False,
                 error_code="identity_mismatch",
-                message=(
-                    "Consumer symbol/venue differs from the locked resolver identity; "
-                    "silent suffix or exchange rewrites are forbidden."
-                ),
+                message=message,
                 symbols=mismatched,
             )
         return ToolAuthorization(allowed=True, symbols=symbols)
+
+    @staticmethod
+    def _venue_mismatch_hints(
+        requested_symbol: str,
+        authorized_symbols: Iterable[str],
+    ) -> list[str]:
+        """Turn a same-issuer venue mismatch into an actionable resolver hint.
+
+        ``BLDP.US`` against a locked ``BLDP.TO`` is not a typo of one identity;
+        it is a second listing of the same company that was never resolved.
+        Naming the exact ``search_symbol`` query keeps the model from retrying
+        the identical unauthorized call. A bare ticker that collides with
+        several locked venues gets a "use the full suffix" hint instead.
+        """
+        requested = _normalize_symbol(requested_symbol)
+        authorized = {_normalize_symbol(item) for item in authorized_symbols}
+        if "." in requested:
+            base = requested.rsplit(".", 1)[0]
+            same_issuer = sorted(
+                item
+                for item in authorized
+                if "." in item and item.rsplit(".", 1)[0] == base
+            )
+            if same_issuer:
+                return [
+                    f"[{requested_symbol} is a second venue of {', '.join(same_issuer)}; "
+                    f"call search_symbol('{requested_symbol}') in a separate turn "
+                    f"before querying it.]"
+                ]
+            return []
+        matches = sorted(
+            item
+            for item in authorized
+            if "." in item and item.rsplit(".", 1)[0] == requested
+        )
+        if len(matches) > 1:
+            return [
+                f"[{requested_symbol} matches multiple locked identities "
+                f"({', '.join(matches)}); use the full venue-suffixed symbol.]"
+            ]
+        return []
 
     @staticmethod
     def _match_authorized_symbol(
@@ -2116,6 +2236,12 @@ class GroundingLedger:
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
+        masked = _REFERENCE_LEVEL_RE.sub(" ", masked)
+        masked = _SINCE_REFERENCE_RE.sub(" ", masked)
+        masked = _LINE_REFERENCE_RE.sub(" ", masked)
+        masked = _NUMBERED_HEADING_RE.sub(" ", masked)
+        masked = _RATIO_RE.sub(" ", masked)
+        masked = _FX_RATE_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
