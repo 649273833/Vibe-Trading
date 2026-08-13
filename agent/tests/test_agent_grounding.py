@@ -1295,6 +1295,56 @@ def test_plan_level_mask_leaves_observed_quotes_checked(
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
 
 
+# A currency token between the anchor and the number used to break every
+# prospective branch: "收盘 <$2.86" left 2.86 to be compared against observed
+# OHLC, "目标位 $6.80" left 6.8, and "trigger at $119.68" left 119.68. These
+# are levels, not observed quotes, so each must mask entirely.
+_CURRENCY_PREFIXED_PLAN_LEVELS = [
+    "收盘 <$2.86",
+    "目标位 $6.80，止损位 C$5.20",
+    "trigger at $119.68",
+    "支撑位 $190.12",
+    "target price of $6.80",
+    "收盘 ≥ $135 且低点 > $119.68",
+]
+
+
+@pytest.mark.parametrize(
+    "segment", _CURRENCY_PREFIXED_PLAN_LEVELS, ids=range(len(_CURRENCY_PREFIXED_PLAN_LEVELS))
+)
+def test_currency_prefixed_plan_levels_are_not_read_as_observed_prices(segment: str) -> None:
+    """A currency-prefixed trigger or target is prospective, not observed."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
+# A historical reference names a price the instrument once traded at. The
+# SPCX.US weekly plan quoted "6/16 ATH 225.64" next to the 8/12 high 149.60;
+# 225.64 fell outside the session's observed OHLC range (105.11–149.6) and was
+# rejected as a conflict even though it is a reference, not a current quote.
+_REFERENCE_LEVEL_SEGMENTS = [
+    ("8/12 高 149.60 为 6/16 ATH 225.64 以来最高", [149.60]),
+    ("8/12 高 149.60 为 6/16 历史高点 225.64 以来最高", [149.60]),
+    ("8/12 高 149.60 为 6/16 all-time high 225.64 以来最高", [149.60]),
+    ("52W 高 543.14", []),
+    ("52-week low of $190.12", []),
+    ("52W low (C$7.27)", []),
+    ("历史最低 $60.82", []),
+    ("ATH (C$7.31)", []),
+]
+
+
+@pytest.mark.parametrize(
+    "segment,expected",
+    _REFERENCE_LEVEL_SEGMENTS,
+    ids=[c[0][:28] for c in _REFERENCE_LEVEL_SEGMENTS],
+)
+def test_reference_levels_are_not_read_as_observed_price_claims(
+    segment: str, expected: list[float],
+) -> None:
+    """An ATH/52-week/historical extreme is a reference, not a current quote."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
+
+
 def test_plan_level_mask_does_not_shield_a_wrong_quote_end_to_end(tmp_path: Path) -> None:
     """The end-to-end gate still rejects a fabricated quote beside a plan level."""
     ledger = _screened_ledger(tmp_path)
@@ -1314,6 +1364,97 @@ def test_plan_level_alone_reaches_a_valid_answer(tmp_path: Path) -> None:
     result = ledger.validate_final_answer(
         "000543.SZ 收盘价 8.20 CNY（source: tencent）。"
         "转多信号：收盘 ≥9.10；转空强化：收盘 <7.40 且 3 日不收复 → 目标位 6.90。"
+    )
+
+    assert result.valid is True, result.issues
+
+
+def _spcx_us_ledger(tmp_path: Path) -> GroundingLedger:
+    """A ledger that locked SPCX.US and observed 8/7–8/12 OHLC bars."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="以 SPCX.US（纳斯达克，SpaceX 本体）作为美股侧参考",
+    )
+    query = "SPCX.US"
+    ledger.authorize_tool_call(
+        "search_symbol",
+        {"query": query},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="resolve",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": query},
+        result=_resolver_payload(symbol="SPCX.US", query=query),
+        call_id="resolve",
+        success=True,
+    )
+    payload = json.dumps(
+        {
+            "SPCX.US": [
+                {
+                    "trade_date": "2026-08-07",
+                    "open": 114.97,
+                    "high": 133.48,
+                    "low": 114.53,
+                    "close": 133.11,
+                    "volume": 242130700,
+                },
+                {
+                    "trade_date": "2026-08-10",
+                    "open": 134.95,
+                    "high": 139.26,
+                    "low": 130.17,
+                    "close": 138.74,
+                    "volume": 169934300,
+                },
+                {
+                    "trade_date": "2026-08-11",
+                    "open": 138.66,
+                    "high": 139.98,
+                    "low": 130.50,
+                    "close": 133.29,
+                    "volume": 108900600,
+                },
+                {
+                    "trade_date": "2026-08-12",
+                    "open": 135.05,
+                    "high": 149.60,
+                    "low": 134.01,
+                    "close": 146.15,
+                    "volume": 165771792,
+                },
+            ],
+            "_provenance": {
+                "SPCX.US": {
+                    "source": "yahoo",
+                    "requested_source": "auto",
+                    "detected_source": "yahoo",
+                    "fallback_used": False,
+                    "currency_conversion": "none",
+                }
+            },
+        },
+        ensure_ascii=False,
+    )
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["SPCX.US"]},
+        result=payload,
+        call_id="prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_reference_level_and_currency_thresholds_pass_end_to_end(tmp_path: Path) -> None:
+    """The SPCX.US verdict prose passes once references and thresholds mask."""
+    ledger = _spcx_us_ledger(tmp_path)
+
+    result = ledger.validate_final_answer(
+        "SPCX.US 8/10 收 138.74 USD、8/12 高 149.60 USD（source: yahoo）。"
+        "8/12 高 149.60 为 6/16 ATH 225.64 以来最高；"
+        "8/10 收盘 138.74 ≥ $135 且 ≥ $119.68 触发成立。"
     )
 
     assert result.valid is True, result.issues

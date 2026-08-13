@@ -265,6 +265,32 @@ _INDICATOR_VALUE_RE = re.compile(
     r"[-+]?\d[\d,]*(?:\.\d+)?",
     re.IGNORECASE,
 )
+# A currency token may sit between a level marker or comparison operator and
+# the number: "收盘 <$2.86", "目标位 C$6.80", "trigger at $119.68". Without
+# it, the number survives masking and is compared against observed OHLC as a
+# price claim even though it is a prospective level, not an observed quote.
+_CURRENCY_TOKEN = r"(?:\$|US\$|C\$|HK\$|CAD|USD|CNY|HKD|¥|￥)?"
+# A historical reference names a price the instrument once traded at — an
+# all-time high, a 52-week extreme — and the answer is not claiming it as
+# today's observed quote. "8/12 高 149.60 为 6/16 ATH 225.64 以来最高" was
+# rejected because 225.64 (the June ATH) fell outside this session's observed
+# OHLC range. The marker must be adjacent to the number, so a plain field
+# reading such as "8/12 高 149.60" stays checked: its 高 carries no historical
+# qualifier. "创历史新高" shares the 历史新高 marker and is masked with it; the
+# relaxation follows the same trade-off as prospective levels — the historical
+# extreme is a reference, not an assertion about the current bar.
+_REFERENCE_LEVEL_RE = re.compile(
+    r"(?:"
+    r"\bATH\b|all[- ]?time\s+(?:high|low)|"
+    r"52\s*[- ]?W(?:EEK)?\s*(?:high|low)|52\s*[- ]?W(?:EEK)?\s*高(?:点|位)?|"
+    r"52\s*周(?:高|低)(?:点|位)?|"
+    r"历史(?:最高|最低|新高|新低|高|低)(?:点|位|价)?|"
+    r"上市以来(?:最高|最低)(?:点|位|价)?"
+    r")"
+    r"\s*(?:of|为|是|约|at)?\s*[:：]?\s*\(?"
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
 # A trading plan quotes levels it does not claim to have observed. In the
 # committee report attached to #983, "收盘 ≥6.45 且量 ≥35M手" is an entry
 # trigger, "年线 4.63 成目标区" is a target zone, and neither asserts anything
@@ -286,16 +312,19 @@ _INDICATOR_VALUE_RE = re.compile(
 _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
-    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)"
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
     r"(?:目标位|目标区|目标价|均值目标(?:价)?|平均目标(?:价)?|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
     r"支撑(?:阶梯|位|线)?|阻力(?:位|线)?|压力位|压力线|support(?:\s+(?:level|line|zone))?|"
     r"resistance(?:\s+(?:level|line|zone))?|target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
-    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*"
+    + _CURRENCY_TOKEN
+    + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
-    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"" + _CURRENCY_TOKEN + r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach
@@ -2166,6 +2195,7 @@ class GroundingLedger:
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
+        masked = _REFERENCE_LEVEL_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
