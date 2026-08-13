@@ -1417,6 +1417,49 @@ def test_since_references_are_not_read_as_observed_price_claims(
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
 
 
+_NUMBERED_HEADING_SEGMENTS = [
+    "### 6. 关键价位/旁证核验",
+    "## 12. 结论",
+    "# 3. 身份与数据源",
+    "### 8/13 周中判定",
+    # The section number masks; the observed quote beside it stays checked.
+    ("### 6. 8/12 高 149.60 为 6/16 ATH 以来最高", [149.6]),
+]
+
+
+@pytest.mark.parametrize(
+    "segment", _NUMBERED_HEADING_SEGMENTS, ids=range(len(_NUMBERED_HEADING_SEGMENTS))
+)
+def test_numbered_headings_are_not_read_as_price_claims(segment: str) -> None:
+    """A markdown heading number is a section index, not a price."""
+    if isinstance(segment, tuple):
+        segment, expected = segment
+        assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
+    else:
+        assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
+_RATIO_AND_FX_SEGMENTS = [
+    ("TO 报价实际是按 6:1 平价锚定的", []),
+    ("25/25 行 OHLCV、25/25 项派生百分比、7/7 日 CDR 6:1 折算", []),
+    ("远小于当前 USD/CAD≈1.36 的量级", []),
+    ("usd/cad=1.36", []),
+    ("汇率 1.36", []),
+]
+
+
+@pytest.mark.parametrize(
+    "segment,expected",
+    _RATIO_AND_FX_SEGMENTS,
+    ids=[c[0][:24] for c in _RATIO_AND_FX_SEGMENTS],
+)
+def test_ratios_and_fx_rates_are_not_read_as_price_claims(
+    segment: str, expected: list[float],
+) -> None:
+    """A conversion ratio or forex rate is not an instrument quote."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
+
+
 def test_plan_level_mask_does_not_shield_a_wrong_quote_end_to_end(tmp_path: Path) -> None:
     """The end-to-end gate still rejects a fabricated quote beside a plan level."""
     ledger = _screened_ledger(tmp_path)

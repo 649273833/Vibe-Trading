@@ -235,7 +235,7 @@ _QUANTITY_WITH_UNIT_RE = re.compile(
     r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
     r"\s*[-–—]?\s*"
     r"(?:"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|个交易日|项)"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|个交易日|项|行)"
     r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
     r"wks?|weeks?|months?|days?|years?|yrs?)\b"
     r")",
@@ -311,6 +311,19 @@ _LINE_REFERENCE_RE = re.compile(
     r"(?:~\s*)?\blines?\b\s*[:#]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?"
     r"|第\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?\s*行"
     r"|行\s*[:：]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?",
+    re.IGNORECASE,
+)
+# A numbered markdown heading ("### 6. 关键价位") names a section index, not
+# a price. The ordered-list mask only covers line-leading "1." and stops at
+# the "### " prefix, so the section number was extracted as a claim.
+_NUMBERED_HEADING_RE = re.compile(r"(?m)^\s*#{1,6}\s*\d+(?:[.、．])?\s*")
+# A ratio ("6:1 折算", "10:1") names a conversion basis, not a quote price.
+_RATIO_RE = re.compile(r"\d+(?:\.\d+)?\s*[:：]\s*\d+(?:\.\d+)?")
+# A forex pair and its rate ("USD/CAD≈1.36") names a currency conversion, not
+# an instrument quote. The plain 汇率/“exchange rate” form is the same class.
+_FX_RATE_RE = re.compile(
+    r"[A-Z]{3}\s*/\s*[A-Z]{3}\s*(?:≈|~|=|约|为)?\s*\d+(?:\.\d+)?"
+    r"|(?:汇率|FX\s*rate|exchange\s+rate)\s*(?:≈|~|=|为|是)?\s*\d+(?:\.\d+)?",
     re.IGNORECASE,
 )
 # A trading plan quotes levels it does not claim to have observed. In the
@@ -2220,6 +2233,9 @@ class GroundingLedger:
         masked = _REFERENCE_LEVEL_RE.sub(" ", masked)
         masked = _SINCE_REFERENCE_RE.sub(" ", masked)
         masked = _LINE_REFERENCE_RE.sub(" ", masked)
+        masked = _NUMBERED_HEADING_RE.sub(" ", masked)
+        masked = _RATIO_RE.sub(" ", masked)
+        masked = _FX_RATE_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
