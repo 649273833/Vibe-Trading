@@ -122,7 +122,7 @@ export function RunDetail() {
   const hasRunCard = !!run?.run_card;
   const hasStudio = !!run?.risk_xray || !!run?.rebalance_notes;
   const TABS: { id: Tab; label: string; icon: typeof BarChart3; hidden?: boolean }[] = [
-    { id: "dashboard", label: i18n.language.toLowerCase().startsWith("zh") ? "研究 Dashboard" : "Research dashboard", icon: LayoutDashboard },
+    { id: "dashboard", label: i18n.t("runDetail.dashboard"), icon: LayoutDashboard },
     { id: "chart", label: i18n.t("runDetail.chart"), icon: BarChart3 },
     { id: "trades", label: i18n.t("runDetail.trades"), icon: List },
     { id: "studio", label: i18n.t("runDetail.studio"), icon: Gauge, hidden: !hasStudio },

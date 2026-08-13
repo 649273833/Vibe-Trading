@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { CalendarRange, Database, FlaskConical } from "lucide-react";
 import i18n from "@/i18n";
 import { echarts } from "@/lib/echarts";
@@ -11,10 +12,6 @@ const DEEP_BLUE = "#2156ae";
 const ORANGE = "#ff8a3d";
 const GREEN = "#3b9b8f";
 const SLATE = "#8f98a6";
-
-function tr(en: string, zh: string): string {
-  return i18n.language.toLowerCase().startsWith("zh") ? zh : en;
-}
 
 function num(value: unknown): number | null {
   const parsed = Number(value);
@@ -53,18 +50,18 @@ function compactPrompt(prompt: string): string {
 function inferStrategyName(prompt: string): string {
   const zhMa = prompt.match(/(\d+)\s*(?:日|天)?\s*[\/／-]\s*(\d+)\s*(?:日|天)?[^。；,，]{0,18}均线/i)
     || prompt.match(/(\d+)\s*日均线[^。；,，]{0,18}(\d+)\s*日均线/i);
-  if (zhMa) return `${zhMa[1]}/${zhMa[2]} 日均线交叉策略`;
+  if (zhMa) return i18n.t("runDashboard.strategyMaCrossover", { fast: zhMa[1], slow: zhMa[2] });
 
   const enMa = prompt.match(/(\d+)\s*[\/\-]\s*(\d+)[^.!?]{0,28}(?:moving[ -]?average|\bma\b)/i)
     || prompt.match(/(?:moving[ -]?average|\bma\b)[^.!?]{0,28}(\d+)\s*[\/\-]\s*(\d+)/i);
-  if (enMa) return `${enMa[1]}/${enMa[2]}-day moving-average crossover`;
+  if (enMa) return i18n.t("runDashboard.strategyMaCrossover", { fast: enMa[1], slow: enMa[2] });
 
-  if (/macd/i.test(prompt)) return "MACD 趋势策略";
-  if (/rsi/i.test(prompt)) return "RSI 择时策略";
-  if (/动量|momentum/i.test(prompt)) return "动量策略";
-  if (/均值回归|mean reversion/i.test(prompt)) return "均值回归策略";
-  if (/突破|breakout/i.test(prompt)) return "突破策略";
-  return compactPrompt(prompt) || tr("Systematic strategy", "系统化交易策略");
+  if (/macd/i.test(prompt)) return i18n.t("runDashboard.strategyMacd");
+  if (/rsi/i.test(prompt)) return i18n.t("runDashboard.strategyRsi");
+  if (/动量|momentum/i.test(prompt)) return i18n.t("runDashboard.strategyMomentum");
+  if (/均值回归|mean reversion/i.test(prompt)) return i18n.t("runDashboard.strategyMeanReversion");
+  if (/突破|breakout/i.test(prompt)) return i18n.t("runDashboard.strategyBreakout");
+  return compactPrompt(prompt) || i18n.t("runDashboard.systematicStrategy");
 }
 
 export function getStrategyReportIdentity(run: RunData): ReportIdentity {
@@ -75,7 +72,7 @@ export function getStrategyReportIdentity(run: RunData): ReportIdentity {
   const prompt = run.prompt || "";
   const strategy = inferStrategyName(prompt);
   const symbolLabel = symbols.length === 0
-    ? tr("Portfolio", "投资组合")
+    ? i18n.t("runDashboard.portfolio")
     : symbols.length <= 2
       ? symbols.join(" + ")
       : `${symbols[0]} +${symbols.length - 1}`;
@@ -120,6 +117,7 @@ function FigureTitle({ index, title, note }: { index: string; title: string; not
 }
 
 export function StrategyResearchDashboard({ run }: { run: RunData }) {
+  const { t } = useTranslation();
   const navRef = useRef<HTMLDivElement>(null);
   const riskRef = useRef<HTMLDivElement>(null);
   const tradesRef = useRef<HTMLDivElement>(null);
@@ -161,8 +159,8 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
       xAxis: { ...axis, type: "category", data: dates, boundaryGap: false },
       yAxis: { ...axis, type: "value", axisLabel: { color: theme.textColor, fontSize: 10, formatter: (v: number) => `${v.toFixed(2)}x` } },
       series: [
-        { name: tr("Strategy", "策略"), type: "line", showSymbol: false, data: equities.map((v) => v == null ? null : v / firstEquity), lineStyle: { color: BLUE, width: 2.5 }, itemStyle: { color: BLUE } },
-        ...(benchmarks.some((value) => value != null) ? [{ name: tr("Benchmark", "基准"), type: "line", showSymbol: false, data: benchmarks.map((v) => v == null ? null : v / firstBenchmark), lineStyle: { color: SLATE, width: 1.5, type: "dashed" }, itemStyle: { color: SLATE } }] : []),
+        { name: t("runDashboard.seriesStrategy"), type: "line", showSymbol: false, data: equities.map((v) => v == null ? null : v / firstEquity), lineStyle: { color: BLUE, width: 2.5 }, itemStyle: { color: BLUE } },
+        ...(benchmarks.some((value) => value != null) ? [{ name: t("runDashboard.seriesBenchmark"), type: "line", showSymbol: false, data: benchmarks.map((v) => v == null ? null : v / firstBenchmark), lineStyle: { color: SLATE, width: 1.5, type: "dashed" }, itemStyle: { color: SLATE } }] : []),
       ],
     });
 
@@ -179,8 +177,8 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
         { ...axis, type: "value", splitLine: { show: false }, axisLabel: { color: theme.textColor, fontSize: 10 } },
       ],
       series: [
-        { name: tr("Drawdown", "回撤"), type: "line", showSymbol: false, data: drawdown, lineStyle: { color: ORANGE, width: 2 }, areaStyle: { color: "rgba(255,138,61,.10)" }, itemStyle: { color: ORANGE } },
-        { name: tr("Rolling Sharpe (20)", "滚动 Sharpe（20）"), type: "line", yAxisIndex: 1, showSymbol: false, connectNulls: false, data: sharpe, lineStyle: { color: GREEN, width: 1.5 }, itemStyle: { color: GREEN } },
+        { name: t("runDashboard.seriesDrawdown"), type: "line", showSymbol: false, data: drawdown, lineStyle: { color: ORANGE, width: 2 }, areaStyle: { color: "rgba(255,138,61,.10)" }, itemStyle: { color: ORANGE } },
+        { name: t("runDashboard.seriesRollingSharpe"), type: "line", yAxisIndex: 1, showSymbol: false, connectNulls: false, data: sharpe, lineStyle: { color: GREEN, width: 1.5 }, itemStyle: { color: GREEN } },
       ],
     });
 
@@ -209,12 +207,12 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
 
   const metrics: Record<string, number> = run.metrics || {};
   const kpis = [
-    [tr("Total return", "总收益率"), pct(metrics.total_return), BLUE],
-    [tr("Annual return", "年化收益率"), pct(metrics.annual_return), DEEP_BLUE],
+    [t("runDashboard.kpiTotalReturn"), pct(metrics.total_return), BLUE],
+    [t("runDashboard.kpiAnnualReturn"), pct(metrics.annual_return), DEEP_BLUE],
     ["Sharpe", fixed(metrics.sharpe), GREEN],
-    [tr("Max drawdown", "最大回撤"), pct(metrics.max_drawdown), ORANGE],
-    [tr("Win rate", "胜率"), pct(metrics.win_rate), GREEN],
-    [tr("Trades", "交易次数"), fixed(metrics.trade_count, 0), SLATE],
+    [t("runDashboard.kpiMaxDrawdown"), pct(metrics.max_drawdown), ORANGE],
+    [t("runDashboard.kpiWinRate"), pct(metrics.win_rate), GREEN],
+    [t("runDashboard.kpiTrades"), fixed(metrics.trade_count, 0), SLATE],
   ] as const;
 
   return (
@@ -223,7 +221,7 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
         <div className="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-[#3676df]/[0.08] blur-3xl" aria-hidden="true" />
         <div className="relative">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#3676df]">{tr("Quantitative research · Backtest", "量化研究 · 策略回测")}</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#3676df]">{t("runDashboard.eyebrow")}</p>
             <span className="rounded-full border border-[#3676df]/20 bg-background/70 px-2.5 py-1 font-mono text-[10px] text-muted-foreground">RUN {run.run_id.slice(-8).toUpperCase()}</span>
           </div>
           <h2 className="mt-4 max-w-4xl text-2xl font-semibold leading-tight tracking-[-0.025em] text-foreground md:text-[30px]">{identity.title}</h2>
@@ -232,7 +230,7 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
           )}
           <div className="mt-5 flex flex-wrap gap-2 text-xs text-muted-foreground">
             {(identity.startDate || identity.endDate) && <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-background/65 px-2.5 py-1.5"><CalendarRange className="h-3.5 w-3.5 text-[#3676df]" />{identity.startDate || "—"} — {identity.endDate || "—"}</span>}
-            {identity.engine && <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-background/65 px-2.5 py-1.5"><FlaskConical className="h-3.5 w-3.5 text-[#3676df]" />{identity.engine.toUpperCase()} {tr("engine", "回测引擎")}</span>}
+            {identity.engine && <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-background/65 px-2.5 py-1.5"><FlaskConical className="h-3.5 w-3.5 text-[#3676df]" />{identity.engine.toUpperCase()} {t("runDashboard.engine")}</span>}
             {identity.source && <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-background/65 px-2.5 py-1.5"><Database className="h-3.5 w-3.5 text-[#3676df]" />{identity.source}</span>}
           </div>
         </div>
@@ -243,19 +241,20 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
       </div>
 
       <div className="space-y-8 p-5 md:p-7">
-        <section className="space-y-3"><FigureTitle index="01" title={tr("Equity and benchmark", "净值与基准")} note={tr("Compare the strategy's growth path with its benchmark.", "比较策略与基准的累计收益路径。")} /><div ref={navRef} className="h-[320px] border border-[#dfe2e7] bg-background/40" /></section>
-        <section className="space-y-3"><FigureTitle index="02" title={tr("Drawdown and rolling risk", "回撤与滚动风险")} note={tr("See when losses deepened and risk-adjusted performance changed.", "观察亏损加深和风险调整后表现发生变化的时点。")} /><div ref={riskRef} className="h-[300px] border border-[#dfe2e7] bg-background/40" /></section>
-        <section className="space-y-3"><FigureTitle index="03" title={tr("Realized trade P&L", "已实现成交盈亏")} note={tr("Profit and loss from completed trades.", "展示已完成交易带来的实际盈亏。")} /><div ref={tradesRef} className="h-[260px] border border-[#dfe2e7] bg-background/40" /></section>
-        <section className="space-y-3"><FigureTitle index="04" title={tr("Trade ledger", "成交明细")} note={tr("Review the latest 100 trades in chronological detail.", "按时间查看最近 100 笔交易明细。")} /><TradeTable rows={trades.slice(-100).reverse()} /></section>
-        <section className="space-y-3"><FigureTitle index="05" title={tr("Performance metrics", "绩效指标")} note={tr("A complete summary of return, risk, and trading statistics.", "汇总策略的收益、风险与交易统计。")} /><MetricTable metrics={metrics} /></section>
+        <section className="space-y-3"><FigureTitle index="01" title={t("runDashboard.figEquityTitle")} note={t("runDashboard.figEquityNote")} /><div ref={navRef} className="h-[320px] border border-[#dfe2e7] bg-background/40" /></section>
+        <section className="space-y-3"><FigureTitle index="02" title={t("runDashboard.figRiskTitle")} note={t("runDashboard.figRiskNote")} /><div ref={riskRef} className="h-[300px] border border-[#dfe2e7] bg-background/40" /></section>
+        <section className="space-y-3"><FigureTitle index="03" title={t("runDashboard.figPnlTitle")} note={t("runDashboard.figPnlNote")} /><div ref={tradesRef} className="h-[260px] border border-[#dfe2e7] bg-background/40" /></section>
+        <section className="space-y-3"><FigureTitle index="04" title={t("runDashboard.figLedgerTitle")} note={t("runDashboard.figLedgerNote")} /><TradeTable rows={trades.slice(-100).reverse()} /></section>
+        <section className="space-y-3"><FigureTitle index="05" title={t("runDashboard.figMetricsTitle")} note={t("runDashboard.figMetricsNote")} /><MetricTable metrics={metrics} /></section>
       </div>
     </article>
   );
 }
 
 function TradeTable({ rows }: { rows: Array<Record<string, string>> }) {
-  if (!rows.length) return <EmptyData text={tr("No trades were recorded.", "没有成交记录。")} />;
-  return <div className="max-h-[440px] overflow-auto border border-[#dfe2e7]"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-[#f5f7fa] text-muted-foreground dark:bg-slate-900"><tr><th className="px-3 py-2 text-left">Time</th><th className="px-3 py-2 text-left">Symbol</th><th className="px-3 py-2 text-left">Side</th><th className="px-3 py-2 text-right">Price</th><th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">PnL</th><th className="px-3 py-2 text-left">Reason</th></tr></thead><tbody>{rows.map((row, index) => { const pnl = num(row.pnl) || 0; return <tr key={`${row.timestamp}-${row.code}-${index}`} className="border-t border-[#dfe2e7]"><td className="px-3 py-2 font-mono">{row.timestamp || "—"}</td><td className="px-3 py-2 font-mono">{row.code || "—"}</td><td className="px-3 py-2 uppercase">{row.side || "—"}</td><td className="px-3 py-2 text-right font-mono">{fixed(row.price, 4)}</td><td className="px-3 py-2 text-right font-mono">{fixed(row.qty, 4)}</td><td className="px-3 py-2 text-right font-mono font-semibold" style={{ color: pnl > 0 ? GREEN : pnl < 0 ? ORANGE : SLATE }}>{fixed(pnl)}</td><td className="px-3 py-2 text-muted-foreground">{row.reason || "—"}</td></tr>; })}</tbody></table></div>;
+  const { t } = useTranslation();
+  if (!rows.length) return <EmptyData text={t("runDashboard.noTrades")} />;
+  return <div className="max-h-[440px] overflow-auto border border-[#dfe2e7]"><table className="w-full min-w-[760px] text-xs"><thead className="sticky top-0 bg-[#f5f7fa] text-muted-foreground dark:bg-slate-900"><tr><th className="px-3 py-2 text-left">{t("runDashboard.colTime")}</th><th className="px-3 py-2 text-left">{t("runDashboard.colSymbol")}</th><th className="px-3 py-2 text-left">{t("runDashboard.colSide")}</th><th className="px-3 py-2 text-right">{t("runDashboard.colPrice")}</th><th className="px-3 py-2 text-right">{t("runDashboard.colQty")}</th><th className="px-3 py-2 text-right">{t("runDashboard.colPnl")}</th><th className="px-3 py-2 text-left">{t("runDashboard.colReason")}</th></tr></thead><tbody>{rows.map((row, index) => { const pnl = num(row.pnl) || 0; return <tr key={`${row.timestamp}-${row.code}-${index}`} className="border-t border-[#dfe2e7]"><td className="px-3 py-2 font-mono">{row.timestamp || "—"}</td><td className="px-3 py-2 font-mono">{row.code || "—"}</td><td className="px-3 py-2 uppercase">{row.side || "—"}</td><td className="px-3 py-2 text-right font-mono">{fixed(row.price, 4)}</td><td className="px-3 py-2 text-right font-mono">{fixed(row.qty, 4)}</td><td className="px-3 py-2 text-right font-mono font-semibold" style={{ color: pnl > 0 ? GREEN : pnl < 0 ? ORANGE : SLATE }}>{fixed(pnl)}</td><td className="px-3 py-2 text-muted-foreground">{row.reason || "—"}</td></tr>; })}</tbody></table></div>;
 }
 
 function MetricTable({ metrics }: { metrics: Record<string, number> }) {
