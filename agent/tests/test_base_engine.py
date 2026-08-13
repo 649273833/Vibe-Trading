@@ -486,6 +486,52 @@ def test_positions_artifact_reports_fills_not_blocked_targets(tmp_path) -> None:
     assert target_csv.iloc[1]["AAPL.US"] == pytest.approx(0.8)
 
 
+def test_every_written_artifact_is_declared_to_the_runner(tmp_path) -> None:
+    """An artifact the engine writes but the spec omits is invisible downstream.
+
+    ``Runner`` builds its returned artifact map by walking
+    ``_ARTIFACTS_SPEC``, so a file that is written and not declared exists on
+    disk while no caller can find it. Asserting the direction that matters
+    (written ⊆ declared) makes adding an artifact without registering it fail
+    here rather than silently.
+    """
+    from src.core.runner import _ARTIFACTS_SPEC
+
+    dates, bars, close_df, targets = _fractional_fixture([0.2, 0.8, 0.8])
+    engine = _FractionalEngine(block_adds_after_first=True)
+    engine._execute_bars(dates, {"AAPL.US": bars}, close_df, targets, ["AAPL.US"])
+    equity = pd.Series(
+        [snapshot.equity for snapshot in engine.equity_snapshots], index=dates
+    )
+    engine._write_artifacts(
+        tmp_path,
+        {"AAPL.US": bars},
+        dates,
+        equity,
+        pd.Series(1_000.0, index=dates),
+        pd.Series(0.0, index=dates),
+        targets,
+        {},
+        ["AAPL.US"],
+    )
+
+    declared = {
+        entry["path"].split("artifacts/", 1)[1]
+        for entry in _ARTIFACTS_SPEC["artifacts"].values()
+        if str(entry.get("path", "")).startswith("artifacts/")
+    }
+    # Per-symbol OHLCV copies are deliberately undeclared: their names depend on
+    # the universe, and they mirror the loader's input rather than a result.
+    written = {
+        path.name
+        for path in (tmp_path / "artifacts").glob("*.csv")
+        if not path.name.startswith("ohlcv_")
+    }
+
+    undeclared = sorted(written - declared)
+    assert not undeclared, f"written but not declared in _ARTIFACTS_SPEC: {undeclared}"
+
+
 def _run_lifecycle(engine: _LifecycleEngine) -> None:
     dates = pd.DatetimeIndex([pd.Timestamp("2026-01-02")])
     frame = pd.DataFrame({"open": [100.0], "close": [100.0]}, index=dates)
