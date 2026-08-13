@@ -1443,8 +1443,13 @@ _RATIO_AND_FX_SEGMENTS = [
     ("TO 报价实际是按 6:1 平价锚定的", []),
     ("25/25 行 OHLCV、25/25 项派生百分比、7/7 日 CDR 6:1 折算", []),
     ("远小于当前 USD/CAD≈1.36 的量级", []),
-    ("usd/cad=1.36", []),
     ("汇率 1.36", []),
+    # `EUR/USD` is this project's canonical forex symbol, so an asserted pair
+    # rate is a quote and stays checked; only an approximated conversion basis
+    # is masked. Masking both would let an invented FX rate through the gate.
+    ("usd/cad=1.36", [1.36]),
+    ("USD/CAD 1.36", [1.36]),
+    ("USD/CAD ≈ 1.36", []),
 ]
 
 

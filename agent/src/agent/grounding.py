@@ -319,10 +319,16 @@ _LINE_REFERENCE_RE = re.compile(
 _NUMBERED_HEADING_RE = re.compile(r"(?m)^\s*#{1,6}\s*\d+(?:[.、．])?\s*")
 # A ratio ("6:1 折算", "10:1") names a conversion basis, not a quote price.
 _RATIO_RE = re.compile(r"\d+(?:\.\d+)?\s*[:：]\s*\d+(?:\.\d+)?")
-# A forex pair and its rate ("USD/CAD≈1.36") names a currency conversion, not
-# an instrument quote. The plain 汇率/“exchange rate” form is the same class.
+# A currency conversion cited inside a report ("USD/CAD≈1.36") is a basis, not
+# an instrument quote. But `EUR/USD` IS this project's canonical forex symbol
+# (``backtest/engines/forex.py``, and akshare_loader accepts the slash form), so
+# masking every ``AAA/BBB <number>`` would stop checking real FX quotes on a
+# first-class market — an invented rate would pass. The pair form therefore
+# requires an approximation marker, which a conversion basis carries and a quote
+# does not: "USD/CAD≈1.36" is masked, bare "USD/CAD 1.36" stays checked. The
+# labelled 汇率 / "exchange rate" form is unambiguous and needs no marker.
 _FX_RATE_RE = re.compile(
-    r"[A-Z]{3}\s*/\s*[A-Z]{3}\s*(?:≈|~|=|约|为)?\s*\d+(?:\.\d+)?"
+    r"[A-Z]{3}\s*/\s*[A-Z]{3}\s*(?:≈|~|约)\s*\d+(?:\.\d+)?"
     r"|(?:汇率|FX\s*rate|exchange\s+rate)\s*(?:≈|~|=|为|是)?\s*\d+(?:\.\d+)?",
     re.IGNORECASE,
 )
