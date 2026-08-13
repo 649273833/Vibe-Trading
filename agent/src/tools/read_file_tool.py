@@ -26,8 +26,8 @@ class ReadFileTool(BaseTool):
             "path": {
                 "type": "string",
                 "description": (
-                    "File path relative to run_dir, skills/, or prompts/. "
-                    "The skills/ and prompts/ prefixes always resolve to the bundled assets."
+                    "File path relative to run_dir or skills/. "
+                    "The skills/ prefix always resolves to the bundled skills."
                 ),
             },
             "limit": {"type": "integer", "description": "Max number of lines to return (default: all)"},
@@ -66,12 +66,6 @@ class ReadFileTool(BaseTool):
         if skills_dir.exists():
             allowed_roots.append(skills_dir.resolve())
 
-        # Read-only access to bundled agent workflow prompts.  These are
-        # referenced by the system prompt for detailed routing guidance.
-        prompts_dir = Path(__file__).resolve().parents[2] / "prompts"
-        if prompts_dir.exists():
-            allowed_roots.append(prompts_dir.resolve())
-
         # Add configured extra file roots (VIBE_TRADING_ALLOWED_FILE_ROOTS)
         for extra_root in allowed_file_roots():
             if extra_root not in allowed_roots:
@@ -80,22 +74,18 @@ class ReadFileTool(BaseTool):
         resolved = None
         namespaced = False
 
-        # `skills/` and `prompts/` are namespaces bound to their dedicated
-        # read-only roots. Binding the prefix prevents a same-named file in
-        # run_dir (or another configured root) from shadowing bundled assets.
-        for prefix, root in (
-            ("skills/", skills_dir),
-            ("prompts/", prompts_dir),
-        ):
-            if file_path.startswith(prefix):
-                namespaced = True
-                try:
-                    candidate = _safe_path(file_path[len(prefix) :], root)
-                except ValueError:
-                    candidate = None
-                if candidate is not None and candidate.exists():
-                    resolved = candidate
-                break
+        # `skills/` is a namespace bound to the bundled read-only skills root.
+        # Binding the prefix stops a same-named file in run_dir — which the agent
+        # itself can write — from shadowing a bundled skill and being loaded as
+        # trusted guidance.
+        if file_path.startswith("skills/"):
+            namespaced = True
+            try:
+                candidate = _safe_path(file_path[len("skills/") :], skills_dir)
+            except ValueError:
+                candidate = None
+            if candidate is not None and candidate.exists():
+                resolved = candidate
 
         # Unprefixed paths search every allowed root, run_dir first.
         if resolved is None and not namespaced:
