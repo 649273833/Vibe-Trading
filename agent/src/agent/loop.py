@@ -49,6 +49,7 @@ from src.config.accessor import get_env_config
 from src.config.paths import get_runs_dir, get_sessions_dir
 from src.tools.background_tools import get_background_manager
 from src.config.limits import truncate_tool_result
+from src.tools.path_utils import safe_run_dir
 from src.tools.redaction import redact_payload, redact_tool_result
 
 RUNS_DIR = get_runs_dir()
@@ -585,6 +586,12 @@ def _archive_backtest_result(result: str, active_run_dir: str | None) -> bool:
     CLI and web API, however, identify the turn by ``active_run_dir``.  Keep
     that public identity stable by copying only deterministic backtest output
     into the active run as soon as the backtest tool succeeds.
+
+    Both paths are re-validated here.  ``backtest`` already refuses a run_dir
+    outside the allowed roots, so today the source cannot be arbitrary — but
+    that invariant lives in another module and this function reads its path back
+    out of a *tool result* rather than from the validated arguments.  Checking
+    locally keeps a copy loop from depending on a guarantee made elsewhere.
     """
     if not active_run_dir:
         return False
@@ -598,8 +605,12 @@ def _archive_backtest_result(result: str, active_run_dir: str | None) -> bool:
     source_value = payload.get("run_dir")
     if not source_value:
         return False
-    source = Path(str(source_value)).resolve()
-    target = Path(active_run_dir).resolve()
+    try:
+        source = safe_run_dir(str(source_value))
+        target = safe_run_dir(str(active_run_dir))
+    except ValueError:
+        logger.warning("Refusing to archive backtest output from outside the allowed run roots")
+        return False
     if source == target or not (source / "artifacts" / "metrics.csv").is_file():
         return False
 

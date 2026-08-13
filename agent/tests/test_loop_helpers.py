@@ -329,7 +329,10 @@ class TestNormalizeToolRunDir:
 
 
 class TestArchiveBacktestResult:
-    def test_copies_detached_backtest_into_active_run(self, tmp_path: Path) -> None:
+    def test_copies_detached_backtest_into_active_run(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
         source = tmp_path / "detached"
         active = tmp_path / "active"
         (source / "artifacts").mkdir(parents=True)
@@ -353,7 +356,8 @@ class TestArchiveBacktestResult:
         assert (active / "code" / "signal_engine.py").is_file()
         assert (active / "config.json").is_file()
 
-    def test_ignores_result_without_metrics(self, tmp_path: Path) -> None:
+    def test_ignores_result_without_metrics(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
         source = tmp_path / "not-a-backtest"
         source.mkdir()
 
@@ -362,3 +366,29 @@ class TestArchiveBacktestResult:
         )
 
         assert archived is False
+
+    def test_refuses_a_source_outside_the_allowed_run_roots(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The copy loop validates the path itself, not just upstream.
+
+        ``run_dir`` is read back out of a tool result here, so the check that
+        makes it safe must live in this function rather than in the tool that
+        produced the string.
+        """
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        (outside / "artifacts").mkdir(parents=True)
+        (outside / "artifacts" / "metrics.csv").write_text(
+            "total_return\n0.5\n", encoding="utf-8"
+        )
+        active = allowed / "active"
+        active.mkdir(parents=True)
+        monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(allowed))
+
+        archived = _archive_backtest_result(
+            json.dumps({"status": "ok", "run_dir": str(outside)}), str(active)
+        )
+
+        assert archived is False
+        assert not (active / "artifacts").exists()
