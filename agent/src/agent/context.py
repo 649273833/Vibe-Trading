@@ -61,7 +61,7 @@ Choose the workflow by request type:
 
 Do not write `run_backtest.py`.
 
-For full workflow details, consult `agent/prompts/task_routing.md` and `agent/prompts/identity_resolution.md`.
+For full workflow details, consult `prompts/task_routing.md` and `prompts/identity_resolution.md`.
 
 ## Attribution Layers
 

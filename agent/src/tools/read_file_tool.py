@@ -23,7 +23,13 @@ class ReadFileTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path relative to run_dir or skills/"},
+            "path": {
+                "type": "string",
+                "description": (
+                    "File path relative to run_dir, skills/, or prompts/. "
+                    "The skills/ and prompts/ prefixes always resolve to the bundled assets."
+                ),
+            },
             "limit": {"type": "integer", "description": "Max number of lines to return (default: all)"},
         },
         "required": ["path"],
@@ -60,28 +66,47 @@ class ReadFileTool(BaseTool):
         if skills_dir.exists():
             allowed_roots.append(skills_dir.resolve())
 
+        # Read-only access to bundled agent workflow prompts.  These are
+        # referenced by the system prompt for detailed routing guidance.
+        prompts_dir = Path(__file__).resolve().parents[2] / "prompts"
+        if prompts_dir.exists():
+            allowed_roots.append(prompts_dir.resolve())
+
         # Add configured extra file roots (VIBE_TRADING_ALLOWED_FILE_ROOTS)
         for extra_root in allowed_file_roots():
             if extra_root not in allowed_roots:
                 allowed_roots.append(extra_root)
 
-        # Strip redundant "skills/" prefix that LLMs sometimes add
-        paths_to_try = [file_path]
-        if file_path.startswith("skills/"):
-            paths_to_try.append(file_path[len("skills/") :])
-
         resolved = None
-        for root in allowed_roots:
-            for p in paths_to_try:
+        namespaced = False
+
+        # `skills/` and `prompts/` are namespaces bound to their dedicated
+        # read-only roots. Binding the prefix prevents a same-named file in
+        # run_dir (or another configured root) from shadowing bundled assets.
+        for prefix, root in (
+            ("skills/", skills_dir),
+            ("prompts/", prompts_dir),
+        ):
+            if file_path.startswith(prefix):
+                namespaced = True
                 try:
-                    candidate = _safe_path(p, root)
+                    candidate = _safe_path(file_path[len(prefix) :], root)
+                except ValueError:
+                    candidate = None
+                if candidate is not None and candidate.exists():
+                    resolved = candidate
+                break
+
+        # Unprefixed paths search every allowed root, run_dir first.
+        if resolved is None and not namespaced:
+            for root in allowed_roots:
+                try:
+                    candidate = _safe_path(file_path, root)
                     if candidate.exists():
                         resolved = candidate
                         break
                 except ValueError:
                     continue
-            if resolved:
-                break
 
         if resolved is None:
             return json.dumps(
