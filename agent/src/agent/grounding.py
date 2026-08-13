@@ -235,7 +235,7 @@ _QUANTITY_WITH_UNIT_RE = re.compile(
     r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
     r"\s*[-–—]?\s*"
     r"(?:"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次)"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|个交易日|项)"
     r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
     r"wks?|weeks?|months?|days?|years?|yrs?)\b"
     r")",
@@ -289,6 +289,28 @@ _REFERENCE_LEVEL_RE = re.compile(
     r")"
     r"\s*(?:of|为|是|约|at)?\s*[:：]?\s*\(?"
     r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# A date-anchored reference puts the historical extreme after the number:
+# "7/10(150.57)以来最高" and "highest since 7/10 (150.57)". The parenthesized
+# value is the earlier high/low, not a current quote, and was rejected against
+# the session's observed window (which does not reach back to July).
+_SINCE_REFERENCE_RE = re.compile(
+    r"[-+]?\d[\d,]*(?:\.\d+)?\s*\)?\s*以来(?:最高|最低|高|低)(?:点|位)?"
+    # Dates are masked before this runs, so "since 7/10 (150.57)" has lost its
+    # date digits by the time the connector is matched.
+    r"|(?:highest|lowest)\s+since[^0-9\n]{0,16}"
+    r"[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# A validation report cites a plan file by line number — "~line 206",
+# "第 206 行" — and the number is a document location, not a price. Before
+# this mask, "**文档 ~line 206「…」不成立" contributed 206.0 as a candidate
+# price claim and was rejected against the observed OHLC range.
+_LINE_REFERENCE_RE = re.compile(
+    r"(?:~\s*)?\blines?\b\s*[:#]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?"
+    r"|第\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?\s*行"
+    r"|行\s*[:：]?\s*\d{1,5}(?:\s*[-–—至~]\s*\d{1,5})?",
     re.IGNORECASE,
 )
 # A trading plan quotes levels it does not claim to have observed. In the
@@ -2196,6 +2218,8 @@ class GroundingLedger:
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
         masked = _REFERENCE_LEVEL_RE.sub(" ", masked)
+        masked = _SINCE_REFERENCE_RE.sub(" ", masked)
+        masked = _LINE_REFERENCE_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):

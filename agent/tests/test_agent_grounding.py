@@ -1345,6 +1345,78 @@ def test_reference_levels_are_not_read_as_observed_price_claims(
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
 
 
+# A validation report cites a plan file by line number ("~line 206",
+# "第 206 行"). The number is a document location, not a price, and was
+# compared against observed OHLC as a claim before this mask existed.
+_LINE_REFERENCE_SEGMENTS = [
+    "**文档 ~line 206「8/12 高 149.60 为 6/16 ATH 225.64 以来最高」不成立",
+    "line 206",
+    "lines 206-208",
+    "第 206 行",
+    "第 206–208 行",
+    "行 206",
+]
+
+
+@pytest.mark.parametrize(
+    "segment", _LINE_REFERENCE_SEGMENTS, ids=range(len(_LINE_REFERENCE_SEGMENTS))
+)
+def test_line_number_references_are_not_read_as_price_claims(segment: str) -> None:
+    """A line citation is a document location, not an observed price."""
+    if segment.startswith("**文档"):
+        # The quoted 149.60 beside the line citation stays checked.
+        assert GroundingLedger._numbers_without_dates_or_percent(segment) == [149.6]
+    else:
+        assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
+# Validation summaries count findings: "1 项事实错误", "2 项不一致", and
+# "16 个交易日" are count nouns, not prices. The count survived extraction
+# and was rejected against the observed OHLC range before 项/个交易日 joined
+# the quantity units.
+_COUNT_NOUN_SEGMENTS = [
+    ("- ❌ **1 项事实错误**:", []),
+    ("⚠️ **2 项不一致**", []),
+    ("3 项", []),
+    ("16 个交易日", []),
+    # 149.60 is masked here too: "高点高于 149.60" is a comparison level.
+    ("6/17–7/10 有 16 个交易日高点高于 149.60", []),
+]
+
+
+@pytest.mark.parametrize(
+    "segment,expected",
+    _COUNT_NOUN_SEGMENTS,
+    ids=[c[0][:22] for c in _COUNT_NOUN_SEGMENTS],
+)
+def test_count_nouns_are_not_read_as_price_claims(
+    segment: str, expected: list[float],
+) -> None:
+    """项/个交易日 counts are quantities, not prices."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
+
+
+_SINCE_REFERENCE_SEGMENTS = [
+    ("正确为 7/10(150.57)以来最高", []),
+    ("收 146.15 为 7/9(收 152.16)以来最高", [146.15]),
+    ("highest since 7/10 (150.57)", []),
+    # The current bar's own high is not a since-reference and stays checked.
+    ("8/12 高 149.60 为 6/16 ATH 225.64 以来最高", [149.6]),
+]
+
+
+@pytest.mark.parametrize(
+    "segment,expected",
+    _SINCE_REFERENCE_SEGMENTS,
+    ids=[c[0][:24] for c in _SINCE_REFERENCE_SEGMENTS],
+)
+def test_since_references_are_not_read_as_observed_price_claims(
+    segment: str, expected: list[float],
+) -> None:
+    """A date-anchored "highest since" value is a reference, not a quote."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == expected
+
+
 def test_plan_level_mask_does_not_shield_a_wrong_quote_end_to_end(tmp_path: Path) -> None:
     """The end-to-end gate still rejects a fabricated quote beside a plan level."""
     ledger = _screened_ledger(tmp_path)
@@ -1455,6 +1527,21 @@ def test_reference_level_and_currency_thresholds_pass_end_to_end(tmp_path: Path)
         "SPCX.US 8/10 收 138.74 USD、8/12 高 149.60 USD（source: yahoo）。"
         "8/12 高 149.60 为 6/16 ATH 225.64 以来最高；"
         "8/10 收盘 138.74 ≥ $135 且 ≥ $119.68 触发成立。"
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_validation_summary_with_counts_and_line_cites_passes_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """A validation verdict naming counts and line citations passes the gate."""
+    ledger = _spcx_us_ledger(tmp_path)
+
+    result = ledger.validate_final_answer(
+        "SPCX.US 核验(USD, source: yahoo):❌ 1 项事实错误 — "
+        "文档 ~line 206「8/12 高 149.60 为 6/16 ATH 以来最高」不成立,"
+        "6/17–7/10 有 16 个交易日高点高于 149.60,正确为 7/10(150.57)以来最高。"
     )
 
     assert result.valid is True, result.issues
