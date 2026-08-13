@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 from copy import copy
-from urllib.parse import urlparse
 import re
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from importlib import import_module
