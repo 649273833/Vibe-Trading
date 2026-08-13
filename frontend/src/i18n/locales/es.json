@@ -35,7 +35,7 @@
   },
   "runtime": {
     "monitorBadge": "Monitor de Runtime",
-    "title": "Estado del Runtime en vivo / papel",
+    "title": "Estado del Runtime en vivo / demo",
     "subtitlePre": "Estado de solo lectura de",
     "subtitlePost": ". Esta página no autoriza conectores, ni inicia ni detiene ejecutores, ni envía o cancela órdenes, ni cambia mandatos.",
     "refresh": "Actualizar",
@@ -50,7 +50,7 @@
     "runners": "Ejecutores",
     "running": "{{count}} en ejecución",
     "noProfilesTitle": "No se reportaron perfiles de runtime",
-    "noProfilesBody": "El backend no devolvió ningún perfil de broker en vivo o papel reconocido.",
+    "noProfilesBody": "El backend no devolvió ningún perfil reconocido de broker en vivo o demo.",
     "authPresent": "autorización presente",
     "authMissing": "autorización ausente",
     "runnerAlive": "ejecutor activo",
@@ -535,7 +535,7 @@
       "reattach": "Reconectar"
     },
     "resumeConnector": "Reanudar conector",
-    "resumeConnectorTitle": "Despejar el interruptor de emergencia y reactivar la actividad del conector",
+    "resumeConnectorTitle": "Desactivar el interruptor de emergencia y reanudar la actividad del conector",
     "connectorResumed": "Conector reanudado",
     "failedToResumeConnector": "Error al reanudar el conector."
   },
@@ -939,7 +939,7 @@
     "adjustTitle": "Ajustar este mandato",
     "adjustPlaceholder": "ej. mantener esto pero subir el tope diario a 10",
     "adjustInputLabel": "Solicitud de ajuste",
-    "confirmTitle": "Confirmar confirmación de mandato",
+    "confirmTitle": "Confirmar la activación del mandato",
     "confirmDescription": "Esto otorga al agente autorización de trading bajo los límites mostrados abajo y entra en vigor de inmediato.",
     "confirmButton": "Confirmar y aplicar",
     "maxPerOrder": "≤{{amount}}/orden",
