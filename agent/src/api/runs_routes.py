@@ -175,6 +175,14 @@ def _build_response_from_run_dir(
     if trades_path.exists():
         response.artifacts_trades_csv = _load_csv_to_dict(trades_path)
 
+    positions_path = run_dir / "artifacts" / "positions.csv"
+    if positions_path.exists():
+        response.artifacts_positions_csv = _load_csv_to_dict(positions_path)
+
+    target_positions_path = run_dir / "artifacts" / "target_positions.csv"
+    if target_positions_path.exists():
+        response.artifacts_target_positions_csv = _load_csv_to_dict(target_positions_path)
+
     validation_path = run_dir / "artifacts" / "validation.json"
     if validation_path.exists():
         try:
