@@ -619,7 +619,22 @@
     "sideSell": "Sell",
     "copyCode": "Copy",
     "codeCopied": "Code copied",
-    "codeLines": "{{count}} lines"
+    "codeLines": "{{count}} lines",
+    "tearsheet": "Tearsheet",
+    "monthlyReturns": "Monthly Returns",
+    "annualReturns": "Annual Returns",
+    "topDrawdowns": "Top Drawdowns",
+    "tearsheetYear": "Year",
+    "noTearsheetData": "Not enough equity data for a tearsheet.",
+    "ddRank": "#",
+    "ddDepth": "Depth",
+    "ddPeak": "Peak",
+    "ddTrough": "Trough",
+    "ddRecovery": "Recovery",
+    "ddPeakToTrough": "Peak→Trough",
+    "ddTroughToRecovery": "Trough→Rec.",
+    "ddNotRecovered": "Not recovered",
+    "ddDays": "{{count}} d"
   },
   "compare": {
     "title": "Strategy Comparison",

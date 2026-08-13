@@ -619,7 +619,22 @@
     "sideSell": "Venta",
     "copyCode": "Copiar",
     "codeCopied": "Código copiado",
-    "codeLines": "{{count}} líneas"
+    "codeLines": "{{count}} líneas",
+    "tearsheet": "Informe de rendimiento",
+    "monthlyReturns": "Rentabilidad mensual",
+    "annualReturns": "Rentabilidad anual",
+    "topDrawdowns": "Principales drawdowns",
+    "tearsheetYear": "Año",
+    "noTearsheetData": "No hay datos de equity suficientes para generar el informe de rendimiento.",
+    "ddRank": "#",
+    "ddDepth": "Profundidad",
+    "ddPeak": "Pico",
+    "ddTrough": "Valle",
+    "ddRecovery": "Recuperación",
+    "ddPeakToTrough": "Pico→Valle",
+    "ddTroughToRecovery": "Valle→Rec.",
+    "ddNotRecovered": "No recuperado",
+    "ddDays": "{{count}} d"
   },
   "compare": {
     "title": "Comparación de estrategias",

@@ -614,7 +614,22 @@
     "sideSell": "بيع",
     "copyCode": "نسخ",
     "codeCopied": "تم نسخ الكود",
-    "codeLines": "{{count}} سطر"
+    "codeLines": "{{count}} سطر",
+    "tearsheet": "تقرير الأداء",
+    "monthlyReturns": "العوائد الشهرية",
+    "annualReturns": "العوائد السنوية",
+    "topDrawdowns": "أبرز التراجعات",
+    "tearsheetYear": "السنة",
+    "noTearsheetData": "بيانات حقوق الملكية غير كافية لإعداد تقرير الأداء.",
+    "ddRank": "#",
+    "ddDepth": "العمق",
+    "ddPeak": "القمة",
+    "ddTrough": "القاع",
+    "ddRecovery": "التعافي",
+    "ddPeakToTrough": "القمة إلى القاع",
+    "ddTroughToRecovery": "القاع إلى التعافي",
+    "ddNotRecovered": "لم يتعافَ",
+    "ddDays": "{{count}} يوم"
   },
   "compare": {
     "title": "مقارنة الاستراتيجيات",
