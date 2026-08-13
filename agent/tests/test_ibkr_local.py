@@ -389,7 +389,9 @@ def test_quote_selects_tier_before_requesting_data(monkeypatch: pytest.MonkeyPat
     result = local.get_quote("AAPL", config=local.IBKRLocalConfig(profile="paper", market_data_type=4))
 
     assert calls == [("tier", 4), ("mktdata", "AAPL")], calls
-    assert result["market_data_type"] == "delayed-frozen"
+    assert result["market_data_type_requested"] == "delayed-frozen"
+    assert result["market_data_type_applied"] == "delayed-frozen"
+    assert "warning" not in result
 
 
 def test_historical_bars_select_tier_too(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -445,6 +447,81 @@ def test_tier_hint_is_best_effort_against_old_sdk(monkeypatch: pytest.MonkeyPatc
     # _FakeIB itself has no reqMarketDataType at all — the getattr path.
     _install_fake_ib(monkeypatch, _FakeIB)
     assert local.get_quote("AAPL", config=local.IBKRLocalConfig(profile="paper"))["status"] == "ok"
+
+
+@pytest.mark.parametrize("sdk_kind", ["raises", "missing"])
+def test_unapplied_tier_is_never_reported_as_applied(
+    monkeypatch: pytest.MonkeyPatch, sdk_kind: str
+) -> None:
+    """A tier we failed to select must not be echoed back as the tier in force.
+
+    A quote served on TWS's own default tier is byte-identical to one served on
+    the requested tier, so claiming the requested tier was applied is the one
+    thing the response must never do.
+    """
+
+    class _RaisingIB(_FakeIB):
+        def reqMarketDataType(self, tier):
+            raise RuntimeError("not supported by this SDK build")
+
+    _install_fake_ib(monkeypatch, _RaisingIB if sdk_kind == "raises" else _FakeIB)
+
+    result = local.get_quote("AAPL", config=local.IBKRLocalConfig(profile="paper"))
+
+    assert result["status"] == "ok"
+    assert result["market_data_type_requested"] == "delayed"
+    assert result["market_data_type_applied"] is None
+    assert "was NOT applied" in result["warning"]
+
+
+def test_starved_quote_names_the_unapplied_tier_as_the_likely_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the tier never applied, that is the diagnosis — not a missing feed."""
+
+    class _RaisingStarvedIB(_FakeIB):
+        def reqMarketDataType(self, tier):
+            raise RuntimeError("not supported by this SDK build")
+
+        def reqMktData(self, contract, genericTickList, snapshot, regulatorySnapshot):
+            return SimpleNamespace(bid=None, ask=None, last=None, close=None, volume=None, time="")
+
+    _install_fake_ib(monkeypatch, _RaisingStarvedIB)
+    monkeypatch.setattr(local, "_wait_for_tick", lambda *_, **__: False)
+
+    result = local.get_quote("AAPL", config=local.IBKRLocalConfig(profile="paper"))
+
+    assert result["status"] == "no_data"
+    assert result["market_data_type_applied"] is None
+    assert "tier was not applied" in result["error"]
+    assert "market-data subscription" in result["error"]
+
+
+def test_historical_bars_report_tier_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The history path carries the same requested/applied provenance as quotes."""
+
+    class _TierIB(_FakeIB):
+        def reqMarketDataType(self, tier):
+            return None
+
+        def reqHistoricalData(self, contract, **kwargs):
+            return [SimpleNamespace(date="2026-05-29", open=1, high=2, low=0.5, close=1.5, volume=100)]
+
+    _install_fake_ib(monkeypatch, _TierIB)
+    applied = local.get_historical_bars("AAPL", config=local.IBKRLocalConfig(profile="paper"))
+    assert applied["market_data_type_requested"] == "delayed"
+    assert applied["market_data_type_applied"] == "delayed"
+    assert "warning" not in applied
+
+    class _RaisingIB(_TierIB):
+        def reqMarketDataType(self, tier):
+            raise RuntimeError("not supported by this SDK build")
+
+    _install_fake_ib(monkeypatch, _RaisingIB)
+    unapplied = local.get_historical_bars("AAPL", config=local.IBKRLocalConfig(profile="paper"))
+    assert unapplied["status"] == "ok"
+    assert unapplied["market_data_type_applied"] is None
+    assert "was NOT applied" in unapplied["warning"]
 
 
 @pytest.mark.parametrize("bad", [0, 5, -1, "banana", "0"])

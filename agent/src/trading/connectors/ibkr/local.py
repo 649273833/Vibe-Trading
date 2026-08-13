@@ -349,7 +349,7 @@ def _tick_has_data(ticker: Any) -> bool:
     return False
 
 
-def _apply_market_data_type(ib: Any, config: IBKRLocalConfig) -> None:
+def _apply_market_data_type(ib: Any, config: IBKRLocalConfig) -> str | None:
     """Select the TWS market-data tier before requesting prices.
 
     TWS defaults to live data (type 1). An account without a market-data
@@ -357,16 +357,37 @@ def _apply_market_data_type(ib: Any, config: IBKRLocalConfig) -> None:
     fills, so the caller silently receives null prices after the full poll
     timeout. Setting type 3/4 falls back to the free delayed feed instead.
 
-    The call is best-effort: it is a no-op against SDK stubs that do not expose
-    ``reqMarketDataType``.
+    Applying the tier is best-effort — an SDK build without
+    ``reqMarketDataType`` must not fail an otherwise valid read — but the
+    failure is never silent. The caller reports the requested and the applied
+    tier separately: a quote served on TWS's own default tier is byte-identical
+    to one served on the tier we asked for, so labelling an unapplied request
+    as applied sends the user to debug a subscription that is not the problem.
+
+    Args:
+        ib: Connected ``ib_async`` client, or a stub in tests.
+        config: Connector config carrying the requested tier.
+
+    Returns:
+        ``None`` when the tier was applied, otherwise a short reason why not.
     """
     fn = getattr(ib, "reqMarketDataType", None)
     if fn is None:
-        return
+        return "the connected ib_async build does not expose reqMarketDataType"
     try:
         fn(int(config.market_data_type))
-    except Exception:  # noqa: BLE001 - never fail a read over a tier hint
-        pass
+    except Exception as exc:  # noqa: BLE001 - never fail a read over a tier hint
+        return f"reqMarketDataType({config.market_data_type}) failed: {exc}"
+    return None
+
+
+def _unapplied_tier_warning(tier: str, reason: str) -> str:
+    """Build the warning shown when TWS served a read on an unlabelled tier."""
+    return (
+        f"The '{tier}' market-data tier was NOT applied ({reason}). TWS served this "
+        "request on whichever tier it already had selected, which defaults to live "
+        "— treat these prices as unlabelled."
+    )
 
 
 def _wait_for_tick(ib: Any, ticker: Any, *, timeout: float = 5.0, poll_interval: float = 0.1) -> bool:
@@ -412,7 +433,7 @@ def get_quote(
         _assert_profile(cfg, accounts)
         contract = _make_contract(symbol, exchange=exchange, currency=currency, sec_type=sec_type)
         _qualify_contract(ib, contract)
-        _apply_market_data_type(ib, cfg)
+        tier_unapplied = _apply_market_data_type(ib, cfg)
         ticker = ib.reqMktData(contract, "", True, False)
         received = _wait_for_tick(ib, ticker)
         tier = MARKET_DATA_TYPES.get(cfg.market_data_type, str(cfg.market_data_type))
@@ -421,7 +442,8 @@ def get_quote(
             "symbol": symbol.upper(),
             "exchange": exchange,
             "currency": currency,
-            "market_data_type": tier,
+            "market_data_type_requested": tier,
+            "market_data_type_applied": None if tier_unapplied else tier,
             "quote": {
                 "bid": _obj_get(ticker, "bid"),
                 "ask": _obj_get(ticker, "ask"),
@@ -431,12 +453,21 @@ def get_quote(
                 "time": str(_obj_get(ticker, "time", "")),
             },
         }
+        if tier_unapplied:
+            result["warning"] = _unapplied_tier_warning(tier, tier_unapplied)
         if not received:
             result["error"] = (
-                f"No market data arrived for {symbol.upper()} on the '{tier}' tier. "
-                "Common causes: the instrument needs a market-data subscription, "
-                "the market is closed (try market_data_type 2 or 4 for frozen "
-                "last-known prices), or the symbol/exchange pair is wrong."
+                f"No market data arrived for {symbol.upper()}. "
+                + (
+                    f"The '{tier}' tier was not applied, so TWS most likely used its "
+                    "live tier, which needs a market-data subscription for this "
+                    "instrument. "
+                    if tier_unapplied
+                    else f"The '{tier}' tier was applied, so a missing market-data "
+                    "subscription is an unlikely cause. "
+                )
+                + "Other causes: the market is closed (try market_data_type 2 or 4 "
+                "for frozen last-known prices), or the symbol/exchange pair is wrong."
             )
         return result
     finally:
@@ -463,7 +494,7 @@ def get_historical_bars(
         _assert_profile(cfg, accounts)
         contract = _make_contract(symbol, exchange=exchange, currency=currency, sec_type=sec_type)
         _qualify_contract(ib, contract)
-        _apply_market_data_type(ib, cfg)
+        tier_unapplied = _apply_market_data_type(ib, cfg)
         bars = ib.reqHistoricalData(
             contract,
             endDateTime="",
@@ -473,13 +504,19 @@ def get_historical_bars(
             useRTH=use_rth,
             formatDate=1,
         )
-        return {
+        tier = MARKET_DATA_TYPES.get(cfg.market_data_type, str(cfg.market_data_type))
+        result = {
             "status": "ok",
             "symbol": symbol.upper(),
             "duration": duration,
             "bar_size": bar_size,
+            "market_data_type_requested": tier,
+            "market_data_type_applied": None if tier_unapplied else tier,
             "bars": [_bar_to_dict(bar) for bar in bars],
         }
+        if tier_unapplied:
+            result["warning"] = _unapplied_tier_warning(tier, tier_unapplied)
+        return result
     finally:
         _pool.release()
 
