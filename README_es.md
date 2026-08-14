@@ -738,7 +738,7 @@ vibe-trading-mcp               # inicia el servidor MCP (stdio)
 - **Docker** para el Path A
 - OpenAI Codex también se puede usar con ChatGPT OAuth: configura `LANGCHAIN_PROVIDER=openai-codex` y luego ejecuta `vibe-trading provider login openai-codex`. Esto no usa `OPENAI_API_KEY`.
 
-> **Proveedores de LLM compatibles:** OpenRouter, Requesty, OpenAI, Anthropic (API de Messages nativa), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, ModelScope, Ollama (local). Cuando no se configura ningún `*_BASE_URL`, cada proveedor recurre a su endpoint canónico, así que basta con una clave. Consulta `.env.example` para la configuración.
+> **Proveedores de LLM compatibles:** OpenRouter, Requesty, OpenAI, Anthropic (API de Messages nativa), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, Novita AI, iFlytek Spark, Z.ai, NVIDIA NIM, ModelScope, Ollama (local). Cuando no se configura ningún `*_BASE_URL`, cada proveedor recurre a su endpoint canónico, así que basta con una clave. Consulta `.env.example` para la configuración.
 
 > **Consejo:** Todos los mercados funcionan sin ninguna clave de API gracias al fallback automático. yfinance/Yahoo (HK/US/Canadá), OKX (cripto), mootdx (acciones A, conexión TCP directa, sin limitación de IP) y AKShare (acciones A, EE. UU., HK, futuros, forex) son gratuitos. El token de Tushare es opcional — mootdx es el fallback preferido sin token para acciones A, con AKShare como respaldo más amplio.
 
