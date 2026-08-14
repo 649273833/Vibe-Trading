@@ -639,7 +639,37 @@
     "ddTroughToRecovery": "Trough→Rec.",
     "ddNotRecovered": "Not recovered",
     "ddDays": "{{count}} d",
-    "dashboard": "Research dashboard"
+    "dashboard": "Research dashboard",
+    "positions": {
+      "tab": "Positions",
+      "weightDistribution": "Weight distribution",
+      "sectorDistribution": "Sector distribution",
+      "weightEvolution": "Weight evolution",
+      "pie": "Pie",
+      "treemap": "Treemap",
+      "cash": "Cash",
+      "rest": "Other",
+      "short": "Short",
+      "resolveIndustries": "Resolve industries",
+      "resolving": "Resolving...",
+      "resolveFailed": "Failed to resolve industries",
+      "retry": "Retry",
+      "asOf": "As of {{date}}",
+      "noPositions": "No position weights recorded for this run.",
+      "holdingsCount": "{{count}} holdings",
+      "assetClass": {
+        "a_share": "A-share",
+        "us_equity": "US equity",
+        "hk_equity": "HK equity",
+        "ca_equity": "Canada equity",
+        "kr_equity": "Korea equity",
+        "india_equity": "India equity",
+        "crypto": "Crypto",
+        "futures": "Futures",
+        "forex": "Forex",
+        "other": "Other"
+      }
+    }
   },
   "compare": {
     "title": "Strategy Comparison",

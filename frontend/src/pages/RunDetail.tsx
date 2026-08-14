@@ -19,6 +19,7 @@ import {
   List,
   LayoutDashboard,
   Loader2,
+  PieChart,
   ShieldCheck,
   Sigma,
   XCircle,
@@ -47,10 +48,11 @@ import { Skeleton, SkeletonMetrics, SkeletonChart } from "@/components/common/Sk
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { getStrategyReportIdentity, StrategyResearchDashboard } from "@/components/charts/StrategyResearchDashboard";
 import { FactorResearchPanel } from "@/components/charts/FactorResearchPanel";
+import { PositionsTab } from "@/components/run/PositionsTab";
 
 const rehypePlugins = [rehypeHighlight];
 
-type Tab = "dashboard" | "chart" | "tearsheet" | "trades" | "runCard" | "code" | "validation" | "studio" | "factor";
+type Tab = "dashboard" | "chart" | "tearsheet" | "trades" | "positions" | "runCard" | "code" | "validation" | "studio" | "factor";
 type ChartPayload = Pick<RunData, "price_series" | "indicator_series" | "trade_markers">;
 type ChartCache = Record<string, ChartPayload>;
 type ChartLoadProgress = { done: number; total: number };
@@ -136,11 +138,15 @@ export function RunDetail() {
   const hasStudio = !!run?.risk_xray || !!run?.rebalance_notes;
   const hasTearsheet = (run?.artifacts_equity_csv?.length ?? 0) > 0 || (run?.equity_curve?.length ?? 0) > 0;
   const hasFactor = !!run?.has_factor_artifacts;
+  const hasPositions = !!run?.artifacts_positions_csv?.some(
+    (row) => Object.keys(row).some((key) => key.toLowerCase() !== "timestamp" && key.toLowerCase() !== "date"),
+  );
   const TABS: { id: Tab; label: string; icon: typeof BarChart3; hidden?: boolean }[] = [
     { id: "dashboard", label: i18n.t("runDetail.dashboard"), icon: LayoutDashboard },
     { id: "chart", label: i18n.t("runDetail.chart"), icon: BarChart3 },
     { id: "tearsheet", label: i18n.t("runDetail.tearsheet"), icon: CalendarRange, hidden: !hasTearsheet },
     { id: "trades", label: i18n.t("runDetail.trades"), icon: List },
+    { id: "positions", label: i18n.t("runDetail.positions.tab"), icon: PieChart, hidden: !hasPositions },
     { id: "factor", label: i18n.t("runDetail.factor"), icon: Sigma, hidden: !hasFactor },
     { id: "studio", label: i18n.t("runDetail.studio"), icon: Gauge, hidden: !hasStudio },
     { id: "validation", label: i18n.t("runDetail.validation"), icon: ShieldCheck, hidden: !hasValidation },
@@ -412,6 +418,7 @@ export function RunDetail() {
           )}
           {tab === "tearsheet" && hasTearsheet && <TearsheetTab run={run} />}
           {tab === "trades" && <TradesTab run={run} />}
+          {tab === "positions" && hasPositions && <PositionsTab run={run} />}
           {tab === "factor" && run.has_factor_artifacts && runId && <FactorTab runId={runId} />}
           {tab === "validation" && run.validation && <ValidationPanel data={run.validation} />}
           {tab === "studio" && hasStudio && (

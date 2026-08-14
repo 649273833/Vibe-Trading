@@ -11,7 +11,7 @@ import math
 import os
 import statistics
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Deque, Dict, Generator, List, Optional, Tuple
 
@@ -460,6 +460,95 @@ def _factor_ic_correlation(factors: List[Dict[str, Any]]) -> Optional[Dict[str, 
     return {"labels": [str(factor["name"]) for factor in factors], "matrix": matrix}
 
 
+def _read_positions_symbols(path: Path) -> List[str]:
+    """Read the symbol column names from a wide-format ``positions.csv``.
+
+    Args:
+        path: Path to ``artifacts/positions.csv`` (header
+            ``timestamp,<sym1>,<sym2>,...``).
+
+    Returns:
+        Symbol column names in file order; empty when the file is missing,
+        empty, or unreadable.
+    """
+    try:
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            fieldnames = csv.DictReader(handle).fieldnames
+    except Exception:
+        return []
+    if not fieldnames:
+        return []
+    return [name.strip() for name in fieldnames[1:] if name and name.strip()]
+
+
+def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) -> Dict[str, Any]:
+    """Resolve asset class + A-share industry for a run's position symbols.
+
+    Serves from the ``artifacts/sector_map.json`` cache when a valid cache
+    exists and ``refresh`` is false; otherwise recomputes and rewrites the
+    cache. A corrupt cache file is treated as a cache miss.
+
+    Args:
+        run_dir: Persisted run directory containing ``artifacts/``.
+        run_id: Run identifier echoed back in the response envelope.
+        refresh: True bypasses the disk cache.
+
+    Returns:
+        The envelope ``{"ok", "run_id", "resolved_at", "cached", "symbols",
+        "unresolved"}``, or the ``{"ok", "run_id", "symbols", "note"}`` form
+        when no positions artifact exists.
+    """
+    from backtest.engines._market_hooks import _detect_market
+    from src.tools.sector_tool import resolve_industry_board
+
+    cache_path = run_dir / "artifacts" / "sector_map.json"
+    if not refresh:
+        cached = _load_json_file(cache_path)
+        if isinstance(cached, dict) and isinstance(cached.get("symbols"), dict):
+            cached["cached"] = True
+            cached["run_id"] = run_id
+            return cached
+
+    symbols = _read_positions_symbols(run_dir / "artifacts" / "positions.csv")
+    if not symbols:
+        return {"ok": True, "run_id": run_id, "symbols": {}, "note": "no positions artifact"}
+
+    resolved: Dict[str, Any] = {}
+    unresolved: List[str] = []
+    for symbol in symbols:
+        asset_class = _detect_market(symbol)
+        industry = None
+        if asset_class == "a_share":
+            try:
+                industry = resolve_industry_board(symbol)
+            except Exception:  # noqa: BLE001 - one failure must not abort the batch
+                industry = None
+        resolved[symbol] = {
+            "asset_class": asset_class,
+            "industry": industry,
+            "industry_source": "eastmoney" if industry is not None else None,
+        }
+        if asset_class == "a_share" and industry is None:
+            unresolved.append(symbol)
+
+    payload: Dict[str, Any] = {
+        "ok": True,
+        "run_id": run_id,
+        "resolved_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "cached": False,
+        "symbols": resolved,
+        "unresolved": unresolved,
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    return payload
+
+
 def _run_response_payload(response: Any) -> Dict[str, Any]:
     """Return a JSON-ready payload for opt-in run response variants."""
     return response.model_dump(mode="json")
@@ -797,6 +886,37 @@ def register_runs_routes(
             return JSONResponse(payload)
 
         return response
+
+    @app.get("/runs/{run_id}/positions/sectors", dependencies=[Depends(require_auth)])
+    async def get_run_positions_sectors(
+        run_id: str,
+        refresh: int = Query(0, description="Set to 1 to bypass the disk cache and recompute."),
+    ):
+        """Resolve asset class + A-share industry for a run's position symbols.
+
+        Read-only classification over ``artifacts/positions.csv``, cached in
+        ``artifacts/sector_map.json``.
+
+        Args:
+            run_id: Run identifier.
+            refresh: ``1`` bypasses the disk cache, ``0`` (default) serves it.
+
+        Returns:
+            The sector-map envelope built by ``_build_positions_sector_map``.
+
+        Raises:
+            HTTPException: 404 when the run directory does not exist.
+        """
+        _host_validate_path_param(run_id, "run_id")
+        run_dir = _host_RUNS_DIR() / run_id
+
+        if not run_dir.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run {run_id} not found"
+            )
+
+        return _build_positions_sector_map(run_dir, run_id, refresh=bool(refresh))
 
     @app.get("/runs", response_model=List[RunInfo], dependencies=[Depends(require_auth)])
     async def list_runs(limit: int = 20):

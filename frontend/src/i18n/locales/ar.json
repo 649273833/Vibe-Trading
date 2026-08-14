@@ -634,7 +634,37 @@
     "ddTroughToRecovery": "القاع إلى التعافي",
     "ddNotRecovered": "لم يتعافَ",
     "ddDays": "{{count}} يوم",
-    "dashboard": "لوحة البحث"
+    "dashboard": "لوحة البحث",
+    "positions": {
+      "tab": "المراكز",
+      "weightDistribution": "توزيع الأوزان",
+      "sectorDistribution": "توزيع القطاعات",
+      "weightEvolution": "تطور الأوزان",
+      "pie": "دائري",
+      "treemap": "خريطة شجرية",
+      "cash": "نقد",
+      "rest": "أخرى",
+      "short": "بيع على المكشوف",
+      "resolveIndustries": "جلب الصناعات",
+      "resolving": "جارٍ الجلب...",
+      "resolveFailed": "فشل جلب الصناعات",
+      "retry": "إعادة المحاولة",
+      "asOf": "اعتبارًا من {{date}}",
+      "noPositions": "لم يتم تسجيل أوزان المراكز لهذا التشغيل.",
+      "holdingsCount": "{{count}} من المراكز",
+      "assetClass": {
+        "a_share": "أسهم صينية (A)",
+        "us_equity": "أسهم أمريكية",
+        "hk_equity": "أسهم هونغ كونغ",
+        "ca_equity": "أسهم كندية",
+        "kr_equity": "أسهم كورية",
+        "india_equity": "أسهم هندية",
+        "crypto": "عملات رقمية",
+        "futures": "عقود آجلة",
+        "forex": "عملات أجنبية",
+        "other": "أخرى"
+      }
+    }
   },
   "compare": {
     "title": "مقارنة الاستراتيجيات",

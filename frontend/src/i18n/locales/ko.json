@@ -634,7 +634,37 @@
     "ddTroughToRecovery": "저점→회복",
     "ddNotRecovered": "미회복",
     "ddDays": "{{count}}일",
-    "dashboard": "리서치 대시보드"
+    "dashboard": "리서치 대시보드",
+    "positions": {
+      "tab": "포지션",
+      "weightDistribution": "비중 분포",
+      "sectorDistribution": "섹터 분포",
+      "weightEvolution": "비중 변화",
+      "pie": "원형",
+      "treemap": "트리맵",
+      "cash": "현금",
+      "rest": "기타",
+      "short": "공매도",
+      "resolveIndustries": "업종 조회",
+      "resolving": "조회 중...",
+      "resolveFailed": "업종 조회에 실패했습니다",
+      "retry": "재시도",
+      "asOf": "{{date}} 기준",
+      "noPositions": "이 실행에는 포지션 비중이 기록되어 있지 않습니다.",
+      "holdingsCount": "{{count}}개 종목",
+      "assetClass": {
+        "a_share": "A주",
+        "us_equity": "미국 주식",
+        "hk_equity": "홍콩 주식",
+        "ca_equity": "캐나다 주식",
+        "kr_equity": "한국 주식",
+        "india_equity": "인도 주식",
+        "crypto": "암호화폐",
+        "futures": "선물",
+        "forex": "외환",
+        "other": "기타"
+      }
+    }
   },
   "compare": {
     "title": "전략 비교",

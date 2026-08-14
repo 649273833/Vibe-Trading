@@ -634,7 +634,37 @@
     "ddTroughToRecovery": "低点→恢复",
     "ddNotRecovered": "未恢复",
     "ddDays": "{{count}} 天",
-    "dashboard": "研究仪表盘"
+    "dashboard": "研究仪表盘",
+    "positions": {
+      "tab": "持仓",
+      "weightDistribution": "权重分布",
+      "sectorDistribution": "行业分布",
+      "weightEvolution": "权重演变",
+      "pie": "饼图",
+      "treemap": "矩形树图",
+      "cash": "现金",
+      "rest": "其他",
+      "short": "做空",
+      "resolveIndustries": "解析行业",
+      "resolving": "解析中...",
+      "resolveFailed": "行业解析失败",
+      "retry": "重试",
+      "asOf": "截至 {{date}}",
+      "noPositions": "该运行未记录持仓权重。",
+      "holdingsCount": "{{count}} 个持仓",
+      "assetClass": {
+        "a_share": "A股",
+        "us_equity": "美股",
+        "hk_equity": "港股",
+        "ca_equity": "加股",
+        "kr_equity": "韩股",
+        "india_equity": "印股",
+        "crypto": "加密货币",
+        "futures": "期货",
+        "forex": "外汇",
+        "other": "其他"
+      }
+    }
   },
   "compare": {
     "title": "策略对比",

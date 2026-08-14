@@ -634,7 +634,37 @@
     "ddTroughToRecovery": "安値→回復",
     "ddNotRecovered": "未回復",
     "ddDays": "{{count}}日",
-    "dashboard": "リサーチダッシュボード"
+    "dashboard": "リサーチダッシュボード",
+    "positions": {
+      "tab": "ポジション",
+      "weightDistribution": "ウェイト分布",
+      "sectorDistribution": "セクター分布",
+      "weightEvolution": "ウェイト推移",
+      "pie": "円グラフ",
+      "treemap": "ツリーマップ",
+      "cash": "キャッシュ",
+      "rest": "その他",
+      "short": "空売り",
+      "resolveIndustries": "業種を解決",
+      "resolving": "解決中...",
+      "resolveFailed": "業種の解決に失敗しました",
+      "retry": "再試行",
+      "asOf": "{{date}} 時点",
+      "noPositions": "この実行にはポジションのウェイトが記録されていません。",
+      "holdingsCount": "{{count}} 銘柄",
+      "assetClass": {
+        "a_share": "A株",
+        "us_equity": "米国株",
+        "hk_equity": "香港株",
+        "ca_equity": "カナダ株",
+        "kr_equity": "韓国株",
+        "india_equity": "インド株",
+        "crypto": "暗号資産",
+        "futures": "先物",
+        "forex": "外国為替",
+        "other": "その他"
+      }
+    }
   },
   "compare": {
     "title": "戦略比較",

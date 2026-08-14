@@ -670,7 +670,54 @@ export interface RunData {
   artifacts_equity_csv?: Array<Record<string, string>>;
   artifacts_metrics_csv?: Array<Record<string, string>>;
   artifacts_trades_csv?: Array<Record<string, string>>;
+  /** Filled portfolio weights per date (rows: {timestamp, <symbol>: weight-string}). */
+  artifacts_positions_csv?: Array<Record<string, string>>;
+  /** Requested target weights per date, same row shape as artifacts_positions_csv. */
+  artifacts_target_positions_csv?: Array<Record<string, string>>;
   run_logs?: Array<{ source?: string; line_number?: number; message?: string }>;
+}
+
+// --- Positions sector-map types (GET /runs/{runId}/positions/sectors) ---
+
+/** Asset classes reported by the backend sector-map endpoint. */
+export type SectorAssetClass =
+  | "a_share"
+  | "us_equity"
+  | "hk_equity"
+  | "india_equity"
+  | "kr_equity"
+  | "ca_equity"
+  | "crypto"
+  | "futures"
+  | "forex";
+
+export interface SectorInfo {
+  asset_class: SectorAssetClass;
+  /** Resolved industry name, or null when unresolved / not applicable. */
+  industry: string | null;
+  /** Provenance of `industry` (e.g. "eastmoney"), null when unresolved. */
+  industry_source: string | null;
+}
+
+export interface SectorMapResponse {
+  ok: boolean;
+  run_id?: string;
+  resolved_at?: string;
+  cached?: boolean;
+  symbols: Record<string, SectorInfo>;
+  unresolved?: string[];
+  /** Present when the run has no positions artifact. */
+  note?: string;
+}
+
+/**
+ * Fetch the resolved sector map for one run's positions artifact.
+ * Uses the same auth-header + error-envelope conventions as every other
+ * fetcher in this module (via the shared `request` helper).
+ */
+export function fetchRunSectorMap(runId: string, refresh?: boolean): Promise<SectorMapResponse> {
+  const qs = refresh ? "?refresh=1" : "";
+  return request<SectorMapResponse>(`/runs/${encodeURIComponent(runId)}/positions/sectors${qs}`);
 }
 
 export interface RunCard {
