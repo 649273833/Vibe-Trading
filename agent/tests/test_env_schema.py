@@ -94,6 +94,15 @@ class TestEnvConfigDefaults:
 
         assert EnvConfig().llm.langchain_use_responses_api is False
 
+    @pytest.mark.parametrize("value", ["TRUE", "yes", "1", "on"])
+    def test_llm_responses_api_requires_literal_true(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("LANGCHAIN_USE_RESPONSES_API", value)
+        reset_env_config()
+
+        assert EnvConfig().llm.langchain_use_responses_api is False
+
     def test_data_defaults(self) -> None:
         c = EnvConfig()
         assert c.data.tushare_token == ""

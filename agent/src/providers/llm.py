@@ -794,6 +794,15 @@ def _build_native_deepseek(
     )
 
 
+def _native_deepseek_adapter_available() -> bool:
+    """Return whether the optional native DeepSeek adapter can be imported."""
+    try:
+        module = import_module("langchain_deepseek")
+    except Exception:  # noqa: BLE001 - optional adapter availability probe
+        return False
+    return callable(getattr(module, "ChatDeepSeek", None))
+
+
 # Anthropic model names discovered at runtime to reject the `temperature`
 # request field. Next-gen Claude models (e.g. claude-opus-5, claude-opus-4-8,
 # claude-sonnet-5) return HTTP 400 "`temperature` is deprecated for this model."
@@ -1032,6 +1041,31 @@ def _supports_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
     return caps.name not in {"anthropic", "openai-codex"} and not caps.openrouter_reasoning_body
 
 
+def uses_responses_api(
+    provider: str,
+    configured_responses_api: bool | None,
+    deepseek_adapter: str | None = None,
+) -> bool:
+    """Return whether the configured provider uses ChatOpenAI's Responses route."""
+    if configured_responses_api is not True:
+        return False
+    normalized_provider = provider.strip().lower().replace("_", "-")
+    if normalized_provider in {"anthropic", "openai-codex"}:
+        return False
+    if normalized_provider != "deepseek":
+        return True
+    adapter = _deepseek_adapter_mode() if deepseek_adapter is None else deepseek_adapter.strip().lower()
+    adapter = {
+        "compat": "openai-compatible",
+        "compatible": "openai-compatible",
+        "openai": "openai-compatible",
+        "openai_compatible": "openai-compatible",
+    }.get(adapter, adapter)
+    if adapter == "openai-compatible":
+        return True
+    return adapter == "auto" and not _native_deepseek_adapter_available()
+
+
 def provider_diagnostics() -> dict[str, Any]:
     """Build a redacted provider diagnostic snapshot.
 
@@ -1219,7 +1253,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     effort = get_env_config().llm.langchain_reasoning_effort.strip().lower()
     # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     configured_responses_api = get_env_config().llm.langchain_use_responses_api
-    use_responses_api = configured_responses_api is True
+    use_responses_api = uses_responses_api(provider, configured_responses_api)
     creds = get_llm_credentials(provider, name)
     api_key = creds["api_key"]
     _validate_authorization_credential(

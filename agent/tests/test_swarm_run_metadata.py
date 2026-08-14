@@ -14,7 +14,7 @@ import pytest
 
 import src.providers.llm as llm_mod
 from src.config.accessor import reset_env_config
-from src.swarm.models import SwarmRun
+from src.swarm.models import SwarmRun, public_model_metadata, public_provider_metadata
 from src.swarm.runtime import SwarmRuntime
 from src.swarm.store import SwarmStore
 
@@ -108,13 +108,24 @@ def test_runtime_resolves_unset_responses_api_to_false(
     assert run.use_responses_api is False
 
 
-def test_runtime_redacts_sensitive_llm_metadata_before_persistence(
+@pytest.mark.parametrize(
+    "model",
+    [
+        "api_key=must-not-be-persisted",
+        "/v1",
+        "/private/socket",
+        "gateway/v1",
+        "private/api",
+    ],
+)
+def test_runtime_redacts_non_public_llm_model_metadata_before_persistence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    model: str,
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "LANGCHAIN_MODEL_NAME=api_key=must-not-be-persisted\n",
+        f"LANGCHAIN_MODEL_NAME={model}\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
@@ -175,6 +186,104 @@ def test_runtime_redacts_unsupported_reasoning_effort_before_persistence(
 
     assert run.reasoning_effort == "[redacted]"
     assert store.load_run(run.id).reasoning_effort == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "private-gateway",
+        "internal-gateway.invalid",
+        "internal-gateway.invalid:8443",
+        "internal-gateway.invalid/v1",
+        "internal-gateway.invalid/v1?tenant=private",
+        "127.0.0.1:8000",
+        "127.0.0.1:8000/v1",
+        "localhost:8000",
+        "localhost:8000/v1",
+    ],
+)
+def test_provider_metadata_redacts_non_public_values(provider: str) -> None:
+    assert public_provider_metadata(provider) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "internal-gateway.invalid",
+        "internal-gateway.invalid:8443",
+        "internal-gateway.invalid/v1",
+        "internal-gateway.invalid/v1?tenant=private",
+        "127.0.0.1:8000/v1",
+        "localhost:8000/v1",
+        "[::1]:8000/v1",
+        "gateway:8000/v1",
+        "/v1",
+        "/private/socket",
+        "gateway/v1",
+        "private/api",
+    ],
+)
+def test_model_metadata_redacts_endpoint_like_values(model: str) -> None:
+    assert public_model_metadata(model) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "reasoning-model",
+        "openai/gpt-5",
+        "openai-codex/gpt-5.4",
+        "deepseek/deepseek-v4-pro",
+        "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "Qwen/Qwen3.5-27B",
+        "qwen2.5:32b",
+    ],
+)
+def test_model_metadata_preserves_model_identifiers(model: str) -> None:
+    assert public_model_metadata(model) == model
+
+
+@pytest.mark.parametrize(
+    ("provider", "adapter", "native_available", "expected"),
+    [
+        ("anthropic", None, False, False),
+        ("openai-codex", None, False, False),
+        ("deepseek", "native", True, False),
+        ("deepseek", "openai-compatible", True, True),
+        ("deepseek", "compat", True, True),
+        ("deepseek", "auto", True, False),
+        ("deepseek", "auto", False, True),
+        ("openai", None, False, True),
+    ],
+)
+def test_runtime_records_effective_responses_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    provider: str,
+    adapter: str | None,
+    native_available: bool,
+    expected: bool,
+) -> None:
+    monkeypatch.setenv("LANGCHAIN_PROVIDER", provider)
+    monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "reasoning-model")
+    monkeypatch.setenv("LANGCHAIN_USE_RESPONSES_API", "true")
+    if adapter is None:
+        monkeypatch.delenv("VIBE_TRADING_DEEPSEEK_ADAPTER", raising=False)
+    else:
+        monkeypatch.setenv("VIBE_TRADING_DEEPSEEK_ADAPTER", adapter)
+    monkeypatch.setattr(llm_mod, "_dotenv_loaded", True)
+    monkeypatch.setattr(
+        llm_mod,
+        "_native_deepseek_adapter_available",
+        lambda: native_available,
+    )
+    reset_env_config()
+    monkeypatch.setattr(SwarmRuntime, "_execute_run", lambda *_: None)
+    runtime = SwarmRuntime(store=SwarmStore(tmp_path / "runs"))
+
+    run = runtime.start_run("risk_committee", {"goal": "smoke test"})
+
+    assert run.use_responses_api is expected
 
 
 def test_legacy_run_json_without_provider_model_still_parses() -> None:

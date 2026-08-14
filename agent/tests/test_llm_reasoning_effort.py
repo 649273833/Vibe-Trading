@@ -18,6 +18,7 @@ Responses API for endpoints that support it.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from fastapi.testclient import TestClient
 
 import api_server
 import src.providers.llm as llm_mod
-from src.providers.llm import build_llm
+from src.providers.llm import build_llm, uses_responses_api
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +109,31 @@ def _capture_kwargs(env: dict[str, str]) -> dict[str, Any]:
         with patch.object(llm_mod, "ChatOpenAIWithReasoning", _FakeChatOpenAI):
             build_llm()
     return captured
+
+
+@pytest.mark.parametrize(
+    ("provider", "adapter", "native_available", "expected"),
+    [
+        ("openai", None, False, True),
+        ("anthropic", None, False, False),
+        ("openai-codex", None, False, False),
+        ("deepseek", "openai-compatible", True, True),
+        ("deepseek", "compat", True, True),
+        ("deepseek", "native", False, False),
+        ("deepseek", "auto", True, False),
+        ("deepseek", "auto", False, True),
+    ],
+)
+def test_uses_responses_api_matches_provider_route(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    adapter: str | None,
+    native_available: bool,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(llm_mod, "_native_deepseek_adapter_available", lambda: native_available)
+
+    assert uses_responses_api(provider, True, adapter) is expected
 
 
 class TestDirectOpenAI:
@@ -392,6 +418,91 @@ class TestResponsesAPI:
         payload = instance._get_request_payload([HumanMessage(content="hi")])
 
         assert payload["reasoning"] == {"effort": "high"}
+
+    def test_responses_transport_sends_reasoning_to_the_responses_path(self) -> None:
+        if llm_mod.ChatOpenAIWithReasoning is None:
+            pytest.skip("langchain-openai is not installed")
+        import httpx
+
+        seen: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 0,
+                    "model": "reasoning-model",
+                    "output": [
+                        {
+                            "id": "msg_test",
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "ok", "annotations": []}],
+                        }
+                    ],
+                    "parallel_tool_calls": True,
+                    "tool_choice": "auto",
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            llm = llm_mod.ChatOpenAIWithReasoning(
+                model="reasoning-model",
+                api_key="sk-test",
+                base_url="https://gateway.invalid/v1",
+                http_client=client,
+                use_responses_api=True,
+                output_version="responses/v1",
+                reasoning={"effort": "max"},
+            )
+            assert llm.invoke("hi").content
+
+        assert seen["path"] == "/v1/responses"
+        assert seen["body"]["reasoning"] == {"effort": "max"}
+
+    def test_chat_transport_sends_reasoning_effort_to_chat_completions(self) -> None:
+        if llm_mod.ChatOpenAIWithReasoning is None:
+            pytest.skip("langchain-openai is not installed")
+        import httpx
+
+        seen: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "reasoning-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            llm = llm_mod.ChatOpenAIWithReasoning(
+                model="reasoning-model",
+                api_key="sk-test",
+                base_url="https://gateway.invalid/v1",
+                http_client=client,
+                reasoning_effort="max",
+            )
+            assert llm.invoke("hi").content == "ok"
+
+        assert seen["path"] == "/v1/chat/completions"
+        assert seen["body"]["reasoning_effort"] == "max"
 
 
 class TestSettingsAllowlist:

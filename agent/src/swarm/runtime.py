@@ -21,7 +21,7 @@ from typing import Callable
 
 from src.config.accessor import get_env_config
 from src.config.schema import AgentConfig
-from src.providers.llm import _ensure_dotenv
+from src.providers.llm import _ensure_dotenv, uses_responses_api
 from src.swarm import grounding
 from src.swarm.models import (
     RunStatus,
@@ -31,7 +31,8 @@ from src.swarm.models import (
     SwarmTask,
     TaskStatus,
     WorkerResult,
-    public_metadata_value,
+    public_model_metadata,
+    public_provider_metadata,
     public_reasoning_effort,
 )
 from src.swarm.presets import build_run_from_preset
@@ -130,10 +131,14 @@ class SwarmRuntime:
         # override applied via os.environ still shows up. Per-agent overrides
         # remain visible on SwarmAgentSpec.model_name.
         _cfg = get_env_config()
-        run.provider = public_metadata_value(_cfg.llm.langchain_provider.lower())
-        run.model = public_metadata_value(_cfg.llm.langchain_model_name)
+        run.provider = public_provider_metadata(_cfg.llm.langchain_provider.lower())
+        run.model = public_model_metadata(_cfg.llm.langchain_model_name)
         run.reasoning_effort = public_reasoning_effort(_cfg.llm.langchain_reasoning_effort)
-        run.use_responses_api = _cfg.llm.langchain_use_responses_api is True
+        run.use_responses_api = uses_responses_api(
+            _cfg.llm.langchain_provider,
+            _cfg.llm.langchain_use_responses_api,
+            _cfg.llm.vibe_trading_deepseek_adapter,
+        )
 
         self._store.create_run(run)
 

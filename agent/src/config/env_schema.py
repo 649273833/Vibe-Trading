@@ -63,6 +63,16 @@ def _parse_env_bool(v: Any) -> Any:
 EnvBool = Annotated[bool, BeforeValidator(_parse_env_bool)]
 
 
+def _parse_responses_api_bool(v: Any) -> Any:
+    """Enable Responses transport only for the documented literal ``true``."""
+    if isinstance(v, str):
+        return v.strip() == "true"
+    return v
+
+
+ResponsesApiBool = Annotated[bool, BeforeValidator(_parse_responses_api_bool)]
+
+
 # ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
@@ -133,7 +143,7 @@ class LLMConfig(_EnvBase):
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
     langchain_reasoning_effort: str = Field(alias="LANGCHAIN_REASONING_EFFORT", default="")
-    langchain_use_responses_api: EnvBool | None = Field(
+    langchain_use_responses_api: ResponsesApiBool | None = Field(
         alias="LANGCHAIN_USE_RESPONSES_API", default=None
     )
     vibe_trading_deepseek_adapter: str = Field(alias="VIBE_TRADING_DEEPSEEK_ADAPTER", default="auto")

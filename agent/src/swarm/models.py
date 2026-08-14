@@ -6,6 +6,7 @@ Enums use str+Enum to ensure JSON-serialization compatibility.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -16,6 +17,46 @@ from src.tools.redaction import redact_text
 _PUBLIC_METADATA_MAX_LENGTH = 128
 _REDACTED_METADATA = "[redacted]"
 _REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "max"})
+_PUBLIC_PROVIDERS = frozenset(
+    {
+        "anthropic",
+        "dashscope",
+        "deepseek",
+        "gemini",
+        "glm",
+        "groq",
+        "iflytek",
+        "kimi",
+        "kimi-coding",
+        "mimo",
+        "minimax",
+        "modelscope",
+        "moonshot",
+        "nvidia",
+        "nvidia-nim",
+        "ollama",
+        "openai",
+        "openai-codex",
+        "openai_codex",
+        "opencode-go",
+        "opencode-zen",
+        "openrouter",
+        "qwen",
+        "requesty",
+        "siliconflow-cn",
+        "siliconflow-global",
+        "spark",
+        "zai",
+        "zhipu",
+    }
+)
+_MODEL_ENDPOINT_PREFIX = re.compile(
+    r"^(?:/|localhost|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|\[[0-9a-f:.]+\]|[^/:]+\.[a-z]{2,}|[^/:]+(?=:[0-9]+(?:/|$)))(?::[0-9]+)?(?:/|$)|^[^/]+/(?:api|v[0-9]+(?:alpha|beta)?[0-9]*)(?:/|$)",
+    re.IGNORECASE,
+)
+_PUBLIC_MODEL_IDENTIFIER = re.compile(
+    r"^(?:[A-Za-z0-9][A-Za-z0-9._:+-]*|[A-Za-z0-9][A-Za-z0-9._:+-]*/(?=[A-Za-z0-9._:+-]*[-.0-9])[A-Za-z0-9][A-Za-z0-9._:+-]*)$"
+)
 
 
 def public_metadata_value(
@@ -36,6 +77,26 @@ def public_metadata_value(
     if allowed_values is not None and metadata not in allowed_values:
         return _REDACTED_METADATA
     if redact_text(metadata) != metadata:
+        return _REDACTED_METADATA
+    return metadata
+
+
+def public_provider_metadata(value: str | None) -> str | None:
+    """Return an approved public provider label for run metadata."""
+    return public_metadata_value(
+        value.lower() if value is not None else None,
+        allowed_values=_PUBLIC_PROVIDERS,
+    )
+
+
+def public_model_metadata(value: str | None) -> str | None:
+    """Return a model identifier only when it cannot be mistaken for an endpoint."""
+    metadata = public_metadata_value(value)
+    if metadata is None or metadata == _REDACTED_METADATA:
+        return metadata
+    if "?" in metadata or "#" in metadata or "@" in metadata:
+        return _REDACTED_METADATA
+    if _MODEL_ENDPOINT_PREFIX.match(metadata) or not _PUBLIC_MODEL_IDENTIFIER.fullmatch(metadata):
         return _REDACTED_METADATA
     return metadata
 
