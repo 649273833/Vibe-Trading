@@ -8,15 +8,17 @@ import time
 import uuid
 from typing import Any
 
-from src.trading.connectors.etoro.client import EtoroAPIError, EtoroConfig, copy_root, make_client
-
-
-_REFERENCE_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,35}$")
-
-COPY_TRADING_PAPER_UNSUPPORTED = (
-    "eToro Public API copy trading is not available on demo (paper) accounts. "
-    "Use a live profile (e.g. etoro-live-trade) with a real account."
+from src.trading.connectors.etoro.client import (
+    COPY_TRADING_PAPER_UNSUPPORTED,
+    EtoroAPIError,
+    EtoroConfig,
+    copy_root,
+    make_client,
 )
+
+# ``COPY_TRADING_PAPER_UNSUPPORTED`` is defined beside ``copy_root``, which is
+# what structurally enforces it; service.py still imports it from here.
+_REFERENCE_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,35}$")
 
 
 def _base(cfg: EtoroConfig) -> dict[str, Any]:

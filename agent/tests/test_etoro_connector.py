@@ -14,6 +14,7 @@ from src.trading.connectors.etoro import sdk as etoro_sdk
 from src.trading.connectors.etoro.client import (
     EtoroClient,
     EtoroConfig,
+    EtoroConfigError,
     build_config,
     aggregate_portfolio_path,
     copy_root,
@@ -100,10 +101,25 @@ def test_demo_and_real_paths_separated() -> None:
     assert info_root(paper).endswith("/demo")
     assert aggregate_portfolio_path(paper).endswith("/demo/aggregate-portfolio")
     assert aggregate_portfolio_path(live) == "/api/v1/trading/info/aggregate-portfolio"
-    assert copy_root(paper) == "/api/v2/trading/copy"
     assert copy_root(live) == "/api/v2/trading/copy"
     assert positions_root(paper).endswith("/demo")
     assert paper.api_key == live.api_key
+
+
+def test_copy_root_refuses_a_paper_config() -> None:
+    """Copy has no demo path, so a paper config must get a refusal, not the real one.
+
+    Every other root encodes paper/live in the path. If ``copy_root`` simply
+    returned the real route for a paper config, the only thing keeping demo
+    credentials off the live copy endpoint would be each call site remembering
+    to check first.
+    """
+    paper = EtoroConfig(profile="paper", api_key="k", user_key="u")
+    with pytest.raises(EtoroConfigError) as excinfo:
+        copy_root(paper)
+    assert "demo (paper)" in str(excinfo.value)
+    assert copy_root(EtoroConfig(profile="live-readonly", api_key="k", user_key="u"))
+    assert copy_root(EtoroConfig(profile="live", api_key="k", user_key="u"))
 
 
 def test_shared_credentials_across_paper_and_live_profiles(monkeypatch, tmp_path) -> None:
