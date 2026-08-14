@@ -66,6 +66,11 @@ jobs:
         working-directory: desktop/electron
         run: npm run smoke:credentials
 
+      - name: Verify bounded native process adapter
+        working-directory: desktop/electron
+        shell: powershell
+        run: .\scripts\test-process-utils.ps1
+
       - name: Assemble minimal Python runtime
         working-directory: desktop/electron
         shell: powershell

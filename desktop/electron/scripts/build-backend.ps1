@@ -25,6 +25,8 @@ $gtkInstallerUrl = "https://github.com/tschoonj/GTK-for-Windows-Runtime-Environm
 $gtkInstallerSha256 = 'd05e1488ca0e6ffaabb579bbeb82113c099152ca4260ebc63084b0dd174d4558'
 $gtkExtractRoot = Join-Path $gtkCacheRoot 'archive-runtime-v1'
 
+. (Join-Path $PSScriptRoot 'process-utils.ps1')
+
 function Get-VerifiedDownload {
     param(
         [Parameter(Mandatory)][string]$Uri,
@@ -90,38 +92,6 @@ function Resolve-SevenZip {
         }
     }
     throw '7z.exe is required to extract the checksum-pinned GTK archive without executing its legacy installer.'
-}
-
-function Invoke-BoundedProcess {
-    param(
-        [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string]$Arguments,
-        [Parameter(Mandatory)][int]$TimeoutSeconds,
-        [Parameter(Mandatory)][string]$Label
-    )
-
-    $process = $null
-    try {
-        $process = Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $Arguments `
-            -NoNewWindow `
-            -PassThru
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
-            & $taskkill /PID $process.Id /T /F | Out-Null
-            $process.WaitForExit(10000) | Out-Null
-            throw "$Label timed out after $TimeoutSeconds seconds."
-        }
-        if ($process.ExitCode -ne 0) {
-            throw "$Label failed (exit code $($process.ExitCode))."
-        }
-    }
-    finally {
-        if ($process) {
-            $process.Dispose()
-        }
-    }
 }
 
 if (-not $BuildPython) {

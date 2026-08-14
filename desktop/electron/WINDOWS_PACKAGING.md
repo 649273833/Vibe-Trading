@@ -38,6 +38,7 @@ cd ..\desktop\electron
 npm ci
 npm run prepare:electron
 npm run smoke:credentials
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-process-utils.ps1
 npm run runtime:win -- -Clean
 npm run smoke:lifecycle
 npm run installer:win:review
