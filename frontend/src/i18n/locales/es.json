@@ -405,6 +405,7 @@
     "configured": "Configurado",
     "keepCurrentKey": "Déjalo en blanco para conservar la clave actual",
     "providerUsesOauth": "Este proveedor usa OAuth. Ejecuta: {{command}}",
+    "providerUsesManagedAuth": "Este proveedor gestiona la autenticación. Ejecuta: {{command}}",
     "noApiKeyRequired": "Este proveedor no requiere clave de API.",
     "keepCurrentToken": "Déjalo en blanco para conservar el token actual",
     "iwencaiApiKey": "Clave de API de iWenCai",
@@ -421,6 +422,7 @@
     "unknownError": "Error desconocido",
     "providerChangeHint": "Cambiar de proveedor actualiza el modelo y el endpoint recomendados.",
     "oauth": "OAuth",
+    "authentication": "Autenticación",
     "apiKey": "Clave de API",
     "tushareTokenDesc": "Usado para datos de acciones A, futuros, fondos y macro de China. Si no se configura, el proyecto recurre a AKShare cuando está disponible."
   },
