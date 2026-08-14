@@ -16,6 +16,7 @@ const PROXY_PATHS = [
   "/upload",
   "/shadow-reports",
   "/scheduled-runs",
+  "/options",
 ];
 
 export default defineConfig(({ mode }) => {
@@ -47,6 +48,10 @@ export default defineConfig(({ mode }) => {
         "^/runs/[^/]+/?$": apiProxyWithHtmlFallback,
         "/runs": apiProxy,
         "/correlation": apiProxyWithHtmlFallback,
+        // /options is both the SPA Options Lab route and an API prefix
+        // (/options/payoff, /options/chain) — same dual role as /correlation.
+        // Overrides the plain PROXY_PATHS entry above.
+        "/options": apiProxyWithHtmlFallback,
         "^/alpha(?:/|$)": apiProxy,
       },
     },
