@@ -624,7 +624,7 @@
     "monthlyReturns": "Monthly Returns",
     "annualReturns": "Annual Returns",
     "topDrawdowns": "Top Drawdowns",
-    "tearsheetYear": "Year",
+    "tearsheetYear": "Full Year",
     "noTearsheetData": "Not enough equity data for a tearsheet.",
     "ddRank": "#",
     "ddDepth": "Depth",

@@ -624,7 +624,7 @@
     "monthlyReturns": "Rentabilidad mensual",
     "annualReturns": "Rentabilidad anual",
     "topDrawdowns": "Principales drawdowns",
-    "tearsheetYear": "Año",
+    "tearsheetYear": "Año completo",
     "noTearsheetData": "No hay datos de equity suficientes para generar el informe de rendimiento.",
     "ddRank": "#",
     "ddDepth": "Profundidad",
