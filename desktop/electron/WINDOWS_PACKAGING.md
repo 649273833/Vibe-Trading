@@ -20,6 +20,11 @@ This layer is stacked on the desktop lifecycle shell and adds only:
 Users can install an optional adapter later from a source/developer environment.
 The desktop runtime does not expose a package installer UI in this change.
 
+The source tree contains dormant verification and recovery primitives for the
+future signed-updater review. They remain disconnected from application startup
+and cannot download or launch anything. Their rejection and recovery contract
+is documented in [UPDATE_SAFETY.md](UPDATE_SAFETY.md).
+
 ## Build
 
 From a complete checkout of the current upstream source:
