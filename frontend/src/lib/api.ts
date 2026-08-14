@@ -612,9 +612,11 @@ export interface RunData {
   indicator_series?: Record<string, Record<string, IndicatorPoint[]>>;
   trade_markers?: TradeMarker[];
   equity_curve?: EquityPoint[];
+  trade_log?: Array<Record<string, string>>;
   /** Full equity.csv rows (timestamp/equity/drawdown as strings); not capped like equity_curve. */
   artifacts_equity_csv?: Array<Record<string, string>>;
-  trade_log?: Array<Record<string, string>>;
+  artifacts_metrics_csv?: Array<Record<string, string>>;
+  artifacts_trades_csv?: Array<Record<string, string>>;
   run_logs?: Array<{ source?: string; line_number?: number; message?: string }>;
 }
 
