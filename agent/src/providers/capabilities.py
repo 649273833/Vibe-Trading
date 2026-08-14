@@ -28,6 +28,15 @@ class ProviderCapabilities:
             be normalized to ``""`` for strict providers.
         openrouter_reasoning_body: Whether ``extra_body.reasoning`` is a valid
             OpenRouter request option.
+        top_level_reasoning_effort: Whether the provider accepts a top-level
+            ``reasoning_effort`` field on ``/v1/chat/completions``. **A positive
+            allowlist, and it stays one.** Speaking the OpenAI wire format does
+            not imply accepting every OpenAI field: an endpoint that validates
+            its request body strictly rejects the unknown key and the call
+            fails, so a provider gets this only once someone has watched a real
+            request to it succeed. Leave it False until then — the cost of False
+            is that ``LANGCHAIN_REASONING_EFFORT`` has no effect there, and the
+            cost of a wrong True is that every request fails.
         default_headers: Provider-scoped headers passed to ChatOpenAI.
         native_adapter_package: Optional native adapter package to report.
     """
@@ -40,6 +49,7 @@ class ProviderCapabilities:
     gemini_thought_signatures: bool = False
     normalize_assistant_content: bool = False
     openrouter_reasoning_body: bool = False
+    top_level_reasoning_effort: bool = False
     default_headers: Mapping[str, str] = field(default_factory=dict)
     native_adapter_package: Optional[str] = None
 
@@ -119,7 +129,17 @@ _OPENAI_CODEX_CAPABILITIES = ProviderCapabilities(
 
 
 _PROVIDERS: dict[str, ProviderCapabilities] = {
-    "openai": ProviderCapabilities("openai", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    # ``gpt-5.6-*`` reject function tools on /v1/chat/completions unless the
+    # request carries an explicit ``reasoning_effort`` — including the literal
+    # "none" — so this one is required, not merely accepted. Still gated on the
+    # base URL at the call site: pointing OPENAI_BASE_URL at Ollama, LiteLLM or
+    # a corporate proxy keeps the label while changing who answers.
+    "openai": ProviderCapabilities(
+        "openai",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        top_level_reasoning_effort=True,
+    ),
     "anthropic": ProviderCapabilities(
         "anthropic",
         "ANTHROPIC_API_KEY",
@@ -143,11 +163,15 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         capture_reasoning=True,
         openrouter_reasoning_body=True,
     ),
+    # Verified live against DeepSeek Flash in #1025: a chat-completions request
+    # carrying top-level ``reasoning_effort`` came back with reasoning content
+    # and non-zero reasoning usage.
     "deepseek": ProviderCapabilities(
         "deepseek",
         "DEEPSEEK_API_KEY",
         "DEEPSEEK_BASE_URL",
         capture_reasoning=True,
+        top_level_reasoning_effort=True,
         native_adapter_package="langchain-deepseek",
     ),
     "siliconflow-cn": ProviderCapabilities(
