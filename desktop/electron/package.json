@@ -11,6 +11,7 @@
     "start": "npm run build && electron .",
     "test:locales": "npm run build && node scripts/test-locales.mjs",
     "test:backend-resolution": "npm run build && node scripts/test-backend-resolution.mjs",
+    "test:update-safety": "npm run build && node scripts/test-update-safety.mjs",
     "smoke:parent-death": "npm run build && node scripts/smoke-parent-death.mjs",
     "prepare:electron": "node scripts/prepare-electron.mjs",
     "runtime:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",

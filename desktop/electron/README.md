@@ -8,6 +8,12 @@ credential storage. This layer does not contain an updater, optional IM
 adapters, personal WeChat pairing, or changes to the agent loop and provider
 behavior.
 
+It also contains dormant, fail-closed building blocks for a future signed
+updater: Authenticode/publisher/version verification, an interruption-recovery
+journal, and a strict backend shutdown result. They do not check a feed,
+download an artifact, launch an installer, or enable updates. See
+[UPDATE_SAFETY.md](UPDATE_SAFETY.md).
+
 ## What the shell does
 
 - Enforces a single desktop application instance.
@@ -22,6 +28,8 @@ behavior.
 - Reports startup failures and exposes retry and log-folder actions.
 - Requests authenticated graceful shutdown before asking the watchdog to
   terminate the owned Windows process tree as a fallback.
+- Exposes a strict update-handoff shutdown call that succeeds only after the
+  owned backend PID, watchdog PID, and loopback listener are all gone.
 - Terminates the Python process tree if the Electron main process is killed
   without running JavaScript shutdown handlers.
 - Localizes desktop-owned loading, status, error, dialog, and menu text in
@@ -55,11 +63,15 @@ The Windows lifecycle suite used by CI can be run from the same directory:
 
 ```powershell
 npm run smoke:lifecycle
+npm run test:update-safety
 ```
 
 It verifies localized message parity, graceful shutdown, authentication, and
 the parent-death path by force-terminating only the Electron main PID before
-checking that the Python process and loopback listener are gone.
+checking that the Python process and loopback listener are gone. Both graceful
+and parent-death tests keep a separate Python sentinel alive throughout the
+owned-process cleanup. The update-safety test exercises the rejection matrix
+and every journal recovery phase without enabling an updater.
 
 Backend resolution is intentionally narrow. It checks an explicit
 `VIBE_TRADING_EXECUTABLE` override first, then exact application/resource

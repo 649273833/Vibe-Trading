@@ -31,6 +31,14 @@ export type ResolvedBackend = {
   includeServeCommand: boolean;
 };
 
+export type BackendShutdownEvidence = {
+  backendPid?: number;
+  watchdogPid?: number;
+  backendExited: boolean;
+  watchdogExited: boolean;
+  listenerClosed: boolean;
+};
+
 export type BackendResolutionOptions = {
   appPath: string;
   resourcesPath: string;
@@ -145,9 +153,14 @@ export class BackendManager {
     return this.baseUrl;
   }
 
-  async stop(): Promise<void> {
+  async stop(): Promise<BackendShutdownEvidence> {
     const watchdog = this.watchdog;
-    if (!watchdog) return;
+    const backendPid = this.backendPid;
+    const watchdogPid = watchdog?.pid;
+    const baseUrl = this.baseUrl;
+    if (!watchdog) {
+      return shutdownEvidence(backendPid, watchdogPid, baseUrl);
+    }
     this.stopping = true;
     if (isRunning(watchdog) && this.baseUrl) {
       try {
@@ -178,12 +191,31 @@ export class BackendManager {
       await runTaskkill(watchdog.pid);
     }
 
+    const evidence = await waitForShutdownEvidence(
+      backendPid,
+      watchdogPid,
+      baseUrl,
+      5_000,
+    );
+    if (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed) {
+      this.writeLog(`[SHUTDOWN] incomplete evidence ${JSON.stringify(evidence)}`);
+    }
+
     this.watchdog = undefined;
     this.watchdogError = undefined;
     this.backendPid = undefined;
     this.baseUrl = undefined;
     await new Promise<void>((resolve) => this.logStream?.end(resolve) ?? resolve());
     this.logStream = undefined;
+    return evidence;
+  }
+
+  async stopForUpdate(): Promise<BackendShutdownEvidence> {
+    const evidence = await this.stop();
+    if (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed) {
+      throw new Error(`Owned backend shutdown could not be verified: ${JSON.stringify(evidence)}`);
+    }
+    return evidence;
   }
 
   get url(): string | undefined {
@@ -399,6 +431,58 @@ function waitForExit(child: ChildProcess): Promise<void> {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForShutdownEvidence(
+  backendPid: number | undefined,
+  watchdogPid: number | undefined,
+  baseUrl: string | undefined,
+  timeoutMilliseconds: number,
+): Promise<BackendShutdownEvidence> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  let evidence = await shutdownEvidence(backendPid, watchdogPid, baseUrl);
+  while (
+    Date.now() < deadline &&
+    (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed)
+  ) {
+    await delay(100);
+    evidence = await shutdownEvidence(backendPid, watchdogPid, baseUrl);
+  }
+  return evidence;
+}
+
+async function shutdownEvidence(
+  backendPid: number | undefined,
+  watchdogPid: number | undefined,
+  baseUrl: string | undefined,
+): Promise<BackendShutdownEvidence> {
+  return {
+    backendPid,
+    watchdogPid,
+    backendExited: !backendPid || !isProcessAlive(backendPid),
+    watchdogExited: !watchdogPid || !isProcessAlive(watchdogPid),
+    listenerClosed: !baseUrl || !(await listenerAcceptsConnections(baseUrl)),
+  };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listenerAcceptsConnections(baseUrl: string): Promise<boolean> {
+  try {
+    await fetch(new URL("health", baseUrl), {
+      signal: AbortSignal.timeout(500),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function runTaskkill(pid: number): Promise<void> {
