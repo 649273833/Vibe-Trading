@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Callable
+from unittest.mock import patch
 
 import pytest
 
@@ -211,14 +212,68 @@ class TestRecoveryAction:
 
         assert ledger.recovery_action(validation) is None
 
+    # Hardcoded on purpose. Every bound below is written as a literal rather
+    # than derived from the constant it is guarding: a test that loops
+    # ``range(MAX_GROUNDING_RECOVERY_ROUNDS)`` and then asserts the budget ran
+    # out passes for any value of that constant, including infinity.
+    _ROUND_CAP_CEILING = 6
+    _NEVER_MORE_THAN = 20
+
     def test_total_recovery_rounds_are_bounded(self, tmp_path: Path) -> None:
+        """The round cap binds once no per-action cap does.
+
+        Spending the round budget with ``record_recovery("search_symbol")``
+        also spends the symbol budget, so a ``None`` afterwards proves only that
+        the symbol cap works. Both per-action caps are patched out of the way so
+        the round cap is the one thing left to stop it, and the loop is driven
+        by a literal ceiling so widening the cap fails here instead of just
+        making the test slower.
+        """
         ledger = _ledger(tmp_path)
         validation = ledger.validate_final_answer("机器人ETF 现价 1.171。")
 
-        for _ in range(MAX_GROUNDING_RECOVERY_ROUNDS):
-            ledger.record_recovery("search_symbol")
+        with patch.multiple(
+            "src.agent.grounding",
+            MAX_SYMBOL_RESOLUTION_ATTEMPTS=10_000,
+            MAX_PRICE_EVIDENCE_ATTEMPTS=10_000,
+        ):
+            spent = 0
+            while ledger.recovery_action(validation) is not None:
+                ledger.record_recovery("search_symbol")
+                spent += 1
+                if spent > self._NEVER_MORE_THAN:
+                    pytest.fail(
+                        f"recovery still available after {spent} rounds with the "
+                        "per-action caps lifted; the round cap is not binding"
+                    )
+            assert spent <= self._ROUND_CAP_CEILING
 
-        assert ledger.recovery_action(validation) is None
+    def test_per_action_budgets_are_what_actually_binds_today(self, tmp_path: Path) -> None:
+        """With shipped values the per-action caps bind before the round cap.
+
+        ``MAX_SYMBOL_RESOLUTION_ATTEMPTS + MAX_PRICE_EVIDENCE_ATTEMPTS`` is the
+        real ceiling on the recovery turns one run can spend, and those turns
+        come out of the loop's iteration budget. The round cap is the outer
+        backstop for when those are raised; it has to stay at or above their sum
+        or it silently becomes the real limit, and at or below the literal
+        ceiling or recovery could crowd out the run itself.
+        """
+        assert MAX_SYMBOL_RESOLUTION_ATTEMPTS + MAX_PRICE_EVIDENCE_ATTEMPTS <= 5
+        assert (
+            MAX_SYMBOL_RESOLUTION_ATTEMPTS + MAX_PRICE_EVIDENCE_ATTEMPTS
+            <= MAX_GROUNDING_RECOVERY_ROUNDS
+            <= self._ROUND_CAP_CEILING
+        )
+
+        ledger = _ledger(tmp_path)
+        unresolved = ledger.validate_final_answer("机器人ETF 现价 1.171。")
+        spent = 0
+        while (action := ledger.recovery_action(unresolved)) is not None:
+            ledger.record_recovery(action)
+            spent += 1
+            if spent > self._NEVER_MORE_THAN:
+                pytest.fail(f"recovery did not converge within {spent} rounds")
+        assert spent == MAX_SYMBOL_RESOLUTION_ATTEMPTS
 
 
 class TestRecoveryPrompts:
