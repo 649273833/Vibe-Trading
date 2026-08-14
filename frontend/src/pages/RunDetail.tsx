@@ -1,5 +1,5 @@
 import i18n from '@/i18n';
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useNavigate, useSearchParams } from "react-router";
@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  CalendarRange,
   CheckCircle2,
   Code2,
   Copy,
@@ -19,25 +20,37 @@ import {
   LayoutDashboard,
   Loader2,
   ShieldCheck,
+  Sigma,
   XCircle,
   CircleSlash,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api, type BacktestMetrics, type RebalanceNotesPayload, type RiskXRayPayload, type RunCard, type RunData, type ValidationData } from "@/lib/api";
+import { api, type BacktestMetrics, type EquityPoint, type FactorReportPayload, type RebalanceNotesPayload, type RiskXRayPayload, type RunCard, type RunData, type ValidationData } from "@/lib/api";
+import {
+  computeAnnualReturns,
+  computeMonthlyReturns,
+  computeTopDrawdowns,
+  normalizeEquitySeries,
+  toDrawdownZones,
+} from "@/lib/tearsheet";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import { AnnualReturnsChart } from "@/components/charts/AnnualReturnsChart";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { EquityChart } from "@/components/charts/EquityChart";
+import { MonthlyReturnsHeatmap } from "@/components/charts/MonthlyReturnsHeatmap";
+import { TopDrawdownsPanel } from "@/components/charts/TopDrawdownsPanel";
 import { MetricsCard } from "@/components/chat/MetricsCard";
 import { ValidationPanel } from "@/components/charts/ValidationPanel";
 import { Skeleton, SkeletonMetrics, SkeletonChart } from "@/components/common/Skeleton";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { getStrategyReportIdentity, StrategyResearchDashboard } from "@/components/charts/StrategyResearchDashboard";
+import { FactorResearchPanel } from "@/components/charts/FactorResearchPanel";
 
 const rehypePlugins = [rehypeHighlight];
 
-type Tab = "dashboard" | "chart" | "trades" | "runCard" | "code" | "validation" | "studio";
+type Tab = "dashboard" | "chart" | "tearsheet" | "trades" | "runCard" | "code" | "validation" | "studio" | "factor";
 type ChartPayload = Pick<RunData, "price_series" | "indicator_series" | "trade_markers">;
 type ChartCache = Record<string, ChartPayload>;
 type ChartLoadProgress = { done: number; total: number };
@@ -121,10 +134,14 @@ export function RunDetail() {
   const hasValidation = !!run?.validation;
   const hasRunCard = !!run?.run_card;
   const hasStudio = !!run?.risk_xray || !!run?.rebalance_notes;
+  const hasTearsheet = (run?.artifacts_equity_csv?.length ?? 0) > 0 || (run?.equity_curve?.length ?? 0) > 0;
+  const hasFactor = !!run?.has_factor_artifacts;
   const TABS: { id: Tab; label: string; icon: typeof BarChart3; hidden?: boolean }[] = [
     { id: "dashboard", label: i18n.t("runDetail.dashboard"), icon: LayoutDashboard },
     { id: "chart", label: i18n.t("runDetail.chart"), icon: BarChart3 },
+    { id: "tearsheet", label: i18n.t("runDetail.tearsheet"), icon: CalendarRange, hidden: !hasTearsheet },
     { id: "trades", label: i18n.t("runDetail.trades"), icon: List },
+    { id: "factor", label: i18n.t("runDetail.factor"), icon: Sigma, hidden: !hasFactor },
     { id: "studio", label: i18n.t("runDetail.studio"), icon: Gauge, hidden: !hasStudio },
     { id: "validation", label: i18n.t("runDetail.validation"), icon: ShieldCheck, hidden: !hasValidation },
     { id: "runCard", label: i18n.t("runDetail.runCard"), icon: FileCheck2, hidden: !hasRunCard },
@@ -393,7 +410,9 @@ export function RunDetail() {
               onCancelLoadAll={handleCancelLoadAllCharts}
             />
           )}
+          {tab === "tearsheet" && hasTearsheet && <TearsheetTab run={run} />}
           {tab === "trades" && <TradesTab run={run} />}
+          {tab === "factor" && run.has_factor_artifacts && runId && <FactorTab runId={runId} />}
           {tab === "validation" && run.validation && <ValidationPanel data={run.validation} />}
           {tab === "studio" && hasStudio && (
             <StudioTab xray={run.risk_xray} notes={run.rebalance_notes} />
@@ -581,7 +600,105 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
   );
 }
 
-function RunCardStat({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warning" }) {
+function TearsheetTab({ run }: { run: RunData }) {
+  const equityPoints = useMemo(
+    () => normalizeEquitySeries(run.artifacts_equity_csv ?? run.equity_curve),
+    [run.artifacts_equity_csv, run.equity_curve],
+  );
+  const monthly = useMemo(() => computeMonthlyReturns(equityPoints), [equityPoints]);
+  const annual = useMemo(() => computeAnnualReturns(equityPoints), [equityPoints]);
+  const drawdowns = useMemo(() => computeTopDrawdowns(equityPoints, 5), [equityPoints]);
+  const zones = useMemo(() => {
+    const lastTime = equityPoints.length > 0 ? equityPoints[equityPoints.length - 1].time : "";
+    return toDrawdownZones(drawdowns, lastTime);
+  }, [drawdowns, equityPoints]);
+
+  if (equityPoints.length < 2) {
+    return <div className="p-8 text-muted-foreground text-sm">{i18n.t("runDetail.noTearsheetData")}</div>;
+  }
+
+  const chartData: EquityPoint[] = equityPoints.map((p) => ({ time: p.time, equity: p.equity, drawdown: p.drawdown }));
+  const yearCount = new Set(monthly.map((m) => m.year)).size;
+  const heatmapHeight = Math.min(420, Math.max(200, 40 + 34 * yearCount));
+
+  return (
+    <div className="p-4 space-y-4">
+      <RunCardPanel title={i18n.t("runDetail.equityDrawdown")} icon={BarChart3}>
+        <EquityChart data={chartData} drawdownZones={zones} height={300} />
+      </RunCardPanel>
+      <RunCardPanel title={i18n.t("runDetail.monthlyReturns")} icon={CalendarRange}>
+        <MonthlyReturnsHeatmap data={monthly} annual={annual} height={heatmapHeight} />
+      </RunCardPanel>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <RunCardPanel title={i18n.t("runDetail.annualReturns")} icon={BarChart3}>
+          <AnnualReturnsChart data={annual} height={260} />
+        </RunCardPanel>
+        <RunCardPanel title={i18n.t("runDetail.topDrawdowns")} icon={AlertTriangle}>
+          <TopDrawdownsPanel episodes={drawdowns} />
+        </RunCardPanel>
+      </div>
+    </div>
+  );
+}
+
+function FactorTab({ runId }: { runId: string }) {
+  const [data, setData] = useState<FactorReportPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const generationRef = useRef(0);
+
+  useEffect(() => {
+    const generation = ++generationRef.current;
+    setLoading(true);
+    setError("");
+    setData(null);
+    api.getRunFactor(runId)
+      .then((payload) => {
+        if (generationRef.current !== generation) return;
+        setData(payload);
+      })
+      .catch((err: unknown) => {
+        if (generationRef.current !== generation) return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (generationRef.current === generation) setLoading(false);
+      });
+    return () => {
+      if (generationRef.current === generation) generationRef.current += 1;
+    };
+  }, [runId]);
+
+  if (loading) {
+    return (
+      <div className="p-4 space-y-4">
+        <Skeleton className="h-6 w-48" />
+        <p className="text-xs text-muted-foreground">{i18n.t("factor.loading")}</p>
+        <SkeletonMetrics />
+        <SkeletonChart height={320} />
+        <SkeletonChart height={320} />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="p-8 space-y-1">
+        <p className="text-sm font-medium text-danger">{i18n.t("factor.error")}</p>
+        <p className="text-xs text-muted-foreground">{error}</p>
+      </div>
+    );
+  }
+  if (!data || !data.exists || data.factors.length === 0) {
+    return <div className="p-8 text-muted-foreground text-sm">{i18n.t("factor.noFactorData")}</div>;
+  }
+  return (
+    <div className="p-4">
+      <FactorResearchPanel report={data} />
+    </div>
+  );
+}
+
+export function RunCardStat({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warning" }) {
   return (
     <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
       <div className="text-xs text-muted-foreground">{label}</div>
@@ -590,7 +707,7 @@ function RunCardStat({ label, value, tone = "normal" }: { label: string; value: 
   );
 }
 
-function RunCardPanel({ title, icon: Icon, children }: { title: string; icon: typeof FileCheck2; children: ReactNode }) {
+export function RunCardPanel({ title, icon: Icon, children }: { title: string; icon: typeof FileCheck2; children: ReactNode }) {
   return (
     <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold">

@@ -1,5 +1,10 @@
 import i18n from "@/i18n";
 import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
+import type {
+  OptionsChainResponse,
+  OptionsPayoffRequest,
+  OptionsPayoffResponse,
+} from "@/lib/options";
 
 const BASE = "";
 
@@ -61,7 +66,9 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
   let detail = `HTTP ${res.status}`;
   try {
     const body = await res.json();
-    detail = body.detail || body.message || detail;
+    // Options endpoints report errors under an `error` key
+    // ({status:"error", error} / {ok:false, error}) rather than detail/message.
+    detail = body.detail || body.message || body.error || detail;
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
     detail = getAuthRequiredMessage();
@@ -139,6 +146,7 @@ export const api = {
     return request<RunData>(`/runs/${id}${qs ? `?${qs}` : ""}`);
   },
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
+  getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${id}/factor`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
@@ -252,6 +260,19 @@ export const api = {
     }),
   alphaCompareStreamUrl: (jobId: string) =>
     withAuthTicket(`${BASE}/alpha/compare/${encodeURIComponent(jobId)}/stream`),
+
+  // Options Lab
+  analyzeOptionsPayoff: (body: OptionsPayoffRequest) =>
+    request<OptionsPayoffResponse>("/options/payoff", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getOptionsChain: (ticker: string, expiration?: number) => {
+    const q = new URLSearchParams();
+    q.set("ticker", ticker);
+    if (expiration !== undefined) q.set("expiration", String(expiration));
+    return request<OptionsChainResponse>(`/options/chain?${q.toString()}`);
+  },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
@@ -591,6 +612,37 @@ export interface RebalanceNotesPayload {
   };
 }
 
+export interface FactorIcStats {
+  ic_mean?: number | null;
+  ic_std?: number | null;
+  ir?: number | null;
+  ic_positive_ratio?: number | null;
+  ic_count?: number | null;
+  [key: string]: unknown;
+}
+
+export interface FactorResult {
+  name: string;
+  path: string;
+  ic_series: Array<{ date: string; ic: number }>;
+  ic_stats?: FactorIcStats;
+  group_equity: Array<{ date: string } & Record<string, number | string>>;
+  n_groups: number;
+  long_short_spread: number | null;
+  group_final_equity: Record<string, number>;
+  truncated?: {
+    ic_series?: boolean;
+    ic_stats?: boolean;
+    group_equity?: boolean;
+  };
+}
+
+export interface FactorReportPayload {
+  exists: boolean;
+  factors: FactorResult[];
+  ic_correlation: { labels: string[]; matrix: number[][] } | null;
+}
+
 export interface RunData {
   status: string;
   run_id: string;
@@ -606,6 +658,7 @@ export interface RunData {
   risk_xray?: RiskXRayPayload;
   rebalance_notes?: RebalanceNotesPayload;
   validation?: ValidationData;
+  has_factor_artifacts?: boolean;
 
   chart_symbols?: string[];
   price_series?: Record<string, PriceBar[]>;
@@ -613,6 +666,7 @@ export interface RunData {
   trade_markers?: TradeMarker[];
   equity_curve?: EquityPoint[];
   trade_log?: Array<Record<string, string>>;
+  /** Full equity.csv rows (timestamp/equity/drawdown as strings); not capped like equity_curve. */
   artifacts_equity_csv?: Array<Record<string, string>>;
   artifacts_metrics_csv?: Array<Record<string, string>>;
   artifacts_trades_csv?: Array<Record<string, string>>;
