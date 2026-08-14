@@ -713,6 +713,8 @@ class AgentLoop:
         self._run_iteration: int = 0
         self._has_run = False
         self._grounding: GroundingLedger | None = None
+        self._identity_block_count: int = 0
+        self._identity_breaker: bool = False
 
     def cancel(self) -> None:
         """Cancel the current loop.
