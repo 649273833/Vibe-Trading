@@ -153,6 +153,7 @@ def test_get_swarm_status_surfaces_llm_request_metadata(tmp_path, monkeypatch):
         "/private/socket",
         "gateway/v1",
         "private/api",
+        "sk_credential_placeholder_51N4abcdefghijklm",
     ],
 )
 def test_get_swarm_status_redacts_non_public_llm_model_metadata(
@@ -226,6 +227,7 @@ def test_get_swarm_status_redacts_non_public_provider_metadata(tmp_path, monkeyp
         "/private/socket",
         "gateway/v1",
         "private/api",
+        "sk_credential_placeholder_51N4abcdefghijklm",
     ],
 )
 def test_list_runs_redacts_endpoint_like_model_metadata(tmp_path, monkeypatch, model):

@@ -57,6 +57,16 @@ _MODEL_ENDPOINT_PREFIX = re.compile(
 _PUBLIC_MODEL_IDENTIFIER = re.compile(
     r"^(?:[A-Za-z0-9][A-Za-z0-9._:+-]*|[A-Za-z0-9][A-Za-z0-9._:+-]*/(?=[A-Za-z0-9._:+-]*[-.0-9])[A-Za-z0-9][A-Za-z0-9._:+-]*)$"
 )
+#: Credential-shaped tokens that carry no issuer prefix in free-text
+#: redaction but must never reach public metadata: underscore-style key
+#: families (Stripe/OpenAI/Hugging Face), Google/AWS key prefixes, and bare
+#: high-entropy tokens.
+_CREDENTIAL_TOKEN = re.compile(
+    r"^(?:sk|rk|pk|hf)[_-][A-Za-z0-9_-]{4,}$"
+    r"|^AIza[A-Za-z0-9_-]{16,}$"
+    r"|^ASIA[0-9A-Z]{16,}$"
+    r"|^[A-Za-z0-9_-]{40,}$"
+)
 
 
 def public_metadata_value(
@@ -77,6 +87,8 @@ def public_metadata_value(
     if allowed_values is not None and metadata not in allowed_values:
         return _REDACTED_METADATA
     if redact_text(metadata) != metadata:
+        return _REDACTED_METADATA
+    if _CREDENTIAL_TOKEN.fullmatch(metadata):
         return _REDACTED_METADATA
     return metadata
 

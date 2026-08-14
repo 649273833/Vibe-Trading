@@ -116,6 +116,7 @@ def test_runtime_resolves_unset_responses_api_to_false(
         "/private/socket",
         "gateway/v1",
         "private/api",
+        "sk_credential_placeholder_51N4abcdefghijklm",
     ],
 )
 def test_runtime_redacts_non_public_llm_model_metadata_before_persistence(
@@ -224,6 +225,22 @@ def test_provider_metadata_redacts_non_public_values(provider: str) -> None:
     ],
 )
 def test_model_metadata_redacts_endpoint_like_values(model: str) -> None:
+    assert public_model_metadata(model) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "sk_credential_placeholder_51N4abcdefghijklm",
+        "sk_test_51ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh",
+        "rk_credential_placeholder_51N4abcdefghijklm",
+        "hf_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL",
+        "AIzaSyD-abcdefghijklmnopqrstuvwxyz1234567",
+        "ASIAY2EXAMPLEKEYID12",
+        "abcdefghijklmnopqrstuvwxyz0123456789abcd",
+    ],
+)
+def test_model_metadata_redacts_credential_shaped_values(model: str) -> None:
     assert public_model_metadata(model) == "[redacted]"
 
 
