@@ -163,23 +163,70 @@ def test_multiple_content_filter_hits(
     assert len(filter_entries) == 3
 
 
-def test_empty_content_no_filter_still_breaks(
+def test_empty_content_no_filter_retries_once_then_breaks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Empty content with content_filter_triggered=False triggers existing break."""
+    """A second consecutive empty response (no filter) still fails the run.
+
+    The first empty completion is retried with a nudge; only a second
+    consecutive empty response breaks the loop (transient provider empties
+    must not kill a run that has already done its work).
+    """
     llm = _EmptyResponseLoopLLM()
 
     result = _run(monkeypatch, tmp_path, llm)
 
     assert result["status"] == "failed"
     assert "empty_model_response" in result.get("reason", "")
-    assert llm.calls == 1
+    assert llm.calls == 2
 
     trace = _read_trace(result["run_dir"])
     empty_entries = [e for e in trace if e.get("type") == "empty_model_response"]
-    assert len(empty_entries) == 1
+    assert len(empty_entries) == 2
     filter_entries = [e for e in trace if e.get("type") == "content_filter_skipped"]
     assert len(filter_entries) == 0
+
+
+def test_single_empty_response_recovers_with_nudge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One transient empty response is retried with a nudge; the run succeeds."""
+    class _OneEmptyThenFinalLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.messages_history: list[list[dict[str, Any]]] = []
+
+        def stream_chat(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[Any] | None = None,
+            on_text_chunk: Callable[[str], None] | None = None,
+            on_reasoning_chunk: Callable[[str], None] | None = None,
+            should_cancel: Callable[[], bool] | None = None,
+        ) -> LLMResponse:
+            self.calls += 1
+            self.messages_history.append(list(messages))
+            if self.calls == 1:
+                return LLMResponse(content="", content_filter_triggered=False)
+            if on_text_chunk:
+                on_text_chunk("Finally.")
+            return LLMResponse(content="Finally.")
+
+        def chat(self, messages: list[dict[str, Any]], **_: Any) -> LLMResponse:
+            return LLMResponse(content="")
+
+    llm = _OneEmptyThenFinalLLM()
+    result = _run(monkeypatch, tmp_path, llm)
+
+    assert result["status"] == "success"
+    assert result["content"] == "Finally."
+    assert llm.calls == 2
+    system_msgs = [
+        m for m in llm.messages_history[1]
+        if "[SYSTEM]" in str(m.get("content", ""))
+        and "empty" in str(m.get("content", "")).casefold()
+    ]
+    assert len(system_msgs) == 1
 
 
 class _RatioFilterLoopLLM:

@@ -79,7 +79,7 @@ _CSV_DATE_COLUMNS = {"date", "datetime", "trade_date", "timestamp", "index"}
 # Filename -> symbol mapping for run-dir CSVs. The bash workaround writes each
 # series with a filesystem-safe stem: ``BYN_V.csv`` for ``BYN.V``, ``PDI_TO.csv``
 # for ``PDI.TO``, ``GC_F.csv`` for ``GC=F``.
-_CSV_FILENAME_SUFFIX_MAP = (("_V", ".V"), ("_TO", ".TO"), ("_F", "=F"))
+_CSV_FILENAME_SUFFIX_MAP = (("_V", ".V"), ("_TO", ".TO"), ("_F", "=F"), ("_US", ".US"))
 
 # Only ``get_market_data`` returns bars whose columns are already the canonical
 # OHLC field names. Every other market-sensitive tool nests its quote somewhere,
@@ -196,9 +196,12 @@ _DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
 # A year-less "8/5" is how a trading day is written in running prose, and it
 # contributed 8 and 5 as candidate prices (#983). The month and day ranges are
 # bounded, and both sides are fenced off from a longer slash run, so the window
-# enumeration "20/50/200-day" cannot be mistaken for a date.
+# enumeration "20/50/200-day" cannot be mistaken for a date. Reports also write
+# the same day as "08-10(一)" or "08-10盘中", so the dash form is masked with
+# the same bounds and fencing; a dash is never part of a longer digit run.
 _SHORT_DATE_RE = re.compile(
     r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![\d/])"
+    r"|(?<![\d-])(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])(?![\d-])"
 )
 # A percentage range masks only its upper bound through the "%" tail check
 # below, because the sign touches the second number: "1–2%" left 1 behind
@@ -378,6 +381,28 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
 # parentheses are deliberately not separators: an explicit derivation such as
 # "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
 _CLAUSE_SEPARATOR_RE = re.compile(r"[,，;；。、\n（）【】]")
+
+
+# An order-level claim names a resting or desired order, not an observed
+# quote: "两档 GTC (100 @ $3.50 / 100 @ $4.00) 均未触发 (周高 $3.42 < $3.50)"
+# asserts nothing about what the instrument traded at - the limit prices are
+# prospective levels (like targets/stops) and the share counts are quantities.
+# Without this mask the gate reported 100, 3.5 and 4.0 as price claims
+# conflicting with the observed OHLC range and rejected a correct draft.
+# The @-price branch requires a leading quantity so a bare "@" (rare in
+# trading reports) stays checked; the keyword branch covers labelled orders.
+_ORDER_LEVEL_RE = re.compile(
+    r"(?:"
+    # (a) quantity (optional unit) @ price: "100 @ $3.50", "100 股 @ 4.00"
+    r"(?:\d[\d,]*(?:\.\d+)?)\s*(?:股|手|张|份|shares?|units?)?\s*@\s*"
+    + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"|"
+    # (b) order keyword + price: 挂单/限价单/限价/委托/订单/买入价/卖出价/GTC
+    r"(?:挂单|限价单|限价|委托|订单|买入价|卖出价|GTC(?:单)?)\s*(?:为|是|至|到|on|at|=)?\s*[:：]?\s*"
+    + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r")",
+    re.IGNORECASE,
+)
 # The ASCII comma both separates clauses and groups thousands, and the clause
 # split ran first: "收盘价 ¥1,309.22" became a clause ending in "¥1", whose 1 was
 # compared against the observed 1300.01–1363.35 range and rejected as a
@@ -513,9 +538,10 @@ def _symbol_from_csv_filename(stem: str) -> str | None:
     """Map a run-dir CSV stem back to a canonical project symbol.
 
     The bash workaround writes filesystem-safe stems: ``BYN_V.csv`` -> ``BYN.V``,
-    ``PDI_TO.csv`` -> ``PDI.TO``, ``GC_F.csv`` -> ``GC=F``. A stem without a
-    recognized suffix (e.g. a bare US name ``AAPL``) maps to None because the
-    project convention requires an explicit venue suffix.
+    ``PDI_TO.csv`` -> ``PDI.TO``, ``GC_F.csv`` -> ``GC=F``, ``INTC_US.csv`` ->
+    ``INTC.US``. A stem without a recognized suffix (e.g. a bare US name
+    ``AAPL``) maps to None because the project convention requires an explicit
+    venue suffix.
 
     Args:
         stem: CSV filename without the ``.csv`` extension.
@@ -584,7 +610,45 @@ def _coerce_csv_number(value: Any) -> int | float | None:
 _YEARLESS_CLAIM_DATE_RE = re.compile(
     r"^(0?[1-9]|1[0-2])\s*[-/月]\s*(0?[1-9]|[12]\d|3[01])\s*[日号]?$"
 )
+# Two-digit day alternatives are tried before a bare digit so an
+# unanchored prefix match consumes the full day ("10" of "08-10(一)")
+# instead of stopping at "1".
+_ISO_CLAIM_DATE_PREFIX_RE = re.compile(
+    r"^\s*((?:19|20)\d{2})\s*[-/]\s*(0?[1-9]|1[0-2])\s*[-/]\s*([12]\d|3[01]|0?[1-9])"
+)
+_YEARLESS_CLAIM_DATE_PREFIX_RE = re.compile(
+    r"^\s*(0?[1-9]|1[0-2])\s*[-/月]\s*([12]\d|3[01]|0?[1-9])"
+)
 _ISO_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def _claim_date_tuple(date_value: str) -> tuple[int, int] | None:
+    """Extract the (month, day) named by a report-style date cell.
+
+    Reports routinely annotate a trading day: the date column reads
+    ``08-10(一)``, ``08-10(周一)盘中`` or ``08-10盘中`` rather than the bare
+    ``08-10`` the strict full-cell matchers accept. Any leading month-day (or
+    full ISO date) prefix is therefore accepted so such a claim still compares
+    against the matching evidence row instead of being reported as
+    unevidenced.
+
+    Args:
+        date_value: Date cell as written in the answer.
+
+    Returns:
+        The (month, day) tuple, or None when no date prefix is present.
+    """
+    claim = (date_value or "").strip()
+    match = _YEARLESS_CLAIM_DATE_RE.match(claim)
+    if match:
+        return (int(match.group(1)), int(match.group(2)))
+    match = _ISO_CLAIM_DATE_PREFIX_RE.match(claim)
+    if match:
+        return (int(match.group(2)), int(match.group(3)))
+    match = _YEARLESS_CLAIM_DATE_PREFIX_RE.match(claim)
+    if match:
+        return (int(match.group(1)), int(match.group(2)))
+    return None
 
 
 def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
@@ -597,11 +661,12 @@ def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
     evidence while that evidence sat right there (#983: 79 such rejections in
     one run, every value inside the observed range).
 
-    A year-less date is matched on month and day. That is deliberately looser:
-    where the evidence spans more than one year, such a claim matches the same
-    calendar day in either. Matching the wrong year is a smaller failure than
-    matching nothing, but it is a real one, so the caller still compares the
-    value against every record that matched rather than trusting the date.
+    A year-less date is matched on month and day, and a date cell may carry
+    weekday or intraday annotations (``08-10(一)``, ``08-10盘中``) whose
+    leading month-day is still recognized. Matching the wrong year is a
+    smaller failure than matching nothing, but it is a real one, so the
+    caller still compares the value against every record that matched rather
+    than trusting the date.
 
     Args:
         timestamp: Evidence timestamp, normally ISO ``YYYY-MM-DD``.
@@ -616,14 +681,11 @@ def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
         return False
     if stamp.startswith(claim):
         return True
-    yearless = _YEARLESS_CLAIM_DATE_RE.match(claim)
+    claim_tuple = _claim_date_tuple(claim)
     iso = _ISO_TIMESTAMP_RE.match(stamp)
-    if not yearless or not iso:
+    if claim_tuple is None or not iso:
         return False
-    return (int(iso.group(2)), int(iso.group(3))) == (
-        int(yearless.group(1)),
-        int(yearless.group(2)),
-    )
+    return (int(iso.group(2)), int(iso.group(3))) == claim_tuple
 
 
 def _price_field_for_path(path: str) -> str | None:
@@ -1145,6 +1207,8 @@ class GroundingLedger:
             lines.append(f"- {issue.get('message', issue.get('code', 'grounding error'))}")
         lines.extend(
             [
+                "Remove or reword every rejected claim above instead of repeating it; an",
+                "unsupported figure in a table row invalidates the whole draft.",
                 "Reuse the exact locked symbol and venue.",
                 "For every derived number, label it as derived and show the source inputs and formula.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
@@ -2236,6 +2300,7 @@ class GroundingLedger:
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
+        masked = _ORDER_LEVEL_RE.sub(" ", masked)
         masked = _REFERENCE_LEVEL_RE.sub(" ", masked)
         masked = _SINCE_REFERENCE_RE.sub(" ", masked)
         masked = _LINE_REFERENCE_RE.sub(" ", masked)

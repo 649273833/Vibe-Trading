@@ -18,6 +18,7 @@ from src.agent.loop import (
     _is_tool_success,
     _normalize_tool_run_dir,
     _archive_backtest_result,
+    _llm_timeout_seconds,
 )
 
 
@@ -392,3 +393,14 @@ class TestArchiveBacktestResult:
 
         assert archived is False
         assert not (active / "artifacts").exists()
+
+
+def test_llm_timeout_seconds_default_and_override(monkeypatch) -> None:
+    """The LLM call timeout reads config and honors a module-level override."""
+    import src.agent.loop as loop_module
+
+    assert _llm_timeout_seconds() > 0
+    monkeypatch.setattr(loop_module, "LLM_TIMEOUT_SECONDS", 42.0, raising=False)
+    assert _llm_timeout_seconds() == 42.0
+    monkeypatch.delattr(loop_module, "LLM_TIMEOUT_SECONDS", raising=False)
+    assert _llm_timeout_seconds() > 0

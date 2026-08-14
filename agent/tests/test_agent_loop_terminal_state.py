@@ -146,14 +146,18 @@ def _build_agent(llm: Any, max_iter: int = 3, tmp_run_dir: Path | None = None) -
 def test_empty_model_response_returns_specific_reason(
     tmp_path: Path,
 ) -> None:
-    """Empty no-tool provider output is distinct from exhausting iterations."""
+    """Two consecutive empty no-tool outputs fail with the specific reason.
+
+    The first empty completion is retried with a nudge; the run fails on the
+    second consecutive empty response, and the reason names that iteration.
+    """
     agent = _build_agent(_StubLLMNoFinal(), max_iter=3, tmp_run_dir=tmp_path / "run")
 
     result = agent.run(user_message="anything")
 
     assert result["status"] == "failed"
     assert result["reason"].startswith("empty_model_response")
-    assert "iteration 1" in result["reason"]
+    assert "iteration 2" in result["reason"]
     assert result["iterations"] >= 1
     assert result["max_iterations"] == 3
 
