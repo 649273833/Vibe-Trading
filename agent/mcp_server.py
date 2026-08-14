@@ -6,7 +6,7 @@ Zero API key required for HK/US/crypto research markets (yfinance, OKX,
 AKShare are free). Trading connector tools are profile-scoped and require the
 selected connector's own local app or OAuth setup.
 
-Surfaces 62 tools: skills, research goals, backtest/factor/options/pattern
+Surfaces 70 tools: skills, research goals, backtest/factor/options/pattern
 analysis, market data, fundamentals & capital-flow & news & discovery
 (get_fund_flow / get_dragon_tiger / get_northbound_flow / get_margin_trading /
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
@@ -15,7 +15,9 @@ get_financial_statements / get_options_chain / get_stock_profile /
 screen_market / search_symbol / get_macro_series / iwencai_search /
 qveris_search / qveris_inspect / qveris_execute),
 institutional-research and alternative data (get_institutional_holdings /
-etf_holdings / prediction_market / research_papers), read-only
+etf_holdings / prediction_market / research_papers), read-only finance math and
+market analytics (quantlib_call / cashflow_performance / orderbook_depth /
+sentiment / technical_indicators / get_fundamentals), read-only
 trading-connector reads, swarm orchestration, trade-journal and shadow-account
 analysis. Every exposed tool is read-only or research-only; no order-placing or
 order-cancelling tool is ever surfaced via MCP. The QVeris tools additionally
@@ -801,6 +803,141 @@ def factor_analysis(
     )
 
 
+@mcp.tool
+def alpha_zoo(
+    action: str,
+    alpha_id: str | None = None,
+    zoo: str | None = None,
+    theme: str | None = None,
+    universe: str | None = None,
+    limit: int = 50,
+) -> str:
+    """Browse the bundled Alpha Zoo registry.
+
+    Args:
+        action: ``list_alphas``, ``get_alpha``, or ``health``.
+        alpha_id: Alpha id required by ``get_alpha``.
+        zoo: Optional zoo filter for ``list_alphas``.
+        theme: Optional theme filter for ``list_alphas``.
+        universe: Optional universe filter for ``list_alphas``.
+        limit: Maximum number of alphas returned by ``list_alphas``.
+    """
+    registry = _get_registry()
+    params: dict[str, Any] = {"action": action, "limit": limit}
+    if alpha_id is not None:
+        params["alpha_id"] = alpha_id
+    if zoo is not None:
+        params["zoo"] = zoo
+    if theme is not None:
+        params["theme"] = theme
+    if universe is not None:
+        params["universe"] = universe
+    return registry.execute("alpha_zoo", params)
+
+
+@mcp.tool
+def alpha_bench(
+    universe: str,
+    period: str,
+    alpha_id: str | None = None,
+    zoo: str | None = None,
+    top: int = 20,
+    output_dir: str | None = None,
+) -> str:
+    """Benchmark one Alpha Zoo alpha or a complete zoo on a universe.
+
+    Args:
+        universe: Universe to benchmark, such as ``sp500`` or ``csi300``.
+        period: ``YYYY-YYYY`` or ``YYYY-MM-DD/YYYY-MM-DD``.
+        alpha_id: Optional single alpha id; mutually exclusive with ``zoo``.
+        zoo: Optional zoo id; mutually exclusive with ``alpha_id``.
+        top: Number of top-ranked alphas to include in the report.
+        output_dir: Optional directory for the generated HTML report.
+    """
+    if not alpha_id and not zoo:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": "alpha_id or zoo is required for MCP alpha_bench",
+            },
+            ensure_ascii=False,
+        )
+    if alpha_id and zoo:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": "alpha_id and zoo are mutually exclusive",
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        from datetime import date
+
+        from src.tools.alpha_bench_tool import _parse_period
+
+        start_raw, end_raw = _parse_period(period)
+        start_date = date.fromisoformat(start_raw)
+        end_date = date.fromisoformat(end_raw)
+        try:
+            max_end = start_date.replace(year=start_date.year + 10)
+        except ValueError:
+            max_end = start_date.replace(year=start_date.year + 10, day=28)
+        if end_date > max_end:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "MCP alpha_bench period must be no more than 10 years",
+                },
+                ensure_ascii=False,
+            )
+    except ValueError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+
+    if top <= 0 or top > 100:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": "MCP alpha_bench top must be between 1 and 100",
+            },
+            ensure_ascii=False,
+        )
+
+    params: dict[str, Any] = {
+        "universe": universe,
+        "period": period,
+        "top": top,
+    }
+    if alpha_id is not None:
+        params["alpha_id"] = alpha_id
+    if zoo is not None:
+        params["zoo"] = zoo
+
+    if output_dir:
+        from src.config.paths import get_runtime_root
+        from src.tools.path_utils import allowed_write_roots, resolve_safe_path
+
+        try:
+            report_roots = [
+                Path.home() / ".vibe-trading" / "reports",
+                get_runtime_root() / "reports",
+                *allowed_write_roots(),
+            ]
+            params["output_dir"] = str(
+                resolve_safe_path(
+                    output_dir,
+                    None,
+                    report_roots,
+                    purpose="alpha bench report",
+                )
+            )
+        except ValueError as exc:
+            return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+
+    registry = _get_registry()
+    return registry.execute("alpha_bench", params)
+
+
 # ---------------------------------------------------------------------------
 # Options pricing tool
 # ---------------------------------------------------------------------------
@@ -1439,6 +1576,12 @@ def get_market_data(
             even-stride downsample (every step-th bar, last bar pinned)
             plus truncation metadata. Set max_rows=0 for all rows
             (unbounded, legacy behavior).
+
+    Volume units: the ``volume`` column unit is source- and market-dependent
+    (A-share sources report board lots of 100 shares; HK/US sources report
+    single shares). Each symbol's ``_provenance.volume_unit`` states the unit
+    of the returned rows ("lots" / "shares"; null = source undeclared) — read
+    it before interpreting or comparing volume values across symbols/sources.
     """
     return fetch_market_data_json(
         codes=codes,
@@ -2020,6 +2163,16 @@ _MIRRORED_TOOL_SOURCES = (
     ("src.tools.etf_holdings_tool", "EtfHoldingsTool"),
     ("src.tools.prediction_market_tool", "PredictionMarketTool"),
     ("src.tools.research_papers_tool", "ResearchPapersTool"),
+    # Read-only compute and market-data tools that had reached the agent but
+    # not MCP. Mirroring is the right path for all of them: each already owns a
+    # multi-mode ``parameters`` schema, so re-declaring Python signatures here
+    # would create the second definition this block exists to avoid.
+    ("src.tools.quantlib_tool", "QuantlibCallTool"),
+    ("src.tools.cashflow_analytics_tool", "CashFlowPerformanceTool"),
+    ("src.tools.orderbook_depth_tool", "OrderBookDepthTool"),
+    ("src.tools.sentiment_tool", "SentimentTool"),
+    ("src.tools.technical_indicator_tool", "TechnicalIndicatorTool"),
+    ("src.tools.get_fundamentals_tool", "GetFundamentalsTool"),
 )
 
 
@@ -2194,6 +2347,11 @@ def _run_to_dict(run, *, timed_out: bool = False, is_stale: bool = False) -> dic
     threshold. No disk state is changed by setting this — the explicit
     :func:`reap_stale_runs` tool is what finalizes a stale run.
     """
+    from src.swarm.models import (
+        public_model_metadata,
+        public_provider_metadata,
+        public_reasoning_effort,
+    )
     from src.swarm.serialization import run_level_error, serialize_task
 
     return {
@@ -2207,6 +2365,10 @@ def _run_to_dict(run, *, timed_out: bool = False, is_stale: bool = False) -> dic
         "final_report": run.final_report,
         "total_input_tokens": run.total_input_tokens,
         "total_output_tokens": run.total_output_tokens,
+        "provider": public_provider_metadata(run.provider),
+        "model": public_model_metadata(run.model),
+        "reasoning_effort": public_reasoning_effort(run.reasoning_effort),
+        "use_responses_api": run.use_responses_api,
         "timed_out": timed_out,
         "is_stale": is_stale,
     }
@@ -2293,6 +2455,12 @@ def list_runs(limit: int = 20) -> str:
     Args:
         limit: Maximum number of runs to return (default 20).
     """
+    from src.swarm.models import (
+        public_model_metadata,
+        public_provider_metadata,
+        public_reasoning_effort,
+    )
+
     store = _get_swarm_store()
     runs = store.list_runs(limit=limit)
     items = []
@@ -2315,6 +2483,10 @@ def list_runs(limit: int = 20) -> str:
                 "task_counts": counts,
                 "total_input_tokens": reconciled.total_input_tokens,
                 "total_output_tokens": reconciled.total_output_tokens,
+                "provider": public_provider_metadata(reconciled.provider),
+                "model": public_model_metadata(reconciled.model),
+                "reasoning_effort": public_reasoning_effort(reconciled.reasoning_effort),
+                "use_responses_api": reconciled.use_responses_api,
             }
         )
     return json.dumps(items, ensure_ascii=False, indent=2)

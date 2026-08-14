@@ -21,6 +21,7 @@ from typing import Callable
 
 from src.config.accessor import get_env_config
 from src.config.schema import AgentConfig
+from src.providers.llm import _ensure_dotenv, uses_responses_api
 from src.swarm import grounding
 from src.swarm.models import (
     RunStatus,
@@ -30,6 +31,9 @@ from src.swarm.models import (
     SwarmTask,
     TaskStatus,
     WorkerResult,
+    public_model_metadata,
+    public_provider_metadata,
+    public_reasoning_effort,
 )
 from src.swarm.presets import build_run_from_preset
 from src.swarm.store import SwarmStore
@@ -41,7 +45,7 @@ from src.swarm.task_store import (
 )
 from src.tools.mcp import invalidate_mcp_specs_cache
 from src.tools.redaction import redact_internal_paths
-from src.swarm.worker import run_worker
+from src.swarm.worker import agent_artifact_dir, clear_agent_artifacts, run_worker
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +109,7 @@ class SwarmRuntime:
             FileNotFoundError: If preset does not exist.
             ValueError: If DAG validation fails.
         """
+        _ensure_dotenv()
         # Reap any previously running runs whose host process died without
         # finalizing them. Threshold is computed per-run from agent timeouts +
         # heartbeat interval (see SwarmStore.compute_stale_threshold), so a
@@ -126,8 +131,14 @@ class SwarmRuntime:
         # override applied via os.environ still shows up. Per-agent overrides
         # remain visible on SwarmAgentSpec.model_name.
         _cfg = get_env_config()
-        run.provider = _cfg.llm.langchain_provider.strip().lower() or None
-        run.model = _cfg.llm.langchain_model_name.strip() or None
+        run.provider = public_provider_metadata(_cfg.llm.langchain_provider.lower())
+        run.model = public_model_metadata(_cfg.llm.langchain_model_name)
+        run.reasoning_effort = public_reasoning_effort(_cfg.llm.langchain_reasoning_effort)
+        run.use_responses_api = uses_responses_api(
+            _cfg.llm.langchain_provider,
+            _cfg.llm.langchain_use_responses_api,
+            _cfg.llm.vibe_trading_deepseek_adapter,
+        )
 
         self._store.create_run(run)
 
@@ -693,6 +704,13 @@ class SwarmRuntime:
                     attempt + 1,
                     max_retries + 1,
                 )
+                # A retry re-invokes run_worker against the same artifact
+                # directory. Without clearing it first, a failed attempt's
+                # report.md (or any other tool-written file) would still be
+                # there when the retried attempt reads the directory back,
+                # silently substituting stale content for the new attempt's
+                # real result.
+                clear_agent_artifacts(agent_artifact_dir(run_dir, agent_spec.id))
 
             result = run_worker(
                 agent_spec=agent_spec,

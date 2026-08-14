@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from copy import copy
 from urllib.parse import urlparse
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -17,6 +18,7 @@ from pydantic import PrivateAttr
 
 from src.config.accessor import get_env_config, reset_env_config
 from src.providers.capabilities import (
+    ProviderCapabilities,
     get_llm_credentials,
     get_provider_capabilities,
 )
@@ -74,6 +76,164 @@ _AMBIENT_OPENAI_HEADER_ENV_VARS = (
     "OPENAI_ORGANIZATION",
     "OPENAI_PROJECT_ID",
 )
+
+
+class _ResponsesMappingEvent:
+    """Attribute view over a raw OpenAI Responses stream event mapping."""
+
+    def __init__(self, values: Mapping[str, Any]) -> None:
+        self._values = dict(values)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def model_dump(self, *, exclude_none: bool = False, **_: Any) -> dict[str, Any]:
+        """Expose the Pydantic method expected by LangChain's converter."""
+        if exclude_none:
+            return {
+                key: value for key, value in self._values.items() if value is not None
+            }
+        return dict(self._values)
+
+
+def _normalize_responses_stream_event(event: Any) -> Any:
+    """Adapt raw mapping events to the attribute shape LangChain expects.
+
+    Native OpenAI SDK streams yield typed response event objects. Some
+    OpenAI-compatible gateways yield the same wire events as plain dicts;
+    langchain-openai's Responses converter accesses ``event.type`` and a few
+    nested attributes directly. Preserve typed events unchanged and adapt only
+    the mapping form.
+    """
+    if not isinstance(event, Mapping):
+        return event
+
+    values = dict(event)
+    for key in ("annotation", "item"):
+        nested = values.get(key)
+        if isinstance(nested, Mapping):
+            values[key] = _ResponsesMappingEvent(nested)
+    return _ResponsesMappingEvent(values)
+
+
+class _ResponsesSyncStream:
+    """Proxy a sync Responses stream and normalize each yielded event."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._entered: Any = None
+
+    def __enter__(self) -> "_ResponsesSyncStream":
+        self._entered = self._stream.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> Any:
+        return self._stream.__exit__(*args)
+
+    def __iter__(self) -> Iterator[Any]:
+        source = self._entered if self._entered is not None else self._stream
+        for event in source:
+            yield _normalize_responses_stream_event(event)
+
+    def parse(self, *args: Any, **kwargs: Any) -> "_ResponsesSyncStream":
+        """Keep raw-response ``parse()`` streams behind the same proxy."""
+        return _ResponsesSyncStream(self._stream.parse(*args, **kwargs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+class _ResponsesAsyncStream:
+    """Proxy an async Responses stream and normalize each yielded event."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._entered: Any = None
+
+    async def __aenter__(self) -> "_ResponsesAsyncStream":
+        self._entered = await self._stream.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> Any:
+        return await self._stream.__aexit__(*args)
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[Any]:
+        source = self._entered if self._entered is not None else self._stream
+        async for event in source:
+            yield _normalize_responses_stream_event(event)
+
+    def parse(self, *args: Any, **kwargs: Any) -> "_ResponsesAsyncStream":
+        """Keep async raw-response ``parse()`` streams behind the proxy."""
+        return _ResponsesAsyncStream(self._stream.parse(*args, **kwargs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+class _ResponsesSyncResource:
+    """Proxy the sync Responses resource without changing non-stream calls."""
+
+    def __init__(self, resource: Any) -> None:
+        self._resource = resource
+
+    def create(self, *args: Any, **kwargs: Any) -> Any:
+        result = self._resource.create(*args, **kwargs)
+        if kwargs.get("stream"):
+            return _ResponsesSyncStream(result)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resource, name)
+
+
+class _ResponsesAsyncResource:
+    """Proxy the async Responses resource without changing non-stream calls."""
+
+    def __init__(self, resource: Any) -> None:
+        self._resource = resource
+
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._resource.create(*args, **kwargs)
+        if kwargs.get("stream"):
+            return _ResponsesAsyncStream(result)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resource, name)
+
+
+class _ResponsesSyncClient:
+    """Shallow client proxy used for one sync stream call."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self.responses = _ResponsesSyncResource(client.responses)
+        raw_response = getattr(client, "with_raw_response", None)
+        if raw_response is not None:
+            self.with_raw_response = _ResponsesSyncClient(raw_response)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
+class _ResponsesAsyncClient:
+    """Shallow client proxy used for one async stream call."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self.responses = _ResponsesAsyncResource(client.responses)
+        raw_response = getattr(client, "with_raw_response", None)
+        if raw_response is not None:
+            self.with_raw_response = _ResponsesAsyncClient(raw_response)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
 
 
 def _openai_custom_header_names(raw: str | None) -> tuple[str, ...]:
@@ -361,6 +521,27 @@ if ChatOpenAI is not None:
                 self._capture(choice["message"], gen.message)
             return result
 
+        def _stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            """Route Responses streams through the mapping-compatible adapter."""
+            if self._use_responses_api({**kwargs, **self.model_kwargs}):
+                cloned = copy(self)
+                cloned.root_client = _ResponsesSyncClient(self.root_client)
+                return super(ChatOpenAIWithReasoning, cloned)._stream(*args, **kwargs)
+            return super()._stream(*args, **kwargs)
+
+        async def _astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+            """Async route matching ``_stream`` for Responses compatibility."""
+            if self._use_responses_api({**kwargs, **self.model_kwargs}):
+                cloned = copy(self)
+                cloned.root_async_client = _ResponsesAsyncClient(self.root_async_client)
+                async for chunk in super(ChatOpenAIWithReasoning, cloned)._astream(
+                    *args, **kwargs
+                ):
+                    yield chunk
+            else:
+                async for chunk in super()._astream(*args, **kwargs):
+                    yield chunk
+
         def _convert_chunk_to_generation_chunk(  # type: ignore[override]
             self,
             chunk: dict,
@@ -392,26 +573,27 @@ if ChatOpenAI is not None:
             is absent, breaking ReAct continuations after a tool call (#39).
             """
             payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-            messages = super()._convert_input(input_).to_messages()
-            caps = self._capabilities()
-            for i, m in enumerate(payload["messages"]):
-                if m.get("role") != "assistant":
-                    continue
-                source_message = messages[i]
-                if caps.normalize_assistant_content and m.get("content") is None:
-                    m["content"] = ""
-                if caps.send_reasoning_content:
-                    m["reasoning_content"] = source_message.additional_kwargs.get(
-                        "reasoning_content", ""
-                    )
-                else:
-                    m.pop("reasoning_content", None)
-                if caps.gemini_thought_signatures:
-                    self._inject_tool_call_thought_signatures(
-                        m.get("tool_calls"), source_message
-                    )
-                else:
-                    self._strip_tool_call_extra_content(m.get("tool_calls"))
+            if "messages" in payload:
+                messages = super()._convert_input(input_).to_messages()
+                caps = self._capabilities()
+                for i, m in enumerate(payload["messages"]):
+                    if m.get("role") != "assistant":
+                        continue
+                    source_message = messages[i]
+                    if caps.normalize_assistant_content and m.get("content") is None:
+                        m["content"] = ""
+                    if caps.send_reasoning_content:
+                        m["reasoning_content"] = source_message.additional_kwargs.get(
+                            "reasoning_content", ""
+                        )
+                    else:
+                        m.pop("reasoning_content", None)
+                    if caps.gemini_thought_signatures:
+                        self._inject_tool_call_thought_signatures(
+                            m.get("tool_calls"), source_message
+                        )
+                    else:
+                        self._strip_tool_call_extra_content(m.get("tool_calls"))
 
             scoped_headers = self._provider_scoped_extra_headers()
             if scoped_headers:
@@ -611,6 +793,15 @@ def _build_native_deepseek(
         api_key=api_key or None,
         base_url=base_url or None,
     )
+
+
+def _native_deepseek_adapter_available() -> bool:
+    """Return whether the optional native DeepSeek adapter can be imported."""
+    try:
+        module = import_module("langchain_deepseek")
+    except Exception:  # noqa: BLE001 - optional adapter availability probe
+        return False
+    return callable(getattr(module, "ChatDeepSeek", None))
 
 
 # Anthropic model names discovered at runtime to reject the `temperature`
@@ -815,16 +1006,6 @@ def _ensure_dotenv() -> None:
     )
 
 
-def _normalize_ollama_base_url(base_url: str) -> str:
-    """Append ``/v1`` when missing so ChatOpenAI hits Ollama's OpenAI-compatible API."""
-    url = base_url.strip().rstrip("/")
-    if not url:
-        return url
-    if url.endswith("/v1"):
-        return url
-    return f"{url}/v1"
-
-
 def _sync_provider_env() -> None:
     """Map provider-specific env vars to OPENAI_* for ChatOpenAI.
 
@@ -849,9 +1030,6 @@ def _sync_provider_env() -> None:
     api_key = creds["api_key"]
     base_url = creds["base_url"]
 
-    if provider == "ollama" and base_url:
-        base_url = _normalize_ollama_base_url(base_url)
-
     # SDK-side env setup, not Vibe-Trading config reads
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
@@ -860,34 +1038,45 @@ def _sync_provider_env() -> None:
         os.environ["OPENAI_BASE_URL"] = base_url
 
 
-def _supports_top_level_reasoning_effort(provider: str, caps_name: str) -> bool:
+def _supports_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
     """Report whether a provider accepts a top-level ``reasoning_effort`` field.
 
-    Direct OpenAI is the only verified consumer: its ``gpt-5.6-*`` models reject
-    function tools on ``/v1/chat/completions`` unless the request carries an
-    explicit ``reasoning_effort`` — including the literal ``"none"``. Every other
-    OpenAI-compatible provider (DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu,
-    NVIDIA, Spark, MiniMax, …) may reject the unknown field, so this is a
-    positive allowlist, never "everything without ``openrouter_reasoning_body``".
-    Relays that take the field inside ``extra_body.reasoning`` (OpenRouter,
-    Requesty) keep that path and are excluded here.
+    Reads the ``top_level_reasoning_effort`` capability flag, which is a
+    positive allowlist: a provider is listed only once a real request to it has
+    been observed to succeed. Speaking the OpenAI wire format does not imply
+    accepting every OpenAI field, and an endpoint that validates its body
+    strictly rejects the unknown key outright — so the default is off and the
+    consequence of that default is a no-op, not a failed call.
+
+    Relays that take the effort inside ``extra_body.reasoning`` (OpenRouter,
+    Requesty) use that path instead and are excluded here.
 
     Args:
-        provider: Configured ``LANGCHAIN_PROVIDER`` value.
-        caps_name: Canonical capability name resolved for the provider/model.
+        caps: Canonical capabilities resolved for the provider and model. Note
+            this is the *resolved* capability, so provider ``openai`` with a
+            ``deepseek-*`` model arrives here as DeepSeek, and an unrecognised
+            provider name arrives as OpenAI — which is why callers must also
+            check the base URL before trusting the OpenAI entry.
 
     Returns:
-        True only for direct OpenAI. The configured name is checked alongside the
-        resolved capability because unknown provider names fall back to OpenAI
-        capabilities — an unverified gateway must not inherit the field — while
-        the capability name check drops model-inferred providers (e.g. provider
-        ``openai`` with a ``deepseek-*`` model resolves to DeepSeek).
+        True when the provider is on the allowlist and does not use the
+        ``extra_body.reasoning`` relay path.
     """
-    if caps_name != "openai" or provider.strip().lower() not in {"", "openai"}:
-        return False
-    # A base-URL override points the OpenAI client at some other gateway
-    # (Ollama, LiteLLM, a corporate proxy). Those speak the OpenAI wire format
-    # but need not accept this field, so the label alone is not enough.
+    return caps.top_level_reasoning_effort and not caps.openrouter_reasoning_body
+
+
+def _openai_label_points_at_openai(caps: ProviderCapabilities) -> bool:
+    """Report whether the OpenAI capability is actually talking to OpenAI.
+
+    An unknown ``LANGCHAIN_PROVIDER`` falls back to the OpenAI capabilities, and
+    a base-URL override points the OpenAI client at some other gateway (Ollama,
+    LiteLLM, a corporate proxy). Those speak the OpenAI wire format but need not
+    accept ``reasoning_effort``, so the label alone is not enough to send it.
+
+    Non-OpenAI capabilities are unaffected — they carry their own endpoint.
+    """
+    if caps.name != "openai":
+        return True
     try:
         base_url = (
             get_llm_credentials("openai", get_env_config().llm.langchain_model_name)
@@ -900,6 +1089,36 @@ def _supports_top_level_reasoning_effort(provider: str, caps_name: str) -> bool:
         return True
     host = urlparse(base_url if "//" in base_url else f"https://{base_url}").hostname or ""
     return host.lower() in {"api.openai.com", "openai.com"}
+
+
+def _sends_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
+    """Combine the allowlist flag with the OpenAI base-URL check."""
+    return _supports_top_level_reasoning_effort(caps) and _openai_label_points_at_openai(caps)
+
+
+def uses_responses_api(
+    provider: str,
+    configured_responses_api: bool | None,
+    deepseek_adapter: str | None = None,
+) -> bool:
+    """Return whether the configured provider uses ChatOpenAI's Responses route."""
+    if configured_responses_api is not True:
+        return False
+    normalized_provider = provider.strip().lower().replace("_", "-")
+    if normalized_provider in {"anthropic", "openai-codex"}:
+        return False
+    if normalized_provider != "deepseek":
+        return True
+    adapter = _deepseek_adapter_mode() if deepseek_adapter is None else deepseek_adapter.strip().lower()
+    adapter = {
+        "compat": "openai-compatible",
+        "compatible": "openai-compatible",
+        "openai": "openai-compatible",
+        "openai_compatible": "openai-compatible",
+    }.get(adapter, adapter)
+    if adapter == "openai-compatible":
+        return True
+    return adapter == "auto" and not _native_deepseek_adapter_available()
 
 
 def provider_diagnostics() -> dict[str, Any]:
@@ -1010,8 +1229,9 @@ def provider_diagnostics() -> dict[str, Any]:
             "send_reasoning_content": caps.send_reasoning_content,
             "gemini_thought_signatures": caps.gemini_thought_signatures,
             "openrouter_reasoning_body": caps.openrouter_reasoning_body,
-            "top_level_reasoning_effort": _supports_top_level_reasoning_effort(
-                provider, caps.name
+            "top_level_reasoning_effort": (
+                adapter_type == "openai-compatible"
+                and _sends_top_level_reasoning_effort(caps)
             ),
         },
     }
@@ -1085,9 +1305,10 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     ):
         logger.info("Forcing temperature=1.0 for %s (provider requirement)", name)
         temperature = 1.0
-    # Optional reasoning activation for relays requiring opt-in (e.g. OpenRouter).
-    # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     effort = get_env_config().llm.langchain_reasoning_effort.strip().lower()
+    # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
+    configured_responses_api = get_env_config().llm.langchain_use_responses_api
+    use_responses_api = uses_responses_api(provider, configured_responses_api)
     creds = get_llm_credentials(provider, name)
     api_key = creds["api_key"]
     _validate_authorization_credential(
@@ -1102,18 +1323,25 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         "timeout": get_env_config().llm.timeout_seconds,
         "max_retries": get_env_config().llm.max_retries,
         "callbacks": callbacks,
-        "extra_body": (
-            {"reasoning": {"effort": effort}}
-            if effort and caps.openrouter_reasoning_body
+        "output_version": "responses/v1" if use_responses_api else None,
+        "use_responses_api": use_responses_api,
+        "reasoning": (
+            {"effort": effort}
+            if use_responses_api and effort
             else None
         ),
-        # Direct OpenAI takes the effort as a top-level request field instead
-        # (gpt-5.6-* require it, even "none", to accept function tools).
-        # None is dropped by langchain-openai, so unsupported providers keep a
-        # payload without the field.
+        "extra_body": (
+            {"reasoning": {"effort": effort}}
+            if effort and not use_responses_api and caps.openrouter_reasoning_body
+            else None
+        ),
         "reasoning_effort": (
             effort
-            if effort and _supports_top_level_reasoning_effort(provider, caps.name)
+            if (
+                effort
+                and not use_responses_api
+                and _sends_top_level_reasoning_effort(caps)
+            )
             else None
         ),
         "vibe_provider": provider,
