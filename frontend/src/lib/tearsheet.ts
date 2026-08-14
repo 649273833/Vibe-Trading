@@ -38,9 +38,21 @@ export interface DrawdownZone {
   rank: number;
 }
 
-/** Safari-safe date parse: "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SS". */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Safari-safe date parse: "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SS".
+ *
+ * A bare "YYYY-MM-DD" is specified to parse as UTC midnight while every getter
+ * below (`getFullYear`, `getMonth`) reads local time, so west of UTC the whole
+ * series shifts back a day and each month-boundary bar lands in the previous
+ * month. Daily backtests write exactly that shape — pandas drops `00:00:00`
+ * when every bar is midnight — so pin date-only input to local midnight, which
+ * is also how the "YYYY-MM-DD HH:MM:SS" form already parses.
+ */
 function parseTime(time: string): Date | null {
-  const d = new Date(time.replace(" ", "T"));
+  const normalized = DATE_ONLY.test(time) ? `${time}T00:00:00` : time.replace(" ", "T");
+  const d = new Date(normalized);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

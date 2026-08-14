@@ -252,3 +252,56 @@ describe("toDrawdownZones", () => {
     expect(toDrawdownZones([], "2024-01-01")).toEqual([]);
   });
 });
+
+// Daily backtests write date-only timestamps — pandas drops `00:00:00` when
+// every bar is midnight — and a bare "YYYY-MM-DD" parses as UTC while the
+// getters read local time. West of UTC that moved every month-boundary bar
+// into the previous month, so the heatmap was wrong for the Americas and right
+// in CI (UTC) and in UTC+8. These run under a pinned negative-offset zone.
+describe("calendar attribution west of UTC", () => {
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/New_York";
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it("confirms the pinned zone is actually in effect", () => {
+    expect(new Date(2024, 1, 1).getTimezoneOffset()).toBe(300);
+  });
+
+  const daily = [
+    pt("2024-01-30", 100),
+    pt("2024-01-31", 110), // true January close
+    pt("2024-02-01", 111),
+    pt("2024-02-29", 120), // true February close
+    pt("2024-03-01", 121),
+    pt("2024-03-28", 130),
+  ];
+
+  it("keeps a month-boundary bar in its own month", () => {
+    const monthly = computeMonthlyReturns(daily);
+    expect(monthly.map((m) => `${m.year}-${m.month}`)).toEqual(["2024-1", "2024-2", "2024-3"]);
+    // January: 110/100 - 1, from the January close — not February 1st's 111.
+    expect(monthly[0].ret).toBeCloseTo(110 / 100 - 1, 12);
+    // February: 120/110 - 1, both true month closes.
+    expect(monthly[1].ret).toBeCloseTo(120 / 110 - 1, 12);
+    expect(monthly[2].ret).toBeCloseTo(130 / 120 - 1, 12);
+  });
+
+  it("keeps a year-boundary bar in its own year", () => {
+    const across = [pt("2023-12-29", 100), pt("2023-12-31", 120), pt("2024-01-01", 121), pt("2024-12-31", 150)];
+    const annual = computeAnnualReturns(across);
+    expect(annual.map((a) => a.year)).toEqual([2023, 2024]);
+    expect(annual[0].ret).toBeCloseTo(120 / 100 - 1, 12);
+    expect(annual[1].ret).toBeCloseTo(150 / 120 - 1, 12);
+  });
+
+  it("measures drawdown episode spans in whole days", () => {
+    const episodes = computeTopDrawdowns([pt("2024-03-01", 100), pt("2024-03-11", 80), pt("2024-03-21", 100)], 1);
+    expect(episodes).toHaveLength(1);
+    expect(episodes[0].peakToTroughDays).toBe(10);
+    expect(episodes[0].troughToRecoveryDays).toBe(10);
+  });
+});
