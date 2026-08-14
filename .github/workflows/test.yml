@@ -184,6 +184,10 @@ jobs:
         working-directory: desktop/electron
         run: npm ci
 
+      - name: Prepare verified Electron runtime
+        working-directory: desktop/electron
+        run: npm run prepare:electron
+
       - name: Build desktop shell
         working-directory: desktop/electron
         run: npm run build
