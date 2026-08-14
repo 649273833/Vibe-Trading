@@ -169,6 +169,10 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         gemini_thought_signatures=True,
     ),
     "groq": ProviderCapabilities("groq", "GROQ_API_KEY", "GROQ_BASE_URL"),
+    # Novita AI is an OpenAI-compatible inference cloud using ``vendor/model``
+    # naming. The v1 chat path exposes no reasoning fields, so no capability
+    # flags are set and it rides the generic OpenAI-compatible path.
+    "novita": ProviderCapabilities("novita", "NOVITA_API_KEY", "NOVITA_BASE_URL"),
     "dashscope": ProviderCapabilities(
         "dashscope", "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"
     ),
