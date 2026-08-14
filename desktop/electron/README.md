@@ -58,8 +58,15 @@ npm run build
 
 cd ..\desktop\electron
 npm ci
+npm run prepare:electron
 npm start
 ```
+
+`prepare:electron` uses bounded retries and the official checksum bundled with
+the pinned Electron package, then installs the verified Windows x64 runtime for
+the source lifecycle tests. The packaging command additionally requires a
+current `7z.exe`; it treats the pinned GTK NSIS asset as an archive and never
+executes its legacy self-extractor.
 
 The Windows lifecycle suite used by CI can be run from the same directory:
 

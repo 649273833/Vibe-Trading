@@ -36,6 +36,7 @@ npm run build
 
 cd ..\desktop\electron
 npm ci
+npm run prepare:electron
 npm run smoke:credentials
 npm run runtime:win -- -Clean
 npm run smoke:lifecycle
@@ -53,6 +54,11 @@ Python dependencies are installed from
 `desktop/electron/requirements-windows-lock.txt` with `--require-hashes`; the
 checked-out Vibe-Trading package is then installed with `--no-deps` so
 packaging cannot silently resolve versions outside that lock.
+
+`prepare:electron` downloads the official Windows x64 Electron archive with
+bounded retries, verifies the checksum shipped by the pinned `electron` npm
+package, and extracts that same archive for source-mode smoke tests. Packaging
+therefore never falls through to Electron's unbounded lazy-download path.
 
 The repository-root lock is generated for the upstream Linux environment and
 contains platform-specific dependencies such as `uvloop`. It cannot be reused
@@ -111,15 +117,15 @@ tooling. Those packages are not copied into the packaged application, but the
 review workflow still treats the lockfile as trusted build input. This should
 be re-audited whenever Electron Builder publishes a repaired dependency tree.
 
-## CI build-host note
+## Native archive extraction and CI visibility
 
-The packaging job is pinned to GitHub's clean `windows-2022` image. The
-checksum-pinned GTK runtime installer used solely to extract WeasyPrint's
-native DLL subset exits with an access violation on the Server 2025 runner,
-although the extracted runtime and packaged application work on current
-Windows 10/11 hosts. Moving that native dependency to a newer, directly
-extractable upstream archive is a follow-up; silently dropping PDF support or
-accepting an unverified binary is not.
+The GTK asset remains checksum-pinned, but the build never executes its legacy
+NSIS self-extractor. A current `7z.exe` (available on `PATH` or under the
+standard Program Files location) reads the verified asset as an archive under
+a two-minute process timeout, after which the build copies only the explicit
+WeasyPrint DLL/font closure. GitHub's `windows-2025` image supplies 7-Zip and
+runs the complete packaging path for relevant pull requests and pushes to
+`main`, so default-branch packaging regressions are visible.
 
 ## Local validation record
 
