@@ -101,6 +101,15 @@
     "api_key_required": true
   },
   {
+    "name": "novita",
+    "label": "Novita AI",
+    "api_key_env": "NOVITA_API_KEY",
+    "base_url_env": "NOVITA_BASE_URL",
+    "default_model": "moonshotai/kimi-k3",
+    "default_base_url": "https://api.novita.ai/openai",
+    "api_key_required": true
+  },
+  {
     "name": "dashscope",
     "label": "DashScope / Qwen",
     "api_key_env": "DASHSCOPE_API_KEY",
