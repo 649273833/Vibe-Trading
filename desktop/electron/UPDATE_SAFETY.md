@@ -16,7 +16,10 @@ This code makes two parts of that future review executable now:
 
 `BackendManager.stopForUpdate()` is the required handoff boundary. It returns
 only after the exact owned backend PID, watchdog PID, and loopback listener are
-gone. It never terminates `python.exe` by image name.
+gone. Listener evidence uses a TCP connection probe rather than HTTP health, so
+a process that accepts connections but stops answering HTTP remains open. A
+failed handoff retains the exact identifiers and log stream for a later cleanup
+retry. It never terminates `python.exe` by image name.
 
 ## Verification order
 
@@ -29,8 +32,18 @@ Checks run in this order:
 1. policy and release metadata are well formed;
 2. the candidate semantic version is strictly newer;
 3. the local file digest matches the expected SHA-256;
-4. Windows reports a `Valid` Authenticode signature;
-5. the SHA-256 hash of the signer certificate's raw bytes is allowlisted.
+4. PowerShell opens the artifact with a lock that permits readers but denies
+   writers and deletion, hashes those locked bytes, and inspects Authenticode;
+5. the locked digest matches the initial and expected digests;
+6. Windows reports a `Valid` Authenticode signature;
+7. the SHA-256 hash of the signer certificate's raw bytes is allowlisted;
+8. the file digest is confirmed again after the locked inspection.
+
+The future launch path must call
+`assertVerifiedUpdateArtifactUnchanged()` immediately before starting the
+installer. Verification and PowerShell discovery are both timeout-bounded. The
+pre-launch assertion is mandatory even though the artifact was already checked:
+no result object makes a mutable path permanently trustworthy.
 
 The expected digest and publisher allowlist must eventually come from a trusted
 release configuration owned by the maintainers. That source is deliberately
@@ -48,6 +61,7 @@ not invented here.
 | Missing publisher policy | Certificate allowlist is empty | `invalid-verification-policy` | Keep the updater disabled |
 | Malformed version or digest | Release metadata is not valid | `invalid-release-metadata` | Reject before signature inspection |
 | File or Authenticode inspection failure | Artifact cannot be read or Windows inspection fails | `artifact-inspection-failed` | Reject without launching |
+| Artifact replaced during inspection | Locked Authenticode digest or post-inspection digest differs | `artifact-changed-during-verification` | Reject and require a fresh staged artifact |
 
 The unsigned automated test uses injected Authenticode observations so every
 branch is deterministic. The later signed end-to-end run must repeat the first
@@ -78,8 +92,11 @@ application version:
 | Malformed journal | Unknown | Leave it untouched; require manual intervention |
 
 The journal stores a simple `.exe` file name inside its dedicated staging
-directory. Malformed or traversal paths are never followed for deletion. Writes
-use a temporary file and same-directory rename.
+directory. Malformed or traversal paths are never followed for deletion. A
+begin operation fsyncs a complete same-directory temporary file and publishes
+it with an atomic hard-link create-if-absent operation. Concurrent begins can
+therefore never overwrite one another. Later phase writes retain the
+same-directory rename path.
 
 This recovery path restores the application to a clean retry state when the
 old or new version can launch. It does **not** claim rollback of a partially
@@ -99,7 +116,11 @@ npm run smoke:parent-death
 The lifecycle tests start an unrelated Python sentinel before stopping the
 desktop-owned backend. The sentinel must still be alive after graceful and
 forced-parent-death cleanup, while the owned Python PID and listener must be
-gone.
+gone. The update-safety test also holds open a TCP listener that never answers
+HTTP, proves shutdown fails closed while retaining the exact identifiers, then
+closes the listener and proves a second cleanup attempt succeeds. It races two
+journal begins and requires exactly one durable winner, and mutates an artifact
+during and after verification to exercise both integrity gates.
 
 ## Remaining enablement gates
 

@@ -5,6 +5,7 @@ import path from "node:path";
 
 export type AuthenticodeInspection = {
   status: string;
+  artifactSha256?: string;
   signerSubject?: string;
   certificateSha256?: string;
 };
@@ -26,6 +27,7 @@ export type UpdateRejectionCode =
   | "version-not-newer"
   | "artifact-inspection-failed"
   | "artifact-hash-mismatch"
+  | "artifact-changed-during-verification"
   | "artifact-unsigned"
   | "artifact-signature-invalid"
   | "publisher-not-allowed";
@@ -113,13 +115,54 @@ export async function verifyWindowsUpdateCandidate(
     );
   }
 
+  const inspectedArtifactSha256 = normalizeSha256(signature.artifactSha256);
+  if (!inspectedArtifactSha256 || inspectedArtifactSha256 !== actualHash) {
+    return reject(
+      "artifact-changed-during-verification",
+      "Authenticode inspection did not cover the same artifact bytes as the release digest.",
+    );
+  }
+
+  let confirmedHash: string;
+  try {
+    confirmedHash = await sha256(candidate.artifactPath);
+  } catch (error) {
+    return reject(
+      "artifact-inspection-failed",
+      `The artifact could not be confirmed after signature inspection: ${errorText(error)}`,
+    );
+  }
+  if (confirmedHash !== actualHash) {
+    return reject(
+      "artifact-changed-during-verification",
+      "The update artifact changed while its signature was being verified.",
+    );
+  }
+
   return {
     accepted: true,
     version: candidate.version,
-    sha256: actualHash,
+    sha256: confirmedHash,
     signerSubject: signature.signerSubject,
     certificateSha256,
   };
+}
+
+export async function assertVerifiedUpdateArtifactUnchanged(
+  artifactPath: string,
+  expectedSha256: string,
+): Promise<void> {
+  const expectedHash = normalizeSha256(expectedSha256);
+  if (!expectedHash) throw new Error("The verified artifact SHA-256 is malformed");
+  let actualHash: string;
+  try {
+    actualHash = await sha256(artifactPath);
+  } catch (error) {
+    throw new Error(`The verified update artifact could not be read: ${errorText(error)}`);
+  }
+  if (actualHash !== expectedHash) {
+    throw new Error("The verified update artifact changed before installer launch");
+  }
 }
 
 export function inspectAuthenticodeSignature(artifactPath: string): AuthenticodeInspection {
@@ -133,22 +176,33 @@ export function inspectAuthenticodeSignature(artifactPath: string): Authenticode
       "-NonInteractive",
       "-Command",
       [
-        "$signature = Get-AuthenticodeSignature -LiteralPath $env:VIBE_UPDATE_ARTIFACT_PATH",
-        "$fingerprint = $null",
-        "if ($signature.SignerCertificate) {",
-        "  $sha256 = [System.Security.Cryptography.SHA256]::Create()",
+        "$artifactPath = [System.IO.Path]::GetFullPath($env:VIBE_UPDATE_ARTIFACT_PATH)",
+        "$stream = [System.IO.File]::Open($artifactPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)",
+        "try {",
+        "  $artifactHasher = [System.Security.Cryptography.SHA256]::Create()",
         "  try {",
-        "    $bytes = $sha256.ComputeHash($signature.SignerCertificate.RawData)",
-        "    $fingerprint = ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()",
-        "  } finally { $sha256.Dispose() }",
-        "}",
-        "@{ status = $signature.Status.ToString(); signerSubject = $signature.SignerCertificate.Subject; certificateSha256 = $fingerprint } | ConvertTo-Json -Compress",
-      ].join("; "),
+        "    $artifactBytes = $artifactHasher.ComputeHash($stream)",
+        "    $artifactFingerprint = ([System.BitConverter]::ToString($artifactBytes)).Replace('-', '').ToLowerInvariant()",
+        "  } finally { $artifactHasher.Dispose() }",
+        "  $signature = Get-AuthenticodeSignature -LiteralPath $artifactPath",
+        "  $certificateFingerprint = $null",
+        "  if ($signature.SignerCertificate) {",
+        "    $certificateHasher = [System.Security.Cryptography.SHA256]::Create()",
+        "    try {",
+        "      $certificateBytes = $certificateHasher.ComputeHash($signature.SignerCertificate.RawData)",
+        "      $certificateFingerprint = ([System.BitConverter]::ToString($certificateBytes)).Replace('-', '').ToLowerInvariant()",
+        "    } finally { $certificateHasher.Dispose() }",
+        "  }",
+        "  @{ status = $signature.Status.ToString(); artifactSha256 = $artifactFingerprint; signerSubject = $signature.SignerCertificate.Subject; certificateSha256 = $certificateFingerprint } | ConvertTo-Json -Compress",
+        "} finally { $stream.Dispose() }",
+      ].join("\n"),
     ],
     {
       env: { ...process.env, VIBE_UPDATE_ARTIFACT_PATH: path.resolve(artifactPath) },
       encoding: "utf8",
       windowsHide: true,
+      timeout: 15_000,
+      maxBuffer: 1_048_576,
     },
   );
   if (result.error) throw result.error;
@@ -162,6 +216,9 @@ export function inspectAuthenticodeSignature(artifactPath: string): Authenticode
   const payload = parsed as Record<string, unknown>;
   return {
     status: payload.status as string,
+    artifactSha256: typeof payload.artifactSha256 === "string"
+      ? payload.artifactSha256
+      : undefined,
     signerSubject: typeof payload.signerSubject === "string" ? payload.signerSubject : undefined,
     certificateSha256: typeof payload.certificateSha256 === "string"
       ? payload.certificateSha256
@@ -231,7 +288,12 @@ function resolveSignaturePowerShell(): string {
     const probe = spawnSync(
       candidate,
       ["-NoProfile", "-NonInteractive", "-Command", "Get-Command Get-AuthenticodeSignature -ErrorAction Stop | Out-Null"],
-      { encoding: "utf8", windowsHide: true },
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 5_000,
+        maxBuffer: 262_144,
+      },
     );
     if (!probe.error && probe.status === 0) return candidate;
   }

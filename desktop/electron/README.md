@@ -29,7 +29,9 @@ download an artifact, launch an installer, or enable updates. See
 - Requests authenticated graceful shutdown before asking the watchdog to
   terminate the owned Windows process tree as a fallback.
 - Exposes a strict update-handoff shutdown call that succeeds only after the
-  owned backend PID, watchdog PID, and loopback listener are all gone.
+  owned backend PID, watchdog PID, and loopback listener are all gone. A failed
+  handoff retains those identifiers for retry, and a TCP probe keeps a
+  listening-but-unresponsive port fail-closed.
 - Terminates the Python process tree if the Electron main process is killed
   without running JavaScript shutdown handlers.
 - Localizes desktop-owned loading, status, error, dialog, and menu text in
@@ -71,7 +73,8 @@ the parent-death path by force-terminating only the Electron main PID before
 checking that the Python process and loopback listener are gone. Both graceful
 and parent-death tests keep a separate Python sentinel alive throughout the
 owned-process cleanup. The update-safety test exercises the rejection matrix
-and every journal recovery phase without enabling an updater.
+and every journal recovery phase without enabling an updater, including
+artifact mutation, concurrent journal creation, and failed-shutdown retry.
 
 Backend resolution is intentionally narrow. It checks an explicit
 `VIBE_TRADING_EXECUTABLE` override first, then exact application/resource

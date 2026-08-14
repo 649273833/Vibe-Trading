@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { BackendManager } from "../dist/backend-manager.js";
+import { getDesktopMessages } from "../dist/locales.js";
 import { UpdateRecoveryJournal } from "../dist/update-recovery.js";
 import {
+  assertVerifiedUpdateArtifactUnchanged,
   compareSemanticVersions,
   inspectAuthenticodeSignature,
   verifyWindowsUpdateCandidate,
@@ -26,12 +31,14 @@ const policy = {
 };
 const validSignature = () => ({
   status: "Valid",
+  artifactSha256: fixtureHash,
   signerSubject: "CN=Vibe-Trading Test Publisher",
   certificateSha256: publisher,
 });
 
 const accepted = await verifyWindowsUpdateCandidate(candidate, policy, validSignature);
 assert.equal(accepted.accepted, true);
+await assertVerifiedUpdateArtifactUnchanged(artifactPath, accepted.sha256);
 
 await expectRejection(
   { ...candidate, expectedSha256: "00".repeat(32) },
@@ -76,6 +83,31 @@ await expectRejection(
   validSignature,
   "artifact-inspection-failed",
 );
+await expectRejection(
+  candidate,
+  policy,
+  () => ({ ...validSignature(), artifactSha256: otherPublisher }),
+  "artifact-changed-during-verification",
+);
+
+const mutationArtifactPath = path.join(testRoot, "mutation.exe");
+await writeFile(mutationArtifactPath, fixture);
+await expectRejection(
+  { ...candidate, artifactPath: mutationArtifactPath },
+  policy,
+  (inspectedPath) => {
+    writeFileSync(inspectedPath, Buffer.from("changed-during-signature-inspection", "utf8"));
+    return validSignature();
+  },
+  "artifact-changed-during-verification",
+);
+
+await writeFile(artifactPath, Buffer.from("changed-after-verification", "utf8"));
+await assert.rejects(
+  () => assertVerifiedUpdateArtifactUnchanged(artifactPath, accepted.sha256),
+  /changed before installer launch/u,
+);
+await writeFile(artifactPath, fixture);
 
 assert.equal(compareSemanticVersions("0.3.1", "0.3.0"), 1);
 assert.equal(compareSemanticVersions("0.3.1-beta.2", "0.3.1-beta.1"), 1);
@@ -140,6 +172,21 @@ assert.equal(
 assert.equal(await exists(mismatchArtifact), true);
 assert.equal(await exists(mismatchJournal.journalPath), true);
 
+const concurrentDirectory = await mkdtemp(path.join(testRoot, "concurrent-"));
+const concurrentJournal = new UpdateRecoveryJournal(concurrentDirectory);
+const concurrentResults = await Promise.allSettled([
+  concurrentJournal.begin(newAttempt("first.exe")),
+  concurrentJournal.begin(newAttempt("second.exe")),
+]);
+const concurrentWinners = concurrentResults.filter((result) => result.status === "fulfilled");
+const concurrentLosers = concurrentResults.filter((result) => result.status === "rejected");
+assert.equal(concurrentWinners.length, 1);
+assert.equal(concurrentLosers.length, 1);
+assert.match(String(concurrentLosers[0].reason), /already exists/u);
+const concurrentRecord = JSON.parse(await readFile(concurrentJournal.journalPath, "utf8"));
+assert.equal(concurrentRecord.attemptId, concurrentWinners[0].value.attemptId);
+assert.equal(concurrentRecord.artifactFileName, concurrentWinners[0].value.artifactFileName);
+
 const traversalDirectory = await mkdtemp(path.join(testRoot, "traversal-"));
 const traversalJournal = new UpdateRecoveryJournal(traversalDirectory);
 const protectedFile = path.join(testRoot, "protected.exe");
@@ -158,9 +205,56 @@ assert.equal(
 );
 assert.equal((await readFile(protectedFile)).equals(fixture), true);
 
+const hungListener = createServer(() => {
+  // Accept TCP and deliberately never speak HTTP. Shutdown evidence must still
+  // classify this port as open.
+});
+await listen(hungListener);
+const hungAddress = hungListener.address();
+if (!hungAddress || typeof hungAddress === "string") throw new Error("Expected a TCP listener address");
+const hungBaseUrl = `http://127.0.0.1:${hungAddress.port}/`;
+const retainedBackendPid = 2_147_483_646;
+const retainedWatchdogPid = 2_147_483_647;
+const retainedManager = new BackendManager({
+  appPath: testRoot,
+  resourcesPath: testRoot,
+  allowSourceDiscovery: false,
+  logDirectory: testRoot,
+  apiAuthKey: "test-auth-key",
+  messages: getDesktopMessages("en"),
+  shutdownEvidenceTimeoutMilliseconds: 25,
+  onStatus: () => {},
+  onUnexpectedExit: () => {},
+});
+// TypeScript `private` fields compile to ordinary properties. This test seam
+// models an already-exited watchdog whose exact identifiers must be retained
+// while a stubborn listener survives.
+retainedManager.watchdog = {
+  pid: retainedWatchdogPid,
+  exitCode: 0,
+  signalCode: null,
+};
+retainedManager.backendPid = retainedBackendPid;
+retainedManager.baseUrl = hungBaseUrl;
+await assert.rejects(() => retainedManager.stopForUpdate(), /could not be verified/u);
+assert.equal(retainedManager.url, hungBaseUrl);
+assert.equal(retainedManager.processId, retainedBackendPid);
+await close(hungListener);
+const retriedEvidence = await retainedManager.stopForUpdate();
+assert.deepEqual(retriedEvidence, {
+  backendPid: retainedBackendPid,
+  watchdogPid: retainedWatchdogPid,
+  backendExited: true,
+  watchdogExited: true,
+  listenerClosed: true,
+});
+assert.equal(retainedManager.url, undefined);
+assert.equal(retainedManager.processId, undefined);
+
 console.log(JSON.stringify({
-  verificationCases: ["accepted", "tampered", "unsigned", "invalid-signature", "wrong-publisher", "downgraded"],
-  recoveryPhases: ["verified", "backend-stopped", "installer-launched", "completed", "version-mismatch", "path-traversal"],
+  verificationCases: ["accepted", "tampered", "unsigned", "invalid-signature", "wrong-publisher", "downgraded", "mutation-during-verification", "mutation-before-launch"],
+  recoveryPhases: ["verified", "backend-stopped", "installer-launched", "completed", "version-mismatch", "path-traversal", "concurrent-begin"],
+  shutdownFailureRetryVerified: true,
   authenticodeAdapterVerified,
   updaterEnabled: false,
 }, null, 2));
@@ -188,4 +282,20 @@ async function exists(file) {
   } catch {
     return false;
   }
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+function close(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }

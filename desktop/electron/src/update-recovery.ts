@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import { compareSemanticVersions } from "./update-verification";
 
@@ -53,12 +53,6 @@ export class UpdateRecoveryJournal {
       throw new Error("An update attempt must target a newer semantic version");
     }
     await mkdir(this.stagingDirectory, { recursive: true });
-    try {
-      await readFile(this.journalPath, "utf8");
-      throw new Error("A pending update attempt already exists");
-    } catch (error) {
-      if (errorCode(error) !== "ENOENT") throw error;
-    }
     const now = new Date().toISOString();
     const record: UpdateAttempt = {
       ...attempt,
@@ -68,7 +62,7 @@ export class UpdateRecoveryJournal {
       createdAt: now,
       updatedAt: now,
     };
-    await this.write(record);
+    await this.write(record, true);
     return record;
   }
 
@@ -135,17 +129,34 @@ export class UpdateRecoveryJournal {
     return parsed;
   }
 
-  private async write(attempt: UpdateAttempt): Promise<void> {
+  private async write(attempt: UpdateAttempt, exclusive = false): Promise<void> {
     const temporaryPath = path.join(
       this.stagingDirectory,
       `${journalFileName}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
     );
     try {
-      await writeFile(temporaryPath, `${JSON.stringify(attempt, null, 2)}\n`, {
-        encoding: "utf8",
-        flag: "wx",
-      });
-      await rename(temporaryPath, this.journalPath);
+      const handle = await open(temporaryPath, "wx");
+      try {
+        await handle.writeFile(`${JSON.stringify(attempt, null, 2)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (exclusive) {
+        try {
+          // Linking a complete same-directory temp file is an atomic
+          // create-if-absent operation on Windows and POSIX. Unlike rename, it
+          // can never replace a concurrent pending attempt.
+          await link(temporaryPath, this.journalPath);
+        } catch (error) {
+          if (errorCode(error) === "EEXIST") {
+            throw new Error("A pending update attempt already exists");
+          }
+          throw error;
+        }
+      } else {
+        await rename(temporaryPath, this.journalPath);
+      }
     } finally {
       await rm(temporaryPath, { force: true });
     }

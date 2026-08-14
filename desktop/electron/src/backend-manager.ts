@@ -6,7 +6,7 @@ import {
   readFileSync,
   WriteStream,
 } from "node:fs";
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import path from "node:path";
 import {
   DesktopMessages,
@@ -21,6 +21,7 @@ type BackendManagerOptions = {
   apiAuthKey: string;
   messages: DesktopMessages;
   credentialEnvironment?: NodeJS.ProcessEnv;
+  shutdownEvidenceTimeoutMilliseconds?: number;
   onStatus: (message: string) => void;
   onUnexpectedExit: (message: string) => void;
 };
@@ -38,6 +39,11 @@ export type BackendShutdownEvidence = {
   watchdogExited: boolean;
   listenerClosed: boolean;
 };
+
+type BackendShutdownTarget = Pick<
+  BackendShutdownEvidence,
+  "backendPid" | "watchdogPid"
+> & { baseUrl?: string };
 
 export type BackendResolutionOptions = {
   appPath: string;
@@ -62,6 +68,7 @@ export class BackendManager {
   private watchdogError: Error | undefined;
   private backendPid: number | undefined;
   private baseUrl: string | undefined;
+  private shutdownTarget: BackendShutdownTarget | undefined;
   private stopping = false;
   private logStream: WriteStream | undefined;
   private readonly recentOutput: string[] = [];
@@ -138,7 +145,6 @@ export class BackendManager {
     });
     watchdog.once("exit", (code, signal) => {
       this.writeLog(`[WATCHDOG] exited code=${String(code)} signal=${String(signal)}`);
-      this.backendPid = undefined;
       if (!this.stopping) {
         this.options.onUnexpectedExit(formatDesktopMessage(
           this.options.messages.backendUnexpectedExit,
@@ -155,16 +161,16 @@ export class BackendManager {
 
   async stop(): Promise<BackendShutdownEvidence> {
     const watchdog = this.watchdog;
-    const backendPid = this.backendPid;
-    const watchdogPid = watchdog?.pid;
-    const baseUrl = this.baseUrl;
-    if (!watchdog) {
-      return shutdownEvidence(backendPid, watchdogPid, baseUrl);
-    }
+    const target = this.shutdownTarget ?? {
+      backendPid: this.backendPid,
+      watchdogPid: watchdog?.pid,
+      baseUrl: this.baseUrl,
+    };
+    this.shutdownTarget = target;
     this.stopping = true;
-    if (isRunning(watchdog) && this.baseUrl) {
+    if (watchdog && isRunning(watchdog) && target.baseUrl) {
       try {
-        await fetch(new URL("system/shutdown", this.baseUrl), {
+        await fetch(new URL("system/shutdown", target.baseUrl), {
           method: "POST",
           headers: { Authorization: `Bearer ${this.options.apiAuthKey}` },
           signal: AbortSignal.timeout(2_000),
@@ -174,11 +180,11 @@ export class BackendManager {
       }
     }
 
-    if (isRunning(watchdog)) {
+    if (watchdog && isRunning(watchdog)) {
       await Promise.race([waitForExit(watchdog), delay(3_000)]);
     }
-    if (isRunning(watchdog)) {
-      this.writeLog(`[SHUTDOWN] asking watchdog to terminate backend pid=${String(this.backendPid)}`);
+    if (watchdog && isRunning(watchdog)) {
+      this.writeLog(`[SHUTDOWN] asking watchdog to terminate backend pid=${String(target.backendPid)}`);
       try {
         watchdog.send({ type: "terminate-backend" });
       } catch (error) {
@@ -186,21 +192,23 @@ export class BackendManager {
       }
       await Promise.race([waitForExit(watchdog), delay(5_000)]);
     }
-    if (isRunning(watchdog) && watchdog.pid) {
-      this.writeLog(`[SHUTDOWN] terminating watchdog tree pid=${watchdog.pid}`);
-      await runTaskkill(watchdog.pid);
+    if (watchdog && isRunning(watchdog) && target.watchdogPid) {
+      this.writeLog(`[SHUTDOWN] terminating watchdog tree pid=${target.watchdogPid}`);
+      await runTaskkill(target.watchdogPid);
     }
 
     const evidence = await waitForShutdownEvidence(
-      backendPid,
-      watchdogPid,
-      baseUrl,
-      5_000,
+      target.backendPid,
+      target.watchdogPid,
+      target.baseUrl,
+      this.options.shutdownEvidenceTimeoutMilliseconds ?? 5_000,
     );
-    if (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed) {
+    if (!isCompleteShutdownEvidence(evidence)) {
       this.writeLog(`[SHUTDOWN] incomplete evidence ${JSON.stringify(evidence)}`);
+      return evidence;
     }
 
+    this.shutdownTarget = undefined;
     this.watchdog = undefined;
     this.watchdogError = undefined;
     this.backendPid = undefined;
@@ -212,7 +220,7 @@ export class BackendManager {
 
   async stopForUpdate(): Promise<BackendShutdownEvidence> {
     const evidence = await this.stop();
-    if (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed) {
+    if (!isCompleteShutdownEvidence(evidence)) {
       throw new Error(`Owned backend shutdown could not be verified: ${JSON.stringify(evidence)}`);
     }
     return evidence;
@@ -443,7 +451,7 @@ async function waitForShutdownEvidence(
   let evidence = await shutdownEvidence(backendPid, watchdogPid, baseUrl);
   while (
     Date.now() < deadline &&
-    (!evidence.backendExited || !evidence.watchdogExited || !evidence.listenerClosed)
+    !isCompleteShutdownEvidence(evidence)
   ) {
     await delay(100);
     evidence = await shutdownEvidence(backendPid, watchdogPid, baseUrl);
@@ -461,8 +469,12 @@ async function shutdownEvidence(
     watchdogPid,
     backendExited: !backendPid || !isProcessAlive(backendPid),
     watchdogExited: !watchdogPid || !isProcessAlive(watchdogPid),
-    listenerClosed: !baseUrl || !(await listenerAcceptsConnections(baseUrl)),
+    listenerClosed: !baseUrl || await listenerIsClosed(baseUrl),
   };
+}
+
+function isCompleteShutdownEvidence(evidence: BackendShutdownEvidence): boolean {
+  return evidence.backendExited && evidence.watchdogExited && evidence.listenerClosed;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -474,15 +486,32 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function listenerAcceptsConnections(baseUrl: string): Promise<boolean> {
+async function listenerIsClosed(baseUrl: string): Promise<boolean> {
+  let endpoint: URL;
   try {
-    await fetch(new URL("health", baseUrl), {
-      signal: AbortSignal.timeout(500),
-    });
-    return true;
+    endpoint = new URL(baseUrl);
   } catch {
     return false;
   }
+  const port = Number(endpoint.port);
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65_535) return false;
+  return new Promise((resolve) => {
+    const socket = connect({ host: endpoint.hostname, port });
+    let settled = false;
+    const finish = (closed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(closed);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(false));
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      // Only an explicit loopback refusal proves that no listener accepted the
+      // connection. Timeouts and other socket failures stay fail-closed.
+      finish(error.code === "ECONNREFUSED");
+    });
+  });
 }
 
 function runTaskkill(pid: number): Promise<void> {
