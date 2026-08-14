@@ -736,7 +736,7 @@ vibe-trading-mcp               # start MCP server (stdio)
 
 ### GitHub Copilot SDK provider
 
-The normal Vibe-Trading install includes the official GitHub Copilot SDK; installing the Copilot CLI is optional. Authenticate with any one of these supported methods:
+The official GitHub Copilot SDK ships as an optional extra, so install it alongside Vibe-Trading with `pip install "vibe-trading-ai[copilot]"`; installing the Copilot CLI is optional. Authenticate with any one of these supported methods:
 
 ```bash
 gh auth login                         # use GitHub CLI credentials

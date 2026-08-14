@@ -78,7 +78,10 @@ def get_copilot_auth_status() -> tuple[bool, str]:
         try:
             from copilot import CopilotClient
         except ImportError:
-            return False, "github-copilot-sdk is not installed"
+            return False, (
+                "github-copilot-sdk is not installed - "
+                'pip install "vibe-trading-ai[copilot]"'
+            )
 
         async with CopilotClient(**_client_options()) as client:
             status = await client.get_auth_status()
@@ -164,7 +167,8 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[Any]:
         from copilot.tools import Tool
     except ImportError as exc:
         raise RuntimeError(
-            "GitHub Copilot requires github-copilot-sdk. Install project dependencies."
+            "GitHub Copilot provider requires github-copilot-sdk. Install the optional "
+            'extra: pip install "vibe-trading-ai[copilot]" (or pip install github-copilot-sdk).'
         ) from exc
 
     converted = []
@@ -207,7 +211,8 @@ async def _run_copilot(
         )
     except ImportError as exc:
         raise RuntimeError(
-            "GitHub Copilot requires github-copilot-sdk. Install project dependencies."
+            "GitHub Copilot provider requires github-copilot-sdk. Install the optional "
+            'extra: pip install "vibe-trading-ai[copilot]" (or pip install github-copilot-sdk).'
         ) from exc
 
     system_message, prompt = _convert_messages(messages)
