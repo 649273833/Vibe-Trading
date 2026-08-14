@@ -164,8 +164,9 @@ app = FastAPI(
     title="Vibe-Trading API",
     description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
     version=APP_VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,  # docs/redoc/openapi re-registered behind require_auth
+    redoc_url=None,  # in register_system_routes -- see the rationale there
+    openapi_url=None,
     lifespan=_lifespan,
 )
 
@@ -282,6 +283,10 @@ from src.api.live_routes import (  # noqa: F401, E402
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
+# --- Options analysis ---
+from src.api.options_routes import register_options_routes  # noqa: E402
+register_options_routes(app)
+
 # --- Auth helpers (SSE tickets) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
@@ -291,20 +296,14 @@ register_auth_routes(app)
 from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
 try_register_openbb_routes(app)
 
-
-# ============================================================================
-# Scheduled Research Routes - defined in src/api/scheduled_routes.py
-# ============================================================================
-#
-# Lightweight CRUD endpoints backed by ScheduledResearchJobStore. The endpoint
-# handlers only record and expose jobs; the optional executor lifecycle is
-# guarded separately by VIBE_TRADING_ENABLE_SCHEDULER.
-
+# --- Scheduled research ---
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
 
 from src.api.scheduled_routes import (  # noqa: E402, F401
+    CreateRunFromPlaybookRequest,
     CreateScheduledRunRequest,
+    PlaybookResponse,
     ScheduledRunResponse,
     _dispatch_scheduled_research_job,
     _get_scheduled_research_executor,

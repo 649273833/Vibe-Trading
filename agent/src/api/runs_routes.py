@@ -89,6 +89,9 @@ def _build_response_from_run_dir(
     else:
         response.status = "unknown"
 
+    request_data = _load_json_file(run_dir / "req.json") or {}
+    response.prompt = request_data.get("prompt") or request_data.get("request")
+
     planner_path = run_dir / "planner_output.json"
     response.planner_output = _load_json_file(planner_path)
 
@@ -154,6 +157,13 @@ def _build_response_from_run_dir(
         except (json.JSONDecodeError, OSError):
             pass
 
+    risk_xray = _load_json_file(run_dir / "artifacts" / "risk_xray.json")
+    if risk_xray is not None:
+        response.risk_xray = risk_xray
+    rebalance_notes = _load_json_file(run_dir / "artifacts" / "rebalance_notes.json")
+    if rebalance_notes is not None:
+        response.rebalance_notes = rebalance_notes
+
     llm_usage_path = run_dir / "llm_usage.json"
     if llm_usage_path.exists():
         try:
@@ -164,6 +174,14 @@ def _build_response_from_run_dir(
     trades_path = run_dir / "artifacts" / "trades.csv"
     if trades_path.exists():
         response.artifacts_trades_csv = _load_csv_to_dict(trades_path)
+
+    positions_path = run_dir / "artifacts" / "positions.csv"
+    if positions_path.exists():
+        response.artifacts_positions_csv = _load_csv_to_dict(positions_path)
+
+    target_positions_path = run_dir / "artifacts" / "target_positions.csv"
+    if target_positions_path.exists():
+        response.artifacts_target_positions_csv = _load_csv_to_dict(target_positions_path)
 
     validation_path = run_dir / "artifacts" / "validation.json"
     if validation_path.exists():

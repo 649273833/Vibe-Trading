@@ -16,6 +16,9 @@ const Settings = lazy(() =>
 const Runtime = lazy(() =>
   import("@/pages/Runtime").then((m) => ({ default: m.Runtime })),
 );
+const Scheduled = lazy(() =>
+  import("@/pages/Scheduled").then((m) => ({ default: m.Scheduled })),
+);
 const Reports = lazy(() =>
   import("@/pages/Reports").then((m) => ({ default: m.Reports })),
 );
@@ -24,6 +27,9 @@ const Correlation = lazy(() =>
 );
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
+);
+const OptionsLab = lazy(() =>
+  import("@/pages/OptionsLab").then((m) => ({ default: m.OptionsLab })),
 );
 
 function PageLoader() {
@@ -50,11 +56,13 @@ export const router = createBrowserRouter([
       { path: "/about", element: wrap(Home) },
       { path: "/agent", element: wrap(Agent) },
       { path: "/runtime", element: wrap(Runtime) },
+      { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/reports", element: wrap(Reports) },
       { path: "/settings", element: wrap(Settings) },
       { path: "/runs/:runId", element: wrap(RunDetail) },
       { path: "/compare", element: wrap(Compare) },
       { path: "/correlation", element: wrap(Correlation) },
+      { path: "/options", element: wrap(OptionsLab) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },
