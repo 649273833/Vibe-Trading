@@ -1114,6 +1114,29 @@ class AgentLoop:
                             messages.append(
                                 {"role": "assistant", "content": final_content}
                             )
+                            recovery = self._grounding.recovery_action(validation)
+                            if recovery is not None and iteration < self.max_iterations:
+                                self._grounding.record_recovery(recovery)
+                                trace.write(
+                                    {
+                                        "type": "grounding_recovery",
+                                        "iter": current_iter,
+                                        "action": recovery,
+                                    }
+                                )
+                                react_trace.append(
+                                    {"type": "grounding_recovery", "action": recovery}
+                                )
+                                messages.append(
+                                    {
+                                        "role": "system",
+                                        "content": self._grounding.recovery_prompt(
+                                            recovery, validation
+                                        ),
+                                    }
+                                )
+                                final_content = ""
+                                continue
                             messages.append(
                                 {
                                     "role": "system",

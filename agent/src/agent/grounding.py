@@ -59,6 +59,15 @@ _SYMBOL_ARGUMENT_KEYS = {
 # many candidates by design. Requiring a locked identity there stalls every
 # discovery task before it can load a screening skill, which is #955.
 _RESOLUTION_INCOMPLETE_STATUSES = {"unresolved", "conflicting", "invalidated"}
+# Bounded read-only recovery (#1081): a missing instrument identity or price
+# evidence is often recoverable deterministically, so the loop should keep
+# driving the original task through `search_symbol` and `get_market_data`
+# instead of handing the user a terminal "confirm and continue" fallback.
+# These budgets are separate from the rejected-draft count so real recovery
+# progress is never cut off at the three-draft retry cap.
+MAX_GROUNDING_RECOVERY_ROUNDS = 6
+MAX_SYMBOL_RESOLUTION_ATTEMPTS = 2
+MAX_PRICE_EVIDENCE_ATTEMPTS = 3
 _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "index")
 _MAX_GENERIC_EVIDENCE = 2_000
@@ -825,6 +834,9 @@ class GroundingLedger:
         self._evidence: list[EvidenceRecord] = []
         self._tool_failures: list[dict[str, Any]] = []
         self._validations: list[dict[str, Any]] = []
+        self._recovery_rounds = 0
+        self._symbol_resolution_attempts = 0
+        self._price_evidence_attempts = 0
         self._ingested_csvs: set[str] = set()
         self._identity_required = bool(_ACTIONABLE_MARKET_RE.search(user_message))
         self._buffer_output = self._identity_required
@@ -893,6 +905,18 @@ class GroundingLedger:
             "status": self.identity_status,
             "authorized_symbols": sorted(self.authorized_symbols),
             "records": [asdict(record) for record in self._identities.values()],
+            "recovery": self.recovery_summary(),
+        }
+
+    def recovery_summary(self) -> dict[str, Any]:
+        """Return bounded-recovery budget state for traces and the artifact."""
+        return {
+            "rounds": self._recovery_rounds,
+            "max_rounds": MAX_GROUNDING_RECOVERY_ROUNDS,
+            "symbol_resolution_attempts": self._symbol_resolution_attempts,
+            "max_symbol_resolution_attempts": MAX_SYMBOL_RESOLUTION_ATTEMPTS,
+            "price_evidence_attempts": self._price_evidence_attempts,
+            "max_price_evidence_attempts": MAX_PRICE_EVIDENCE_ATTEMPTS,
         }
 
     def authorize_tool_call(
@@ -1149,10 +1173,92 @@ class GroundingLedger:
                 "For every derived number, label it as derived and show the source inputs and formula.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
-                "If evidence is unavailable or conflicting, say so and ask for clarification; do not guess.",
             ]
         )
+        recovery = self.recovery_action(validation)
+        if recovery == _RESOLVER_TOOL:
+            lines.extend(
+                [
+                    "Instrument identity is unresolved. Call `search_symbol` for the "
+                    "candidate name in a separate tool-call turn, lock the exact canonical "
+                    "symbol and venue it returns, then call `get_market_data` before finalizing.",
+                    "Do NOT ask the user to confirm or continue while this read-only recovery "
+                    "remains available.",
+                ]
+            )
+        elif recovery == "get_market_data":
+            lines.extend(
+                [
+                    "Identity is locked but price evidence is missing. Call `get_market_data` "
+                    "for the locked canonical symbol and venue in a separate tool-call turn, "
+                    "then regenerate and re-validate the final answer.",
+                    "Do NOT ask the user to confirm or continue while this read-only recovery "
+                    "remains available.",
+                ]
+            )
+        else:
+            lines.append(
+                "If evidence is genuinely unavailable or conflicting and recovery is "
+                "exhausted, say so and ask for clarification; do not guess."
+            )
         return "\n".join(lines)
+
+    def recovery_action(self, validation: ValidationResult) -> str | None:
+        """Decide the next safe read-only recovery step for a rejected draft.
+
+        Returns ``search_symbol`` when instrument identity is unresolved and
+        resolution attempts remain; ``get_market_data`` when identity is locked
+        but a price claim has no observed evidence and fetch attempts remain;
+        otherwise ``None`` (genuinely ambiguous, conflicting, or exhausted —
+        the loop must then ask the user or fail closed).
+
+        This is the deterministic half of #1081: recoverable missing evidence is
+        often obtainable through read-only tools, so a rejected draft should
+        drive the original task forward instead of stopping.
+        """
+        if self._recovery_rounds >= MAX_GROUNDING_RECOVERY_ROUNDS:
+            return None
+        if self._identity_required and self.identity_status == "unresolved":
+            if self._symbol_resolution_attempts < MAX_SYMBOL_RESOLUTION_ATTEMPTS:
+                return _RESOLVER_TOOL
+            return None
+        if self.identity_status == "locked" and any(
+            issue.get("code") in {"numeric_claim_unavailable", "unsourced_symbol_figures"}
+            for issue in validation.issues
+        ):
+            if self._price_evidence_attempts < MAX_PRICE_EVIDENCE_ATTEMPTS:
+                return "get_market_data"
+        return None
+
+    def record_recovery(self, action: str) -> None:
+        """Account one bounded recovery attempt against its budget."""
+        self._recovery_rounds += 1
+        if action == _RESOLVER_TOOL:
+            self._symbol_resolution_attempts += 1
+        elif action == "get_market_data":
+            self._price_evidence_attempts += 1
+
+    def recovery_prompt(self, action: str, validation: ValidationResult) -> str:
+        """Build an executable next-step message for one bounded recovery turn."""
+        if action == _RESOLVER_TOOL:
+            return (
+                "[GROUNDING RECOVERY] Instrument identity is not yet locked and is "
+                "recoverable with read-only tools. Call `search_symbol` for the candidate "
+                "name in a separate assistant tool-call turn, lock and reuse the exact "
+                "canonical symbol and venue it returns, then call `get_market_data`. "
+                "Do NOT ask the user to confirm or continue while this read-only recovery "
+                "remains available, and do NOT finalize yet."
+            )
+        if action == "get_market_data":
+            return (
+                "[GROUNDING RECOVERY] Identity is locked but price evidence is missing. "
+                "Call `get_market_data` for the locked canonical symbol and venue in a "
+                "separate tool-call turn and use its existing bounded provider fallback, "
+                "then regenerate and re-validate the final answer. Do NOT ask the user to "
+                "confirm or continue while this read-only recovery remains available, and "
+                "do NOT finalize yet."
+            )
+        return self.correction_prompt(validation)
 
     def safe_fallback(self) -> str:
         """Return a deterministic fail-closed answer after repeated rejection."""
