@@ -165,7 +165,14 @@ class TestDirectOpenAI:
 
         assert kwargs["reasoning_effort"] == "high"
 
-    def test_openai_compatible_endpoint_receives_effort(self) -> None:
+    def test_foreign_gateway_behind_the_openai_label_is_not_sent_the_field(self) -> None:
+        """A base-URL override means the OpenAI label is no longer OpenAI.
+
+        Ollama, LiteLLM and corporate proxies speak the OpenAI wire format
+        without promising to accept every OpenAI field, and a strict body
+        validator rejects the unknown key outright. The label alone cannot
+        authorize it — only the host can.
+        """
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "openai",
@@ -173,6 +180,20 @@ class TestDirectOpenAI:
                 "OPENAI_BASE_URL": "https://gateway.example/v1",
                 "LANGCHAIN_MODEL_NAME": "gpt-5.6-luna",
                 "LANGCHAIN_REASONING_EFFORT": "high",
+            }
+        )
+
+        assert kwargs["reasoning_effort"] is None
+
+    def test_openai_host_receives_the_field(self) -> None:
+        """No override means the request really does reach api.openai.com."""
+        kwargs = _capture_kwargs(
+            {
+                "LANGCHAIN_PROVIDER": "openai",
+                "OPENAI_API_KEY": "sk-test",
+                "LANGCHAIN_MODEL_NAME": "gpt-5.6-luna",
+                "LANGCHAIN_REASONING_EFFORT": "high",
+                "LANGCHAIN_USE_RESPONSES_API": "false",
             }
         )
 
@@ -222,7 +243,15 @@ class TestUnsupportedProviders:
         assert kwargs["reasoning_effort"] == "high"
         assert kwargs["extra_body"] is None
 
-    def test_gemini_openai_compatible_receives_top_level_effort(self) -> None:
+    def test_gemini_is_not_on_the_allowlist(self) -> None:
+        """Gemini's OpenAI-compatible endpoint has not been verified for this field.
+
+        ``top_level_reasoning_effort`` is a positive allowlist: a provider joins
+        it once a real request to it has been watched to succeed, not because it
+        speaks the OpenAI wire format. Until then the effort is a no-op for
+        Gemini, which is the safe failure — the alternative is every request
+        failing on a rejected key.
+        """
         kwargs = _capture_kwargs(
             {
                 "LANGCHAIN_PROVIDER": "gemini",
@@ -234,8 +263,23 @@ class TestUnsupportedProviders:
             }
         )
 
-        assert kwargs["reasoning_effort"] == "high"
+        assert kwargs["reasoning_effort"] is None
         assert kwargs["extra_body"] is None
+
+    def test_every_allowlisted_provider_has_a_recorded_reason(self) -> None:
+        """The allowlist stays short and every entry is accounted for here.
+
+        A new provider flipping ``top_level_reasoning_effort=True`` has to be
+        added to this set deliberately, with live evidence, rather than picked
+        up by a broad predicate. If this fails, someone widened the allowlist —
+        confirm a real request to that endpoint succeeded before updating it.
+        """
+        from src.providers.capabilities import _PROVIDERS
+
+        allowlisted = {
+            name for name, caps in _PROVIDERS.items() if caps.top_level_reasoning_effort
+        }
+        assert allowlisted == {"openai", "deepseek"}
 
     def test_explicit_openai_provider_keeps_effort_for_deepseek_model(self) -> None:
         kwargs = _capture_kwargs(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from copy import copy
+from urllib.parse import urlparse
 import re
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from importlib import import_module
@@ -1038,7 +1039,61 @@ def _sync_provider_env() -> None:
 
 
 def _supports_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
-    return caps.name not in {"anthropic", "openai-codex"} and not caps.openrouter_reasoning_body
+    """Report whether a provider accepts a top-level ``reasoning_effort`` field.
+
+    Reads the ``top_level_reasoning_effort`` capability flag, which is a
+    positive allowlist: a provider is listed only once a real request to it has
+    been observed to succeed. Speaking the OpenAI wire format does not imply
+    accepting every OpenAI field, and an endpoint that validates its body
+    strictly rejects the unknown key outright — so the default is off and the
+    consequence of that default is a no-op, not a failed call.
+
+    Relays that take the effort inside ``extra_body.reasoning`` (OpenRouter,
+    Requesty) use that path instead and are excluded here.
+
+    Args:
+        caps: Canonical capabilities resolved for the provider and model. Note
+            this is the *resolved* capability, so provider ``openai`` with a
+            ``deepseek-*`` model arrives here as DeepSeek, and an unrecognised
+            provider name arrives as OpenAI — which is why callers must also
+            check the base URL before trusting the OpenAI entry.
+
+    Returns:
+        True when the provider is on the allowlist and does not use the
+        ``extra_body.reasoning`` relay path.
+    """
+    return caps.top_level_reasoning_effort and not caps.openrouter_reasoning_body
+
+
+def _openai_label_points_at_openai(caps: ProviderCapabilities) -> bool:
+    """Report whether the OpenAI capability is actually talking to OpenAI.
+
+    An unknown ``LANGCHAIN_PROVIDER`` falls back to the OpenAI capabilities, and
+    a base-URL override points the OpenAI client at some other gateway (Ollama,
+    LiteLLM, a corporate proxy). Those speak the OpenAI wire format but need not
+    accept ``reasoning_effort``, so the label alone is not enough to send it.
+
+    Non-OpenAI capabilities are unaffected — they carry their own endpoint.
+    """
+    if caps.name != "openai":
+        return True
+    try:
+        base_url = (
+            get_llm_credentials("openai", get_env_config().llm.langchain_model_name)
+            .get("base_url")
+            or ""
+        ).strip()
+    except Exception:  # noqa: BLE001 - a credential lookup must not break the check
+        return False
+    if not base_url:
+        return True
+    host = urlparse(base_url if "//" in base_url else f"https://{base_url}").hostname or ""
+    return host.lower() in {"api.openai.com", "openai.com"}
+
+
+def _sends_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
+    """Combine the allowlist flag with the OpenAI base-URL check."""
+    return _supports_top_level_reasoning_effort(caps) and _openai_label_points_at_openai(caps)
 
 
 def uses_responses_api(
@@ -1176,7 +1231,7 @@ def provider_diagnostics() -> dict[str, Any]:
             "openrouter_reasoning_body": caps.openrouter_reasoning_body,
             "top_level_reasoning_effort": (
                 adapter_type == "openai-compatible"
-                and _supports_top_level_reasoning_effort(caps)
+                and _sends_top_level_reasoning_effort(caps)
             ),
         },
     }
@@ -1285,7 +1340,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             if (
                 effort
                 and not use_responses_api
-                and _supports_top_level_reasoning_effort(caps)
+                and _sends_top_level_reasoning_effort(caps)
             )
             else None
         ),
