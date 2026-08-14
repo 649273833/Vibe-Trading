@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import csv
 import json
+import statistics
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -42,6 +43,193 @@ def _load_csv_to_dict(path: Path, limit: Optional[int] = None) -> List[Dict[str,
         return rows
     except Exception:
         return []
+
+
+def _load_ic_series_csv(path: Path) -> List[Dict[str, Any]]:
+    """Load an ``ic_series.csv`` file into ``{"date", "ic"}`` rows.
+
+    The first CSV column is treated as the date column regardless of its
+    header name (the factor tool writes it with an empty or varying index
+    label). Rows whose IC value does not parse as a float are skipped.
+
+    Args:
+        path: Path to the ic_series.csv file.
+
+    Returns:
+        List of rows with raw string dates and float IC values.
+    """
+    try:
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = reader.fieldnames
+            if not fieldnames or fieldnames[0] is None:
+                return []
+            date_col = fieldnames[0]
+            rows: List[Dict[str, Any]] = []
+            for row in reader:
+                date_value = row.get(date_col)
+                if date_value is None:
+                    continue
+                try:
+                    ic_value = float(row.get("IC"))
+                except (TypeError, ValueError):
+                    continue
+                rows.append({"date": date_value, "ic": ic_value})
+            return rows
+    except Exception:
+        return []
+
+
+def _load_group_equity_csv(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Load a ``group_equity.csv`` file into dated rows of float group values.
+
+    The first column is the date; every remaining column is kept in file
+    order and parsed as float. Cells that fail to parse are dropped.
+
+    Args:
+        path: Path to the group_equity.csv file.
+
+    Returns:
+        Tuple of (rows, value column names in file order).
+    """
+    try:
+        if not path.exists():
+            return [], []
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = reader.fieldnames
+            if not fieldnames or fieldnames[0] is None or len(fieldnames) < 2:
+                return [], []
+            date_col = fieldnames[0]
+            value_cols = [col for col in fieldnames[1:] if col]
+            rows: List[Dict[str, Any]] = []
+            for row in reader:
+                date_value = row.get(date_col)
+                if date_value is None:
+                    continue
+                parsed: Dict[str, Any] = {"date": date_value}
+                for col in value_cols:
+                    try:
+                        parsed[col] = float(row.get(col))
+                    except (TypeError, ValueError):
+                        continue
+                rows.append(parsed)
+            return rows, value_cols
+    except Exception:
+        return [], []
+
+
+def _scan_factor_results(run_dir: Path, limit: int = 20) -> List[Dict[str, Any]]:
+    """Scan a run directory for factor-analysis artifact bundles.
+
+    A factor result is any directory under ``run_dir/artifacts`` (recursive)
+    that contains an ``ic_series.csv`` file. A bundle sitting directly in
+    ``artifacts/`` is named ``factor_analysis``; otherwise the containing
+    directory name is used. Paths with ``..`` or hidden components are
+    skipped, and results are capped to bound recursion over hostile layouts.
+
+    Args:
+        run_dir: Root directory of the run.
+        limit: Maximum number of factor results to return.
+
+    Returns:
+        Factor result dicts sorted by name ascending.
+    """
+    artifacts_dir = run_dir / "artifacts"
+    if not artifacts_dir.is_dir():
+        return []
+    try:
+        candidates = list(artifacts_dir.rglob("ic_series.csv"))
+    except OSError:
+        return []
+    results: List[Dict[str, Any]] = []
+    for csv_path in candidates:
+        try:
+            relative_dir = csv_path.parent.relative_to(run_dir)
+        except ValueError:
+            continue
+        if any(part == ".." or part.startswith(".") for part in relative_dir.parts):
+            continue
+        directory = csv_path.parent
+        name = "factor_analysis" if directory == artifacts_dir else directory.name
+        equity_rows, equity_cols = _load_group_equity_csv(directory / "group_equity.csv")
+        group_cols = [col for col in equity_cols if col.startswith("Group_")]
+        spread_cols = group_cols or equity_cols
+        long_short_spread: Optional[float] = None
+        group_final_equity: Dict[str, Any] = {}
+        if equity_rows and spread_cols:
+            last_row = equity_rows[-1]
+            first_value = last_row.get(spread_cols[0])
+            last_value = last_row.get(spread_cols[-1])
+            if first_value is not None and last_value is not None:
+                long_short_spread = round(last_value - first_value, 6)
+            group_final_equity = {col: last_row[col] for col in equity_cols if col in last_row}
+        entry: Dict[str, Any] = {
+            "name": name,
+            "path": relative_dir.as_posix(),
+            "ic_series": _load_ic_series_csv(csv_path),
+        }
+        summary = _load_json_file(directory / "ic_summary.json")
+        if isinstance(summary, dict):
+            entry["ic_stats"] = summary
+        entry["group_equity"] = equity_rows
+        entry["n_groups"] = len(group_cols)
+        entry["long_short_spread"] = long_short_spread
+        entry["group_final_equity"] = group_final_equity
+        results.append(entry)
+    results.sort(key=lambda item: str(item["name"]))
+    return results[:limit]
+
+
+def _pearson_correlation(x_values: List[float], y_values: List[float]) -> float:
+    """Compute Pearson correlation, degrading to 0.0 for degenerate input.
+
+    Args:
+        x_values: First series of values.
+        y_values: Second series of values (same length).
+
+    Returns:
+        Pearson correlation in [-1, 1], or 0.0 when a variance is zero.
+    """
+    try:
+        return statistics.correlation(x_values, y_values)
+    except (statistics.StatisticsError, ValueError):
+        return 0.0
+
+
+def _factor_ic_correlation(factors: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Build the pairwise IC correlation matrix across factor results.
+
+    Args:
+        factors: Factor result dicts from ``_scan_factor_results``.
+
+    Returns:
+        Labels plus a symmetric Pearson correlation matrix rounded to four
+        decimals, or ``None`` when fewer than two factors exist or any pair
+        shares fewer than 10 dates.
+    """
+    if len(factors) < 2:
+        return None
+    series: List[Dict[str, float]] = []
+    for factor in factors:
+        series.append({str(row["date"]): float(row["ic"]) for row in factor.get("ic_series") or []})
+    for i in range(len(series)):
+        for j in range(i + 1, len(series)):
+            if len(series[i].keys() & series[j].keys()) < 10:
+                return None
+    size = len(series)
+    matrix: List[List[float]] = [[1.0 if i == j else 0.0 for j in range(size)] for i in range(size)]
+    for i in range(size):
+        for j in range(i + 1, size):
+            common_dates = sorted(series[i].keys() & series[j].keys())
+            x_values = [series[i][date] for date in common_dates]
+            y_values = [series[j][date] for date in common_dates]
+            correlation = round(_pearson_correlation(x_values, y_values), 4)
+            matrix[i][j] = correlation
+            matrix[j][i] = correlation
+    return {"labels": [str(factor["name"]) for factor in factors], "matrix": matrix}
 
 
 def _run_response_payload(response: Any) -> Dict[str, Any]:
@@ -141,6 +329,8 @@ def _build_response_from_run_dir(
                         exists=True,
                     )
                 )
+
+    response.has_factor_artifacts = bool(_scan_factor_results(run_dir, limit=1))
 
     equity_path = run_dir / "artifacts" / "equity.csv"
     if equity_path.exists():
@@ -308,6 +498,33 @@ def register_runs_routes(
         return {
             "exists": True,
             "content": pine_path.read_text(encoding="utf-8"),
+        }
+
+    @app.get("/runs/{run_id}/factor", dependencies=[Depends(require_auth)])
+    async def get_run_factor(run_id: str):
+        """Return factor-analysis artifacts for a run.
+
+        Args:
+            run_id: Run identifier.
+
+        Returns:
+            Object with exists flag, factor results sorted by name, and the
+            pairwise IC correlation matrix (null when not computable).
+        """
+        _host_validate_path_param(run_id, "run_id")
+        run_dir = _host_RUNS_DIR() / run_id
+        if not run_dir.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run {run_id} not found"
+            )
+        factors = _scan_factor_results(run_dir)
+        if not factors:
+            return {"exists": False, "factors": [], "ic_correlation": None}
+        return {
+            "exists": True,
+            "factors": factors,
+            "ic_correlation": _factor_ic_correlation(factors),
         }
 
     @app.get("/runs/{run_id}", response_model=RunResponse, dependencies=[Depends(require_auth)])
