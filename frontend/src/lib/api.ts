@@ -613,11 +613,12 @@ export interface RebalanceNotesPayload {
 }
 
 export interface FactorIcStats {
-  ic_mean: number;
-  ic_std: number;
-  ir: number;
-  ic_positive_ratio: number;
-  ic_count: number;
+  ic_mean?: number | null;
+  ic_std?: number | null;
+  ir?: number | null;
+  ic_positive_ratio?: number | null;
+  ic_count?: number | null;
+  [key: string]: unknown;
 }
 
 export interface FactorResult {
@@ -629,6 +630,11 @@ export interface FactorResult {
   n_groups: number;
   long_short_spread: number | null;
   group_final_equity: Record<string, number>;
+  truncated?: {
+    ic_series?: boolean;
+    ic_stats?: boolean;
+    group_equity?: boolean;
+  };
 }
 
 export interface FactorReportPayload {

@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import api_server
+from src.api import runs_routes
 
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
@@ -183,3 +184,163 @@ def test_run_detail_has_factor_artifacts_flag(tmp_path: Path, monkeypatch) -> No
     response_without = client.get("/runs/run_without_factor")
     assert response_without.status_code == 200
     assert response_without.json()["has_factor_artifacts"] is False
+
+
+def test_run_detail_factor_flag_does_not_load_payload_files(tmp_path: Path, monkeypatch) -> None:
+    """The lightweight detail flag must only inspect directory entries."""
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "run_probe_only"
+    _write_factor_bundle(
+        run_dir,
+        "momentum_20d",
+        "date,IC\n2024-01-02,0.02\n",
+        _summary(1),
+        "date,Group_1,Group_2\n2024-01-02,1.0,1.1\n",
+    )
+
+    def fail_payload_read(*_args, **_kwargs):
+        raise AssertionError("run detail existence probe opened factor payload")
+
+    monkeypatch.setattr(runs_routes, "_load_ic_series_csv", fail_payload_read)
+    monkeypatch.setattr(runs_routes, "_load_group_equity_csv", fail_payload_read)
+    monkeypatch.setattr(runs_routes, "_load_factor_summary", fail_payload_read)
+
+    response = client.get("/runs/run_probe_only")
+
+    assert response.status_code == 200
+    assert response.json()["has_factor_artifacts"] is True
+
+
+def test_factor_scan_caps_directory_entries(tmp_path: Path, monkeypatch) -> None:
+    """A hostile wide tree cannot force an unbounded recursive traversal."""
+    run_dir = tmp_path / "run_wide"
+    artifacts_dir = run_dir / "artifacts"
+    for index in range(40):
+        (artifacts_dir / f"branch_{index:03d}").mkdir(parents=True)
+
+    entry_limit = 7
+    monkeypatch.setattr(runs_routes, "_FACTOR_MAX_SCAN_ENTRIES", entry_limit)
+    real_scandir = runs_routes.os.scandir
+    entries_seen = 0
+
+    class GuardedScandir:
+        def __init__(self, path: Path) -> None:
+            self._context = real_scandir(path)
+            self._iterator = None
+
+        def __enter__(self):
+            self._iterator = iter(self._context.__enter__())
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self._context.__exit__(exc_type, exc_value, traceback)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            nonlocal entries_seen
+            assert self._iterator is not None
+            entry = next(self._iterator)
+            entries_seen += 1
+            assert entries_seen <= entry_limit
+            return entry
+
+    monkeypatch.setattr(runs_routes.os, "scandir", GuardedScandir)
+
+    assert runs_routes._has_factor_artifacts(run_dir) is False
+    assert entries_seen == entry_limit
+
+
+def test_factor_scan_caps_nesting_depth(tmp_path: Path, monkeypatch) -> None:
+    """A factor marker below the configured depth is never traversed."""
+    run_dir = tmp_path / "run_deep"
+    directory = run_dir / "artifacts"
+    monkeypatch.setattr(runs_routes, "_FACTOR_MAX_SCAN_DEPTH", 2)
+    for name in ("one", "two", "three"):
+        directory = directory / name
+    directory.mkdir(parents=True)
+    (directory / "ic_series.csv").write_text("date,IC\n2024-01-02,0.1\n", encoding="utf-8")
+
+    assert runs_routes._has_factor_artifacts(run_dir) is False
+
+
+def test_factor_endpoint_removes_non_finite_values(tmp_path: Path, monkeypatch) -> None:
+    """NaN and infinities in every supported artifact never reach JSON."""
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "run_non_finite"
+    bundle = _write_factor_bundle(
+        run_dir,
+        "unsafe_factor",
+        "date,IC\n2024-01-02,NaN\n2024-01-03,Infinity\n2024-01-04,-Infinity\n2024-01-05,0.125\n",
+        None,
+        "date,Group_1,Group_2\n2024-01-02,NaN,1.1\n2024-01-03,0.9,Infinity\n2024-01-04,-Infinity,1.2\n",
+    )
+    (bundle / "ic_summary.json").write_text(
+        '{"ic_mean": NaN, "ic_std": Infinity, "ir": -Infinity, "ic_count": 4, '
+        '"nested": [1.0, NaN, {"value": Infinity}]}',
+        encoding="utf-8",
+    )
+
+    response = client.get("/runs/run_non_finite/factor")
+
+    assert response.status_code == 200
+    assert "NaN" not in response.text
+    assert "Infinity" not in response.text
+    factor = response.json()["factors"][0]
+    assert factor["ic_series"] == [{"date": "2024-01-05", "ic": 0.125}]
+    assert factor["ic_stats"] == {
+        "ic_mean": None,
+        "ic_std": None,
+        "ir": None,
+        "ic_count": 4,
+        "nested": [1.0, None, {"value": None}],
+    }
+    assert factor["group_equity"] == [
+        {"date": "2024-01-02", "Group_2": 1.1},
+        {"date": "2024-01-03", "Group_1": 0.9},
+        {"date": "2024-01-04", "Group_2": 1.2},
+    ]
+    assert factor["long_short_spread"] is None
+    assert factor["group_final_equity"] == {"Group_2": 1.2}
+
+
+def test_factor_endpoint_enforces_row_budgets(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "run_row_budget"
+    _write_factor_bundle(
+        run_dir,
+        "bounded_factor",
+        "date,IC\n2024-01-01,0.1\n2024-01-02,0.2\n2024-01-03,0.3\n",
+        _summary(3),
+        "date,Group_1,Group_2\n2024-01-01,1.0,1.1\n2024-01-02,1.1,1.2\n2024-01-03,1.2,1.3\n",
+    )
+    monkeypatch.setattr(runs_routes, "_FACTOR_MAX_ROWS_PER_CSV", 2)
+    monkeypatch.setattr(runs_routes, "_FACTOR_MAX_TOTAL_ROWS", 3)
+
+    response = client.get("/runs/run_row_budget/factor")
+
+    assert response.status_code == 200
+    factor = response.json()["factors"][0]
+    assert len(factor["ic_series"]) == 2
+    assert len(factor["group_equity"]) == 1
+    assert factor["truncated"] == {"ic_series": True, "group_equity": True}
+
+
+def test_factor_endpoint_rejects_oversized_summary(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "run_large_summary"
+    _write_factor_bundle(
+        run_dir,
+        "large_summary",
+        "date,IC\n2024-01-02,0.1\n",
+        {"padding": "x" * 100},
+    )
+    monkeypatch.setattr(runs_routes, "_FACTOR_MAX_SUMMARY_BYTES", 32)
+
+    response = client.get("/runs/run_large_summary/factor")
+
+    assert response.status_code == 200
+    factor = response.json()["factors"][0]
+    assert "ic_stats" not in factor
+    assert factor["truncated"] == {"ic_stats": True}
