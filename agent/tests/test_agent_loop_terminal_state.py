@@ -45,6 +45,8 @@ class _StubLLMNoFinal:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         return _StubLLMResponse()
@@ -62,6 +64,8 @@ class _StubLLMWithUsage:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         response = _StubLLMResponse()
@@ -85,6 +89,8 @@ class _StubLLMSuccess:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         self.calls += 1
@@ -112,6 +118,8 @@ class _StubLLMCancelMidStream:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         # Set _cancelled on the bound agent so the next loop iteration check
@@ -213,6 +221,8 @@ class _StubLLMCancelWithToolCalls:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         self._agent_ref[0]._cancel_event.set()
@@ -301,6 +311,8 @@ class _StubLLMAlwaysToolCalls:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         resp = _StubLLMResponse()
@@ -328,6 +340,8 @@ class _StubLLMIgnoresForcedTextOnly:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         resp = _StubLLMResponse()
@@ -348,6 +362,8 @@ class _StubLLMStreamFailure:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _StubLLMResponse:
         raise ProviderStreamError(

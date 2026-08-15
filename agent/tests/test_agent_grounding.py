@@ -948,6 +948,8 @@ class _CorrectingLLM:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> _Response:
         response = self.responses.pop(0)
@@ -2210,8 +2212,8 @@ def test_in_text_decimal_survives_list_marker_mask(
 def test_order_level_prices_are_not_observed_quotes(tmp_path: Path) -> None:
     """GTC order limits (100 @ $3.50) are prospective, not observed prices.
 
-    Regression for the RXRX run: the draft "ä¸¤æ¡£ GTC (100 @ $3.50 / 100 @ $4.00)
-    å‡æœªè§¦å‘ (å‘¨é«˜ $3.42 < $3.50)" was rejected with numeric_claim_conflict for
+    Regression for the RXRX run: the draft "两档 GTC (100 @ $3.50 / 100 @ $4.00)
+    均未触发 (周高 $3.42 < $3.50)" was rejected with numeric_claim_conflict for
     100, 3.5 and 4.0 against the observed OHLC range. Order levels are levels,
     like targets/stops, and share counts are quantities - neither is a claim
     about an observed quote.
@@ -2226,7 +2228,7 @@ def test_order_level_prices_are_not_observed_quotes(tmp_path: Path) -> None:
     )
     ledger = GroundingLedger(
         run_dir=tmp_path,
-        user_message="è¯·åˆ†æž RXRX.US å¹¶æ›´æ–°å‘¨æŠ¥",
+        user_message="请分析 RXRX.US 并更新周报",
     )
     ledger.ingest_tool_result(
         tool_name="search_symbol",
@@ -2245,18 +2247,17 @@ def test_order_level_prices_are_not_observed_quotes(tmp_path: Path) -> None:
     )
 
     answer = (
-        "RXRX.USï¼ˆyahooï¼ŒUSDï¼‰æœ¬å‘¨é«˜ $3.42ã€‚è®¢å•: ä¸¤æ¡£ GTC (100 @ $3.50 / 100 @ $4.00) "
-        "å‡æœªè§¦å‘ (å‘¨é«˜ $3.42 < $3.50) â€” ä»·æ ¼æŽ¨æ–­æœªæˆäº¤ã€‚"
+        "RXRX.US（yahoo，USD）本周高 $3.42。订单: 两档 GTC (100 @ $3.50 / 100 @ $4.00) "
+        "均未触发 (周高 $3.42 < $3.50) — 价格推断未成交。"
     )
     result = ledger.validate_final_answer(answer)
     assert result.valid is True, result.issues
 
     # A genuinely fabricated close is still rejected.
     fabricated = ledger.validate_final_answer(
-        "RXRX.USï¼ˆyahooï¼ŒUSDï¼‰æœ¬å‘¨é«˜ $3.42ã€‚å¦: æ”¶ç›˜ 2.50 å·²ç¡®è®¤ã€‚"
+        "RXRX.US（yahoo，USD）本周高 $3.42。另: 收盘 2.50 已确认。"
     )
     assert fabricated.valid is False
     assert any(
         issue["code"] == "numeric_claim_conflict" for issue in fabricated.issues
     )
-

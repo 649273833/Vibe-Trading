@@ -33,6 +33,8 @@ class _ContentFilterLoopLLM:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> LLMResponse:
         self.calls += 1
@@ -63,6 +65,8 @@ class _EmptyResponseLoopLLM:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> LLMResponse:
         self.calls += 1
@@ -202,6 +206,8 @@ def test_single_empty_response_recovers_with_nudge(
             tools: list[Any] | None = None,
             on_text_chunk: Callable[[str], None] | None = None,
             on_reasoning_chunk: Callable[[str], None] | None = None,
+            timeout: int | None = None,
+            idle_timeout_s: float | None = None,
             should_cancel: Callable[[], bool] | None = None,
         ) -> LLMResponse:
             self.calls += 1
@@ -256,6 +262,8 @@ class _RatioFilterLoopLLM:
         tools: list[Any] | None = None,
         on_text_chunk: Callable[[str], None] | None = None,
         on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> LLMResponse:
         self.calls += 1
