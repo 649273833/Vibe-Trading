@@ -45,6 +45,63 @@ function barCategoryAxes(): string[][] {
   );
 }
 
+interface AxisBounds {
+  min?: number;
+  max?: number;
+}
+
+function valueXAxes(): AxisBounds[] {
+  return charts.flatMap((chart) =>
+    chart.setOption.mock.calls
+      .map((call) => {
+        const option = call[0] as { xAxis?: { type?: string; min?: number; max?: number } };
+        return option.xAxis && option.xAxis.type === "value"
+          ? { min: option.xAxis.min, max: option.xAxis.max }
+          : null;
+      })
+      .filter((axis): axis is AxisBounds => axis !== null),
+  );
+}
+
+function valueYAxes(): AxisBounds[] {
+  return charts.flatMap((chart) =>
+    chart.setOption.mock.calls
+      .map((call) => {
+        const option = call[0] as { yAxis?: { type?: string; min?: number; max?: number } };
+        return option.yAxis && option.yAxis.type === "value"
+          ? { min: option.yAxis.min, max: option.yAxis.max }
+          : null;
+      })
+      .filter((axis): axis is AxisBounds => axis !== null),
+  );
+}
+
+function pieSliceNames(): string[] {
+  return charts.flatMap((chart) =>
+    chart.setOption.mock.calls.flatMap((call) => {
+      const option = call[0] as {
+        series?: Array<{ type?: string; data?: Array<{ name: string }> }>;
+      };
+      return (option.series ?? [])
+        .filter((s) => s.type === "pie")
+        .flatMap((s) => (s.data ?? []).map((d) => d.name));
+    }),
+  );
+}
+
+function evolutionSeriesNames(): string[] {
+  return charts.flatMap((chart) =>
+    chart.setOption.mock.calls.flatMap((call) => {
+      const option = call[0] as {
+        series?: Array<{ type?: string; name?: string; stack?: string }>;
+      };
+      return (option.series ?? [])
+        .filter((s) => s.type === "line" && s.stack === "weights")
+        .map((s) => s.name ?? "");
+    }),
+  );
+}
+
 function sectorMapResponse(body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -181,5 +238,92 @@ describe("PositionsTab", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
     expect(fetchMock.mock.calls[1][0]).toBe("/runs/run-test/positions/sectors?refresh=1");
+  });
+
+  const marketNeutralRows = [
+    { timestamp: "2024-05-01", "600519.SH": "0.5", "000858.SZ": "-0.5" },
+    { timestamp: "2024-05-02", "600519.SH": "0.5", "000858.SZ": "-0.5" },
+  ];
+
+  it("renders a market-neutral book instead of the empty state", () => {
+    render(<PositionsTab run={makeRun(marketNeutralRows)} />);
+
+    expect(
+      screen.queryByText("No position weights recorded for this run."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("2 holdings")).toBeInTheDocument();
+    expect(seriesTypes()).toContain("pie");
+  });
+
+  it("does not fabricate a cash slice for a market-neutral book", () => {
+    render(<PositionsTab run={makeRun(marketNeutralRows)} />);
+
+    const names = pieSliceNames();
+    expect(names).toContain("600519.SH");
+    expect(names).toContain("000858.SZ Short");
+    expect(names).not.toContain("Cash");
+  });
+
+  it("keeps a gross-basis cash slice for a short-only book", () => {
+    const shortOnlyRows = [
+      { timestamp: "2024-06-01", "000858.SZ": "-0.4" },
+      { timestamp: "2024-06-03", "000858.SZ": "-0.4" },
+    ];
+    render(<PositionsTab run={makeRun(shortOnlyRows)} />);
+
+    const names = pieSliceNames();
+    expect(names).toContain("000858.SZ Short");
+    expect(names).toContain("Cash");
+  });
+
+  it("uses a symmetric sector axis when the book is net short", () => {
+    const netShortRows = [
+      { timestamp: "2024-07-01", "600519.SH": "0.3", "000858.SZ": "-0.5" },
+      { timestamp: "2024-07-02", "600519.SH": "0.3", "000858.SZ": "-0.5" },
+    ];
+    render(<PositionsTab run={makeRun(netShortRows)} />);
+
+    const axes = valueXAxes();
+    expect(axes.length).toBeGreaterThan(0);
+    for (const axis of axes) {
+      expect(axis.min).toBeLessThan(0);
+      expect(axis.max).toBeGreaterThan(0);
+      expect(axis.min).toBe(-(axis.max as number));
+    }
+  });
+
+  it("keeps a zero-based sector axis for long-only books", () => {
+    render(<PositionsTab run={makeRun(multiSymbolRows)} />);
+
+    const axes = valueXAxes();
+    expect(axes.length).toBeGreaterThan(0);
+    for (const axis of axes) {
+      expect(axis.min).toBe(0);
+      expect(axis.max).toBeGreaterThan(0);
+    }
+  });
+
+  it("ranks persistent shorts into the evolution top set and splits the remainder", () => {
+    const weights: Record<string, string> = { "000001.SZ": "-0.4" };
+    for (let i = 0; i < 10; i += 1) weights[`L${i}.US`] = "0.02";
+    weights["000002.SZ"] = "-0.01";
+    const rows = [
+      { timestamp: "2024-01-01", ...weights },
+      { timestamp: "2024-01-02", ...weights },
+    ];
+    render(<PositionsTab run={makeRun(rows)} />);
+
+    const names = evolutionSeriesNames();
+    expect(names).toContain("000001.SZ");
+    expect(names).toContain("Other (long)");
+    expect(names).toContain("Other (short)");
+    expect(names).not.toContain("Other");
+
+    const axes = valueYAxes();
+    expect(axes.length).toBeGreaterThan(0);
+    for (const axis of axes) {
+      expect(axis.min).toBeLessThan(0);
+      expect(axis.max).toBeGreaterThan(0);
+    }
   });
 });

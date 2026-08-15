@@ -40,6 +40,32 @@ function formatPercent(value: number, digits = 1): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
+function niceAxisCeil(value: number): number {
+  if (value <= 0) return 0.01;
+  const base = 10 ** Math.floor(Math.log10(value));
+  for (const multiplier of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) {
+    if (multiplier * base >= value) return multiplier * base;
+  }
+  return 10 * base;
+}
+
+/**
+ * Signed axis range: `[0, nice(max)]` when every value is non-negative,
+ * otherwise a symmetric `[-nice, +nice]` so short exposure is never clipped
+ * by a hard-coded `[0, 1]` window.
+ */
+function signedAxisBounds(values: Iterable<number>): { min: number; max: number } {
+  let lo = 0;
+  let hi = 0;
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    if (value < lo) lo = value;
+    if (value > hi) hi = value;
+  }
+  const bound = niceAxisCeil(Math.max(Math.abs(lo), hi));
+  return lo < 0 ? { min: -bound, max: bound } : { min: 0, max: bound };
+}
+
 function categoryColors(t: ReturnType<typeof getChartTheme>): string[] {
   return [
     t.infoColor, t.warningColor, "#8b5cf6", "#14b8a6", t.upColor, "#f97316",
@@ -102,6 +128,8 @@ export function PositionsTab({ run }: { run: RunData }) {
   const assetClassLabel = (assetClass: AssetClass) => t(ASSET_CLASS_LABEL_KEYS[assetClass]);
   const cashLabel = t("runDetail.positions.cash");
   const restLabel = t("runDetail.positions.rest");
+  const restLongLabel = t("runDetail.positions.restLong");
+  const restShortLabel = t("runDetail.positions.restShort");
   const shortLabel = t("runDetail.positions.short");
 
   const distributionItems = useMemo<DistributionItem[]>(() => {
@@ -136,14 +164,18 @@ export function PositionsTab({ run }: { run: RunData }) {
 
   const evolution = useMemo(() => {
     const dates = downsampleDates(panel.dates, MAX_EVOLUTION_DATES);
-    const averageWeight = new Map<string, number>();
+    // Rank by average ABSOLUTE exposure: ranking by the signed average
+    // pushes persistent shorts to the bottom and hides them in the remainder.
+    const averageAbsWeight = new Map<string, number>();
     for (const symbol of panel.symbols) {
       let sum = 0;
-      for (const date of panel.dates) sum += panel.weightByDate.get(date)?.[symbol] ?? 0;
-      averageWeight.set(symbol, panel.dates.length > 0 ? sum / panel.dates.length : 0);
+      for (const date of panel.dates) {
+        sum += Math.abs(panel.weightByDate.get(date)?.[symbol] ?? 0);
+      }
+      averageAbsWeight.set(symbol, panel.dates.length > 0 ? sum / panel.dates.length : 0);
     }
     const ranked = [...panel.symbols].sort(
-      (a, b) => (averageWeight.get(b) ?? 0) - (averageWeight.get(a) ?? 0),
+      (a, b) => (averageAbsWeight.get(b) ?? 0) - (averageAbsWeight.get(a) ?? 0),
     );
     const top = ranked.slice(0, MAX_LEGEND_SYMBOLS);
     const rest = new Set(ranked.slice(MAX_LEGEND_SYMBOLS));
@@ -153,18 +185,31 @@ export function PositionsTab({ run }: { run: RunData }) {
       data: dates.map((date) => panel.weightByDate.get(date)?.[symbol] ?? 0),
     }));
     if (rest.size > 0) {
-      series.push({
-        name: restLabel,
-        data: dates.map((date) => {
-          const weights = panel.weightByDate.get(date);
-          let sum = 0;
-          for (const symbol of rest) sum += weights?.[symbol] ?? 0;
-          return sum;
-        }),
+      // Separate long/short remainder series: one signed aggregate would let
+      // omitted longs and shorts cancel each other out.
+      const restLong = dates.map((date) => {
+        const weights = panel.weightByDate.get(date);
+        let sum = 0;
+        for (const symbol of rest) {
+          const weight = weights?.[symbol] ?? 0;
+          if (weight > 0) sum += weight;
+        }
+        return sum;
       });
+      const restShort = dates.map((date) => {
+        const weights = panel.weightByDate.get(date);
+        let sum = 0;
+        for (const symbol of rest) {
+          const weight = weights?.[symbol] ?? 0;
+          if (weight < 0) sum += weight;
+        }
+        return sum;
+      });
+      if (restLong.some((value) => value !== 0)) series.push({ name: restLongLabel, data: restLong });
+      if (restShort.some((value) => value !== 0)) series.push({ name: restShortLabel, data: restShort });
     }
     return { dates, series };
-  }, [panel, restLabel]);
+  }, [panel, restLongLabel, restShortLabel]);
 
   async function handleResolve(refresh: boolean) {
     if (!run.run_id || resolving) return;
@@ -258,25 +303,47 @@ export function PositionsTab({ run }: { run: RunData }) {
       </PositionsPanelCard>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <PositionsPanelCard title={t("runDetail.positions.weightDistribution")}>
+        <PositionsPanelCard
+          title={t("runDetail.positions.weightDistribution")}
+          subtitle={t("runDetail.positions.basisGross")}
+        >
           <WeightDistributionChart items={distributionItems} mode={mode} cashLabel={cashLabel} shortLabel={shortLabel} />
         </PositionsPanelCard>
-        <PositionsPanelCard title={t("runDetail.positions.sectorDistribution")}>
+        <PositionsPanelCard
+          title={t("runDetail.positions.sectorDistribution")}
+          subtitle={t("runDetail.positions.basisNet")}
+        >
           <SectorDistributionChart items={sectorItems} cashLabel={cashLabel} />
         </PositionsPanelCard>
       </div>
 
-      <PositionsPanelCard title={t("runDetail.positions.weightEvolution")}>
+      <PositionsPanelCard
+        title={t("runDetail.positions.weightEvolution")}
+        subtitle={t("runDetail.positions.basisNet")}
+      >
         <WeightEvolutionChart dates={evolution.dates} series={evolution.series} />
       </PositionsPanelCard>
     </div>
   );
 }
 
-function PositionsPanelCard({ title, children }: { title?: string; children: ReactNode }) {
+function PositionsPanelCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title?: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
   return (
     <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
-      {title && <h3 className="mb-3 text-sm font-semibold">{title}</h3>}
+      {(title || subtitle) && (
+        <header className="mb-3">
+          {title && <h3 className="text-sm font-semibold">{title}</h3>}
+          {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
+        </header>
+      )}
       {children}
     </section>
   );
@@ -418,6 +485,7 @@ function SectorDistributionChart({ items, cashLabel }: { items: GroupedItem[]; c
           : palette[index % palette.length],
       },
     })).reverse();
+    const { min, max } = signedAxisBounds(ordered.map((item) => item.weight));
 
     return {
       backgroundColor: "transparent",
@@ -437,8 +505,8 @@ function SectorDistributionChart({ items, cashLabel }: { items: GroupedItem[]; c
       grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
       xAxis: {
         type: "value",
-        min: 0,
-        max: 1,
+        min,
+        max,
         axisLabel: {
           color: t.textColor,
           fontSize: 10,
@@ -478,6 +546,20 @@ function WeightEvolutionChart({ dates, series }: { dates: string[]; series: Evol
   useChartLifecycle(ref, () => {
     const t = getChartTheme();
     const palette = categoryColors(t);
+    // ECharts stacks positives above zero and negatives below; bound the axis
+    // by the per-date cumulative stack so neither side is clipped.
+    const stackExtremes: number[] = [];
+    for (let i = 0; i < dates.length; i += 1) {
+      let positive = 0;
+      let negative = 0;
+      for (const s of series) {
+        const value = s.data[i] ?? 0;
+        if (value > 0) positive += value;
+        else negative += value;
+      }
+      stackExtremes.push(positive, negative);
+    }
+    const { min, max } = signedAxisBounds(stackExtremes);
     return {
       backgroundColor: "transparent",
       tooltip: {
@@ -513,8 +595,8 @@ function WeightEvolutionChart({ dates, series }: { dates: string[]; series: Evol
       },
       yAxis: {
         type: "value",
-        min: 0,
-        max: 1,
+        min,
+        max,
         axisLabel: {
           color: t.textColor,
           fontSize: 10,

@@ -706,6 +706,10 @@ export interface SectorMapResponse {
   cached?: boolean;
   symbols: Record<string, SectorInfo>;
   unresolved?: string[];
+  /** Total symbol columns in positions.csv (may exceed `symbol_limit`). */
+  total_symbols?: number;
+  /** Max symbols that receive a network industry lookup per resolve. */
+  symbol_limit?: number;
   /** Present when the run has no positions artifact. */
   note?: string;
 }

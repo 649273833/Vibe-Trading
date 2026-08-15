@@ -84,13 +84,22 @@ export function parsePositionsPanel(rows: Array<Record<string, string>>): Positi
   return { dates, symbols, weightByDate };
 }
 
+/**
+ * Last date that holds any position. Presence is decided by finite GROSS
+ * exposure (`sum(|weight|)`), never the signed sum: a market-neutral book
+ * (+50% / -50%) nets to zero while fully invested, so a signed test would
+ * render the whole tab as empty.
+ */
 export function latestHoldingDate(panel: PositionsPanel): string | null {
   let latest: string | null = null;
   for (const date of panel.dates) {
     const weights = panel.weightByDate.get(date);
     if (!weights) continue;
-    const sum = Object.values(weights).reduce((acc, w) => acc + w, 0);
-    if (sum > 0.001) latest = date;
+    const gross = Object.values(weights).reduce(
+      (acc, w) => acc + Math.abs(Number.isFinite(w) ? w : 0),
+      0,
+    );
+    if (gross > 0.001) latest = date;
   }
   return latest;
 }
@@ -158,12 +167,23 @@ export function aggregateWeights(
 }
 
 /**
- * Adds a `__cash__` pseudo-symbol for the uninvested remainder
- * (1 - sum(weights)) when it exceeds 0.5% of the portfolio.
+ * Adds a `__cash__` pseudo-symbol for the uncommitted remainder on the same
+ * GROSS basis the pie slices use (`|weight|`): `cash = 1 - sum(|weight|)`,
+ * added only when it exceeds 0.5% of NAV.
+ *
+ * The artifact contract is `weight = direction × margin_value / equity`
+ * (engine normalises `sum(|weight|) <= 1`), so the signed sum is NOT a valid
+ * cash basis: a +50% / -50% market-neutral book would otherwise show 100%
+ * gross positions plus 100% invented cash. When the book is fully committed
+ * or levered (`sum(|weight|) >= 1`) no residual exists and the slice is
+ * omitted rather than fabricated.
  */
 export function withCashSlice(weights: Record<string, number>): Record<string, number> {
-  const sum = Object.values(weights).reduce((acc, w) => acc + (Number.isFinite(w) ? w : 0), 0);
-  const cash = 1 - sum;
+  const gross = Object.values(weights).reduce(
+    (acc, w) => acc + Math.abs(Number.isFinite(w) ? w : 0),
+    0,
+  );
+  const cash = 1 - gross;
   if (cash <= 0.005) return { ...weights };
   return { ...weights, [CASH_SYMBOL]: cash };
 }

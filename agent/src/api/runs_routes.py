@@ -11,11 +11,13 @@ import math
 import os
 import statistics
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Deque, Dict, Generator, List, Optional, Tuple
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 
@@ -460,6 +462,15 @@ def _factor_ic_correlation(factors: List[Dict[str, Any]]) -> Optional[Dict[str, 
     return {"labels": [str(factor["name"]) for factor in factors], "matrix": matrix}
 
 
+# Bounded contract for /runs/{run_id}/positions/sectors: at most
+# _POSITIONS_SECTOR_MAX_SYMBOLS symbols get a network industry lookup (excess
+# symbols degrade to asset-class-only grouping), lookups run on at most
+# _POSITIONS_SECTOR_WORKERS threads, and each HTTP call carries the shared
+# Eastmoney client's 15-second socket timeout.
+_POSITIONS_SECTOR_MAX_SYMBOLS = 200
+_POSITIONS_SECTOR_WORKERS = 4
+
+
 def _read_positions_symbols(path: Path) -> List[str]:
     """Read the symbol column names from a wide-format ``positions.csv``.
 
@@ -483,12 +494,43 @@ def _read_positions_symbols(path: Path) -> List[str]:
     return [name.strip() for name in fieldnames[1:] if name and name.strip()]
 
 
+def _resolve_industries_concurrent(symbols: List[str]) -> Dict[str, Optional[str]]:
+    """Resolve A-share industry boards with bounded concurrency.
+
+    Args:
+        symbols: A-share symbols to resolve (already capped by the caller).
+
+    Returns:
+        Mapping of symbol -> industry board name, or ``None`` when the lookup
+        failed or found no board row. Never raises.
+    """
+    from src.tools.sector_tool import resolve_industry_board
+
+    results: Dict[str, Optional[str]] = {}
+    with ThreadPoolExecutor(max_workers=_POSITIONS_SECTOR_WORKERS) as pool:
+        futures = {pool.submit(resolve_industry_board, symbol): symbol for symbol in symbols}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                results[symbol] = future.result()
+            except Exception:  # noqa: BLE001 - one failure must not abort the batch
+                results[symbol] = None
+    return results
+
+
 def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) -> Dict[str, Any]:
     """Resolve asset class + A-share industry for a run's position symbols.
 
     Serves from the ``artifacts/sector_map.json`` cache when a valid cache
     exists and ``refresh`` is false; otherwise recomputes and rewrites the
     cache. A corrupt cache file is treated as a cache miss.
+
+    Blocking work here (file reads plus throttled Eastmoney HTTP) is bounded
+    by the module-level contract: at most ``_POSITIONS_SECTOR_MAX_SYMBOLS``
+    network lookups, ``_POSITIONS_SECTOR_WORKERS`` concurrent workers, and the
+    shared Eastmoney client's 15-second per-request socket timeout. Symbols
+    beyond the cap keep their asset class but skip industry resolution. The
+    caller must run this off the event loop (see ``run_in_threadpool``).
 
     Args:
         run_dir: Persisted run directory containing ``artifacts/``.
@@ -497,11 +539,10 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
 
     Returns:
         The envelope ``{"ok", "run_id", "resolved_at", "cached", "symbols",
-        "unresolved"}``, or the ``{"ok", "run_id", "symbols", "note"}`` form
-        when no positions artifact exists.
+        "unresolved", "total_symbols", "symbol_limit"}``, or the ``{"ok",
+        "run_id", "symbols", "note"}`` form when no positions artifact exists.
     """
     from backtest.engines._market_hooks import _detect_market
-    from src.tools.sector_tool import resolve_industry_board
 
     cache_path = run_dir / "artifacts" / "sector_map.json"
     if not refresh:
@@ -516,22 +557,28 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
         return {"ok": True, "run_id": run_id, "symbols": {}, "note": "no positions artifact"}
 
     resolved: Dict[str, Any] = {}
-    unresolved: List[str] = []
-    for symbol in symbols:
+    a_share_to_resolve: List[str] = []
+    for index, symbol in enumerate(symbols):
         asset_class = _detect_market(symbol)
-        industry = None
-        if asset_class == "a_share":
-            try:
-                industry = resolve_industry_board(symbol)
-            except Exception:  # noqa: BLE001 - one failure must not abort the batch
-                industry = None
         resolved[symbol] = {
             "asset_class": asset_class,
-            "industry": industry,
-            "industry_source": "eastmoney" if industry is not None else None,
+            "industry": None,
+            "industry_source": None,
         }
-        if asset_class == "a_share" and industry is None:
-            unresolved.append(symbol)
+        if asset_class == "a_share" and index < _POSITIONS_SECTOR_MAX_SYMBOLS:
+            a_share_to_resolve.append(symbol)
+
+    if a_share_to_resolve:
+        for symbol, industry in _resolve_industries_concurrent(a_share_to_resolve).items():
+            if industry is not None:
+                resolved[symbol]["industry"] = industry
+                resolved[symbol]["industry_source"] = "eastmoney"
+
+    unresolved = [
+        symbol
+        for symbol in symbols
+        if resolved[symbol]["asset_class"] == "a_share" and resolved[symbol]["industry"] is None
+    ]
 
     payload: Dict[str, Any] = {
         "ok": True,
@@ -540,6 +587,8 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
         "cached": False,
         "symbols": resolved,
         "unresolved": unresolved,
+        "total_symbols": len(symbols),
+        "symbol_limit": _POSITIONS_SECTOR_MAX_SYMBOLS,
     }
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -895,7 +944,11 @@ def register_runs_routes(
         """Resolve asset class + A-share industry for a run's position symbols.
 
         Read-only classification over ``artifacts/positions.csv``, cached in
-        ``artifacts/sector_map.json``.
+        ``artifacts/sector_map.json``. The blocking classification (file reads
+        plus throttled Eastmoney lookups) runs in the FastAPI threadpool so it
+        never stalls the event loop, and is bounded by
+        ``_POSITIONS_SECTOR_MAX_SYMBOLS`` / ``_POSITIONS_SECTOR_WORKERS`` /
+        the shared client's 15-second per-request timeout.
 
         Args:
             run_id: Run identifier.
@@ -916,7 +969,9 @@ def register_runs_routes(
                 detail=f"Run {run_id} not found"
             )
 
-        return _build_positions_sector_map(run_dir, run_id, refresh=bool(refresh))
+        return await run_in_threadpool(
+            _build_positions_sector_map, run_dir, run_id, refresh=bool(refresh)
+        )
 
     @app.get("/runs", response_model=List[RunInfo], dependencies=[Depends(require_auth)])
     async def list_runs(limit: int = 20):

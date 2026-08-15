@@ -81,6 +81,22 @@ describe("latestHoldingDate", () => {
     const panel = panelFrom([{ timestamp: "2024-01-01", "AAPL.US": "0.0005" }]);
     expect(latestHoldingDate(panel)).toBeNull();
   });
+
+  it("detects a market-neutral book whose signed sum is zero", () => {
+    const panel = panelFrom([
+      { timestamp: "2024-01-01", "600519.SH": "0.5", "000858.SZ": "-0.5" },
+      { timestamp: "2024-01-02", "600519.SH": "0.0", "000858.SZ": "0.0" },
+    ]);
+    expect(latestHoldingDate(panel)).toBe("2024-01-01");
+  });
+
+  it("detects a short-only book", () => {
+    const panel = panelFrom([
+      { timestamp: "2024-01-01", "000858.SZ": "-0.4" },
+      { timestamp: "2024-01-02", "000858.SZ": "0.0" },
+    ]);
+    expect(latestHoldingDate(panel)).toBe("2024-01-01");
+  });
 });
 
 describe("classifyAssetClass parity with backend rules", () => {
@@ -196,6 +212,26 @@ describe("withCashSlice", () => {
     const input = { A: 0.5 };
     withCashSlice(input);
     expect(input).toEqual({ A: 0.5 });
+  });
+
+  it("adds no invented cash for a market-neutral book", () => {
+    const result = withCashSlice({ "600519.SH": 0.5, "000858.SZ": -0.5 });
+    expect(CASH_SYMBOL in result).toBe(false);
+  });
+
+  it("derives cash from gross exposure for a short-only book", () => {
+    const result = withCashSlice({ "000858.SZ": -0.4 });
+    expect(result[CASH_SYMBOL]).toBeCloseTo(0.6, 10);
+  });
+
+  it("derives cash from gross exposure for a mixed long-short book", () => {
+    const result = withCashSlice({ "600519.SH": 0.4, "000858.SZ": -0.2 });
+    expect(result[CASH_SYMBOL]).toBeCloseTo(0.4, 10);
+  });
+
+  it("omits cash when the book is levered (gross above 1)", () => {
+    const result = withCashSlice({ "600519.SH": 0.8, "000858.SZ": -0.5 });
+    expect(CASH_SYMBOL in result).toBe(false);
   });
 });
 
