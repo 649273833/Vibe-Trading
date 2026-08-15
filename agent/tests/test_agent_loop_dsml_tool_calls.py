@@ -157,7 +157,7 @@ def test_agent_loop_never_releases_tool_call_syntax_as_a_final_answer(
     monkeypatch.setattr(
         "src.agent.loop.HeartbeatTimer", _ImmediateHeartbeatTimer
     )
-    # The fullwidth-vbar form is what the real failure looked like; the
+    # The fullwidth-vbar (U+FF5C) form is what the real failure looked like; the
     # streaming DSML parser does not recognize it, so it arrives as text.
     garbage = "<││DSML││tool_calls><││invoke name=\"trading_quote\">"
     registry = ToolRegistry()

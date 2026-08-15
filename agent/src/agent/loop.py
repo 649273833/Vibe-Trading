@@ -583,7 +583,7 @@ _FORCED_TEXT_TOOL_CALL_RE = re.compile(
     re.IGNORECASE,
 )
 _DSML_BAR_TOOL_CALL_RE = re.compile(
-    r"<\s*[|│]{2}\s*(?:dsml|tool_calls|invoke)\b",
+    r"<\s*[|\u2502\uFF5C]{2}\s*(?:dsml|tool_calls|invoke)\b",
     re.IGNORECASE,
 )
 
@@ -1001,6 +1001,12 @@ class AgentLoop:
                     )
                     if pending_directive:
                         wrap_content += "\n\n" + pending_directive
+                        trace.write(
+                            {
+                                "type": "pending_write_directive",
+                                "iter": current_iter,
+                            }
+                        )
                     messages.append({"role": "user", "content": wrap_content})
 
                 # Safety net: on the second-to-last iteration tools are still
@@ -1013,6 +1019,12 @@ class AgentLoop:
                         user_message, run_started_wall
                     )
                     if pending_directive:
+                        trace.write(
+                            {
+                                "type": "pending_write_directive",
+                                "iter": current_iter,
+                            }
+                        )
                         messages.append({"role": "system", "content": pending_directive})
 
                 # Streaming output + collect thinking text
@@ -1495,6 +1507,16 @@ class AgentLoop:
                     f"{self._grounding.validation_count if self._grounding else 0} "
                     "rejected drafts could not be corrected within the iteration budget"
                 )
+            elif not self._released_fallback:
+                pending_directive = self._pending_write_directive(
+                    user_message, run_started_wall
+                )
+                if pending_directive:
+                    final_reason = (
+                        "run ended without writing the task target file(s): "
+                        + pending_directive
+                    )
+                    self._released_fallback = True
         elif empty_model_response_iter is not None:
             provider = self._llm_runtime.provider
             model = self._llm_runtime.configured_model or "(unset)"
