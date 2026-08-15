@@ -1,0 +1,22 @@
+{
+  "evidence": [],
+  "identity": {
+    "authorized_symbols": [],
+    "records": [],
+    "recovery": {
+      "max_price_evidence_attempts": 3,
+      "max_rounds": 6,
+      "max_symbol_resolution_attempts": 2,
+      "price_evidence_attempts": 0,
+      "rounds": 0,
+      "symbol_resolution_attempts": 0
+    },
+    "status": "not_required"
+  },
+  "schema_version": 1,
+  "session_symbol_roots": [],
+  "session_symbols": [],
+  "tool_failures": [],
+  "updated_at": "2026-08-15T18:15:36.590075Z",
+  "validations": []
+}

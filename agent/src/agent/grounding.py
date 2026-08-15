@@ -1358,6 +1358,29 @@ class GroundingLedger:
                 f"The verified observed OHLC range is: {joined}. "
                 "I will not invent an entry price without a visible derivation or refreshed evidence."
             )
+        # No observed price evidence: distinguish "identity unresolved" from
+        # "the draft cited prices this session never observed". Reporting the
+        # identity message for the latter is misleading (the run may not even
+        # have touched the market tools).
+        issue_codes = {
+            code
+            for validation in self._validations
+            for code in (issue.get("code") for issue in validation.get("issues", []))
+        }
+        if issue_codes & {
+            "numeric_claim_unavailable", "numeric_claim_conflict", "unsourced_symbol_figures"
+        }:
+            if is_zh:
+                return (
+                    "我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的价格数字,无法核验。"
+                    "请重新发起任务,让模型先调用行情工具获取数据,或要求它去掉这些价格引用后重试。"
+                )
+            return (
+                "My previous answer was rejected by the verification gate: it cited price "
+                "figures that this session never obtained through a tool, so they could not "
+                "be verified. Re-run the task and let the agent fetch the market data first, "
+                "or ask it to answer without the unverified prices."
+            )
         if is_zh:
             return (
                 "当前无法安全确认标的身份或价格证据，因此没有生成交易结论。"
