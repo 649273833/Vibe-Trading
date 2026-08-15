@@ -10,6 +10,7 @@ import json
 import math
 import os
 import statistics
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -464,11 +465,35 @@ def _factor_ic_correlation(factors: List[Dict[str, Any]]) -> Optional[Dict[str, 
 
 # Bounded contract for /runs/{run_id}/positions/sectors: at most
 # _POSITIONS_SECTOR_MAX_SYMBOLS symbols get a network industry lookup (excess
-# symbols degrade to asset-class-only grouping), lookups run on at most
-# _POSITIONS_SECTOR_WORKERS threads, and each HTTP call carries the shared
-# Eastmoney client's 15-second socket timeout.
+# symbols degrade to asset-class-only grouping), lookups run on ONE shared
+# module-level executor with _POSITIONS_SECTOR_WORKERS threads (created lazily
+# on first use and never shut down — process-lifetime — so concurrent requests
+# share a single bounded pool instead of spawning one per request), and each
+# HTTP call carries the shared Eastmoney client's 15-second socket timeout.
 _POSITIONS_SECTOR_MAX_SYMBOLS = 200
 _POSITIONS_SECTOR_WORKERS = 4
+_POSITIONS_SECTOR_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_POSITIONS_SECTOR_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_positions_sector_executor() -> ThreadPoolExecutor:
+    """Return the shared, process-lifetime industry-lookup executor.
+
+    Created lazily on first use with ``_POSITIONS_SECTOR_WORKERS`` workers and
+    never shut down, so every request fans out onto the same bounded pool.
+
+    Returns:
+        The shared executor instance.
+    """
+    global _POSITIONS_SECTOR_EXECUTOR
+    if _POSITIONS_SECTOR_EXECUTOR is None:
+        with _POSITIONS_SECTOR_EXECUTOR_LOCK:
+            if _POSITIONS_SECTOR_EXECUTOR is None:
+                _POSITIONS_SECTOR_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=_POSITIONS_SECTOR_WORKERS,
+                    thread_name_prefix="positions-sector",
+                )
+    return _POSITIONS_SECTOR_EXECUTOR
 
 
 def _read_positions_symbols(path: Path) -> List[str]:
@@ -507,14 +532,14 @@ def _resolve_industries_concurrent(symbols: List[str]) -> Dict[str, Optional[str
     from src.tools.sector_tool import resolve_industry_board
 
     results: Dict[str, Optional[str]] = {}
-    with ThreadPoolExecutor(max_workers=_POSITIONS_SECTOR_WORKERS) as pool:
-        futures = {pool.submit(resolve_industry_board, symbol): symbol for symbol in symbols}
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                results[symbol] = future.result()
-            except Exception:  # noqa: BLE001 - one failure must not abort the batch
-                results[symbol] = None
+    pool = _get_positions_sector_executor()
+    futures = {pool.submit(resolve_industry_board, symbol): symbol for symbol in symbols}
+    for future in as_completed(futures):
+        symbol = futures[future]
+        try:
+            results[symbol] = future.result()
+        except Exception:  # noqa: BLE001 - one failure must not abort the batch
+            results[symbol] = None
     return results
 
 
@@ -543,6 +568,16 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
         "run_id", "symbols", "note"}`` form when no positions artifact exists.
     """
     from backtest.engines._market_hooks import _detect_market
+
+    artifacts_dir = run_dir / "artifacts"
+    try:
+        artifacts_symlinked = artifacts_dir.is_symlink()
+    except OSError:
+        artifacts_symlinked = False
+    if artifacts_symlinked:
+        # Mirror the factor scan's symlink rejection: a symlinked artifacts dir
+        # is treated as having no positions artifact rather than followed.
+        return {"ok": True, "run_id": run_id, "symbols": {}, "note": "no positions artifact"}
 
     cache_path = run_dir / "artifacts" / "sector_map.json"
     if not refresh:
@@ -884,7 +919,7 @@ def register_runs_routes(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Run {run_id} not found"
             )
-        factors = _scan_factor_results(run_dir)
+        factors = await run_in_threadpool(_scan_factor_results, run_dir)
         if not factors:
             return {"exists": False, "factors": [], "ic_correlation": None}
         return {

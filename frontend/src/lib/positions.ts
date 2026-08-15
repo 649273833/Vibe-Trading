@@ -25,6 +25,15 @@ export const CASH_SYMBOL = "__cash__";
 
 const DATE_COLUMNS = new Set(["timestamp", "date", "time"]);
 
+/**
+ * True when a positions.csv column key is a date/time column rather than a
+ * symbol weight column. Shared by the parser and the RunDetail `hasPositions`
+ * gate so both treat timestamp/date/time identically.
+ */
+export function isDateColumn(key: string): boolean {
+  return DATE_COLUMNS.has(key.toLowerCase());
+}
+
 const EQUITY_SUFFIX_MAP: Record<string, AssetClass> = {
   SH: "a_share",
   SZ: "a_share",
@@ -62,7 +71,7 @@ export function parsePositionsPanel(rows: Array<Record<string, string>>): Positi
   for (const row of rows) {
     let date = "";
     for (const [key, value] of Object.entries(row)) {
-      if (DATE_COLUMNS.has(key.toLowerCase())) {
+      if (isDateColumn(key)) {
         date = value ?? "";
         break;
       }
@@ -71,7 +80,7 @@ export function parsePositionsPanel(rows: Array<Record<string, string>>): Positi
     if (!weightByDate.has(date)) dates.push(date);
     const weights: Record<string, number> = weightByDate.get(date) ?? {};
     for (const [key, raw] of Object.entries(row)) {
-      if (DATE_COLUMNS.has(key.toLowerCase())) continue;
+      if (isDateColumn(key)) continue;
       if (!seenSymbols.has(key)) {
         seenSymbols.add(key);
         symbols.push(key);

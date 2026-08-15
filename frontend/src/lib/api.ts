@@ -147,6 +147,7 @@ export const api = {
   },
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
   getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${id}/factor`),
+  getRunAttribution: (id: string) => request<AttributionResponse>(`/runs/${encodeURIComponent(id)}/attribution`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
@@ -641,6 +642,70 @@ export interface FactorReportPayload {
   exists: boolean;
   factors: FactorResult[];
   ic_correlation: { labels: string[]; matrix: number[][] } | null;
+}
+
+// --- Attribution types (GET /runs/{runId}/attribution) ---
+
+export interface AttributionBenchmarkInfo {
+  ticker: string | null;
+  mode: "auto_equal_weight" | "explicit";
+}
+
+export interface AttributionRollingPoint {
+  date: string;
+  beta: number;
+  alpha_annualized: number;
+}
+
+export interface AttributionCumulativePoint {
+  date: string;
+  portfolio: number;
+  benchmark: number;
+  /** Portfolio-minus-benchmark cumulative return; plotted as the active line. */
+  active: number;
+}
+
+export interface AttributionFactor {
+  beta: number;
+  alpha_per_period: number;
+  alpha_annualized: number;
+  alpha_t_stat: number;
+  r_squared: number;
+  n_obs: number;
+  rolling_window: number;
+  rolling: AttributionRollingPoint[] | null;
+  cumulative: AttributionCumulativePoint[];
+}
+
+export interface AttributionSectorEntry {
+  sector: string;
+  portfolio_weight: number;
+  benchmark_weight: number;
+  portfolio_return: number;
+  benchmark_return: number;
+  allocation: number;
+  selection: number;
+  interaction: number;
+  total: number;
+}
+
+export interface AttributionBrinson {
+  mode: "symbol" | "asset_class" | "invested_cash";
+  portfolio_return: number;
+  benchmark_return: number;
+  active_return: number;
+  allocation: number;
+  selection: number;
+  interaction: number;
+  sectors: AttributionSectorEntry[];
+}
+
+export interface AttributionResponse {
+  exists: boolean;
+  benchmark: AttributionBenchmarkInfo | null;
+  factor: AttributionFactor | null;
+  brinson: AttributionBrinson | null;
+  notes: string[];
 }
 
 export interface RunData {

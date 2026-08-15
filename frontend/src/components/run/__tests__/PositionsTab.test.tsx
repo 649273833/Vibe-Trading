@@ -180,6 +180,19 @@ describe("PositionsTab", () => {
     expect(screen.queryByText("Resolve industries")).not.toBeInTheDocument();
   });
 
+  it("shows the resolve button for a symbol the frontend classifier cannot place", () => {
+    // "BTCUSDT" has no exchange suffix / quote pair the frontend recognises, so
+    // it classifies as "other"; the backend defaults unknowns to a_share, so the
+    // button must still be offered.
+    const unknownRows = [
+      { timestamp: "2024-01-01", BTCUSDT: "0.6" },
+      { timestamp: "2024-01-02", BTCUSDT: "0.5" },
+    ];
+    render(<PositionsTab run={makeRun(unknownRows)} />);
+
+    expect(screen.getByRole("button", { name: "Resolve industries" })).toBeInTheDocument();
+  });
+
   it("shows the empty-state note and no charts for an all-zero payload", () => {
     const zeroRows = [
       { timestamp: "2024-01-01", "159913.SZ": "0.0" },

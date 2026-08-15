@@ -152,6 +152,27 @@ def test_factor_endpoint_traversal_run_id_returns_400(tmp_path: Path, monkeypatc
     assert response.json()["detail"] == "invalid run_id"
 
 
+def test_factor_endpoint_offloads_scan_to_threadpool(tmp_path: Path, monkeypatch) -> None:
+    """The blocking factor scan must run off the event loop via the threadpool."""
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "run_offload"
+    _write_factor_bundle(run_dir, "momentum_20d", "date,IC\n2024-01-02,0.02\n", _summary(1))
+
+    offloaded: list = []
+
+    async def fake_run_in_threadpool(func, *args, **kwargs):
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(runs_routes, "run_in_threadpool", fake_run_in_threadpool)
+
+    response = client.get("/runs/run_offload/factor")
+
+    assert response.status_code == 200
+    assert response.json()["exists"] is True
+    assert runs_routes._scan_factor_results in offloaded
+
+
 def test_factor_endpoint_missing_ic_summary_omits_ic_stats(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     run_dir = tmp_path / "runs" / "run_no_summary"

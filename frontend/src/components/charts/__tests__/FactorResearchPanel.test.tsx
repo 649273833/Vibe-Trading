@@ -124,3 +124,12 @@ describe("FactorResearchPanel", () => {
     expect(screen.getByText("No factor analysis results are available for this run.")).toBeInTheDocument();
   });
 });
+
+describe("FactorResearchPanel circular-import safety", () => {
+  it("loads standalone via dynamic import without importing RunDetail first", async () => {
+    // RunCardPanel/RunCardStat now live in components/run/RunCard, so this module
+    // no longer imports pages/RunDetail (which imports this module back).
+    const mod = await import("@/components/charts/FactorResearchPanel");
+    expect(mod.FactorResearchPanel).toBeTypeOf("function");
+  });
+});

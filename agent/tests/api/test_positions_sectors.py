@@ -15,6 +15,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import api_server
+from src.api import runs_routes
 from src.tools.sector_tool import resolve_industry_board
 
 RUN_ID = "run_20260801_120000"
@@ -250,6 +251,34 @@ def test_unknown_run_id_returns_404(tmp_path: Path, monkeypatch) -> None:
     assert response.json()["detail"] == "Run no-such-run not found"
 
 
+def test_symlinked_artifacts_dir_returns_no_positions_note(tmp_path: Path, monkeypatch) -> None:
+    """A symlinked artifacts dir is rejected, mirroring the factor scan."""
+    real_artifacts = tmp_path / "real_artifacts"
+    real_artifacts.mkdir()
+    (real_artifacts / "positions.csv").write_text(
+        "timestamp,600519.SH\n2026-08-01T00:00:00,1.0\n", encoding="utf-8"
+    )
+    run_dir = tmp_path / "runs" / RUN_ID
+    run_dir.mkdir(parents=True)
+    (run_dir / "artifacts").symlink_to(real_artifacts)
+    client = _client(tmp_path, monkeypatch)
+
+    with patch("src.tools.sector_tool.resolve_secid") as resolve, patch(
+        "src.tools.sector_tool.get_json"
+    ) as get:
+        response = client.get(f"/runs/{RUN_ID}/positions/sectors")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "run_id": RUN_ID,
+        "symbols": {},
+        "note": "no positions artifact",
+    }
+    resolve.assert_not_called()
+    get.assert_not_called()
+
+
 # ============================================================================
 # Endpoint: bounded contract for large books
 # ============================================================================
@@ -297,6 +326,69 @@ def test_large_symbol_list_caps_network_lookups(tmp_path: Path, monkeypatch) -> 
     # The capped tail degrades to unresolved instead of aborting.
     assert len(payload["unresolved"]) == total - 200
     assert payload["unresolved"] == symbols[200:]
+
+
+def test_shared_executor_created_once_and_bounded(tmp_path: Path, monkeypatch) -> None:
+    """One process-lifetime executor serves every request; the 200 cap holds.
+
+    Regression for the per-request ``ThreadPoolExecutor`` replacement: the
+    shared pool must be created lazily exactly once, carry
+    ``_POSITIONS_SECTOR_WORKERS`` workers, stay un-shutdown across requests,
+    and still cap network lookups at ``_POSITIONS_SECTOR_MAX_SYMBOLS``.
+    """
+    total = 250
+    symbols = [f"6{i:05d}.SH" for i in range(total)]
+    _make_run(
+        tmp_path,
+        "timestamp," + ",".join(symbols),
+        ["2026-08-01T00:00:00," + ",".join(["0.004"] * total)],
+    )
+    client = _client(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(runs_routes, "_POSITIONS_SECTOR_EXECUTOR", None)
+    created: list[dict] = []
+    real_executor = runs_routes.ThreadPoolExecutor
+
+    def counting_executor(*args, **kwargs):
+        created.append(kwargs)
+        return real_executor(*args, **kwargs)
+
+    monkeypatch.setattr(runs_routes, "ThreadPoolExecutor", counting_executor)
+
+    def any_secid(symbol: str) -> str | None:
+        return f"1.{symbol.split('.')[0]}"
+
+    def any_get_json(url: str, *, params: dict) -> dict:
+        code = params["secid"].split(".")[1]
+        return {
+            "data": {
+                "diff": {
+                    "0": {"f12": code, "f13": 1, "f14": "S"},
+                    "1": {"f12": "BK0001", "f13": 90, "f14": "银行Ⅱ"},
+                }
+            }
+        }
+
+    with patch(
+        "src.tools.sector_tool.resolve_secid", side_effect=any_secid
+    ), patch("src.tools.sector_tool.get_json", side_effect=any_get_json) as get:
+        first = client.get(f"/runs/{RUN_ID}/positions/sectors")
+        second = client.get(f"/runs/{RUN_ID}/positions/sectors?refresh=1")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # The shared executor still caps lookups at 200 on every request.
+    assert get.call_count == 2 * runs_routes._POSITIONS_SECTOR_MAX_SYMBOLS
+    assert first.json()["symbol_limit"] == runs_routes._POSITIONS_SECTOR_MAX_SYMBOLS
+    # Exactly one executor was created across both requests, bounded by
+    # _POSITIONS_SECTOR_WORKERS, and never shut down (process-lifetime).
+    assert len(created) == 1
+    assert created[0]["max_workers"] == runs_routes._POSITIONS_SECTOR_WORKERS
+    executor = runs_routes._POSITIONS_SECTOR_EXECUTOR
+    assert executor is not None
+    assert runs_routes._get_positions_sector_executor() is executor
+    assert executor._max_workers == runs_routes._POSITIONS_SECTOR_WORKERS
+    assert not executor._shutdown
 
 
 # ============================================================================

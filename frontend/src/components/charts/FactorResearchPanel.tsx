@@ -6,7 +6,7 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import { cn } from "@/lib/utils";
 import type { FactorReportPayload, FactorResult } from "@/lib/api";
-import { RunCardPanel, RunCardStat } from "@/pages/RunDetail";
+import { RunCardPanel, RunCardStat } from "@/components/run/RunCard";
 import { CorrelationMatrix } from "./CorrelationMatrix";
 
 const SLATE = "#8f98a6";

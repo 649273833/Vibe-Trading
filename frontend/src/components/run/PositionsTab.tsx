@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
-import type { EChartsCoreOption } from "echarts/core";
 import { fetchRunSectorMap, type RunData, type SectorMapResponse } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
-import { echarts } from "@/lib/echarts";
-import { useThemeDark } from "@/lib/theme-store";
+import { escapeHtml } from "@/lib/escapeHtml";
+import { useChartLifecycle } from "@/hooks/useChartLifecycle";
 import { cn } from "@/lib/utils";
 import {
   CASH_SYMBOL,
@@ -100,7 +99,13 @@ export function PositionsTab({ run }: { run: RunData }) {
   );
   const latestDate = useMemo(() => latestHoldingDate(panel), [panel]);
   const hasAShare = useMemo(
-    () => panel.symbols.some((symbol) => classifyAssetClass(symbol) === "a_share"),
+    () => panel.symbols.some((symbol) => {
+      const assetClass = classifyAssetClass(symbol);
+      // The backend sector-map `_detect_market` defaults UNKNOWN symbols to
+      // a_share, so symbols the frontend classifier buckets as "other" are
+      // still resolvable — include them in the gate.
+      return assetClass === "a_share" || assetClass === "other";
+    }),
     [panel.symbols],
   );
 
@@ -349,35 +354,6 @@ function PositionsPanelCard({
   );
 }
 
-function useChartLifecycle(
-  ref: React.RefObject<HTMLDivElement | null>,
-  buildOption: () => EChartsCoreOption,
-  deps: unknown[],
-) {
-  const dark = useThemeDark();
-  useEffect(() => {
-    if (!ref.current) return;
-    const chart = echarts.init(ref.current);
-    chart.setOption(buildOption());
-
-    let resizeFrame: number | null = null;
-    const ro = new ResizeObserver(() => {
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = null;
-        chart.resize();
-      });
-    });
-    ro.observe(ref.current);
-    return () => {
-      ro.disconnect();
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      chart.dispose();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, dark]);
-}
-
 function WeightDistributionChart({
   items,
   mode,
@@ -416,7 +392,7 @@ function WeightDistributionChart({
         const p = params as { name: string; value: number; data?: { assetClassLabel?: string; weight?: number } };
         const label = p.data?.assetClassLabel ?? "";
         const signed = p.data?.weight ?? p.value;
-        return `<b>${p.name}</b><br/>${label}: <b>${formatPercent(signed, 2)}</b>`;
+        return `<b>${escapeHtml(p.name)}</b><br/>${label}: <b>${formatPercent(signed, 2)}</b>`;
       },
     };
 
@@ -499,7 +475,7 @@ function SectorDistributionChart({ items, cashLabel }: { items: GroupedItem[]; c
           const list = params as Array<{ name: string; value: number }>;
           if (!Array.isArray(list) || list.length === 0) return "";
           const p = list[0];
-          return `<b>${p.name}</b>: <b>${formatPercent(p.value, 2)}</b>`;
+          return `<b>${escapeHtml(p.name)}</b>: <b>${formatPercent(p.value, 2)}</b>`;
         },
       },
       grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
@@ -572,9 +548,9 @@ function WeightEvolutionChart({ dates, series }: { dates: string[]; series: Evol
           if (!Array.isArray(list) || list.length === 0) return "";
           const rows = [...list]
             .sort((a, b) => b.value - a.value)
-            .map((p) => `${p.marker} ${p.seriesName}: <b>${formatPercent(p.value, 2)}</b>`)
+            .map((p) => `${p.marker} ${escapeHtml(p.seriesName)}: <b>${formatPercent(p.value, 2)}</b>`)
             .join("<br/>");
-          return `<b>${list[0] && (list[0] as { axisValue?: string }).axisValue}</b><br/>${rows}`;
+          return `<b>${escapeHtml(String((list[0] as { axisValue?: string }).axisValue ?? ""))}</b><br/>${rows}`;
         },
       },
       legend: {
