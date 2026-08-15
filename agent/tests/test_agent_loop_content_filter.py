@@ -234,6 +234,59 @@ def test_single_empty_response_recovers_with_nudge(
     ]
     assert len(system_msgs) == 1
 
+def test_auto_compact_summary_hard_deadline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hung compact-summary call is aborted by the wall-clock deadline.
+
+    Regression for the 2026-08-15 run where a slow-but-alive provider took
+    702s on one summary call: the httpx timeout only bounds time-between-bytes
+    and LangChain ignores a per-call config timeout, so without a hard
+    deadline the whole run stalls. The summary now runs in a daemon thread
+    joined with the LLM timeout; on expiry compaction degrades to truncation.
+    """
+    import time
+
+    import src.agent.loop as loop_module
+    from src.agent.loop import AgentLoop
+    from src.agent.tools import ToolRegistry
+    from src.agent.trace import TraceWriter
+
+    class _HangingSummaryLLM:
+        def __init__(self) -> None:
+            self.chat_calls = 0
+
+        def stream_chat(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            return LLMResponse(content="")
+
+        def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+            self.chat_calls += 1
+            time.sleep(2)  # simulate a provider stall
+            return LLMResponse(content="late summary")
+
+    llm = _HangingSummaryLLM()
+    agent = AgentLoop(registry=ToolRegistry(), llm=llm)
+    monkeypatch.setattr(loop_module, "LLM_TIMEOUT_SECONDS", 0.3, raising=False)
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1 " * 4000},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2 " * 4000},
+    ]
+    trace_dir = tmp_path / "compact_trace"
+    trace = TraceWriter(trace_dir)
+
+    start = time.monotonic()
+    agent._auto_compact(messages, trace_dir, trace, focus_topic="", iteration=1)
+    elapsed = time.monotonic() - start
+
+    assert llm.chat_calls == 1, "summary thread must have started"
+    assert elapsed < 3, f"wall-clock deadline did not fire: {elapsed:.1f}s"
+    reconstructed = " ".join(str(m.get("content", "")) for m in messages)
+    assert "compaction degraded" in reconstructed
+
 
 class _RatioFilterLoopLLM:
     """LLM stub producing content_filter on first N calls, tool calls to keep
