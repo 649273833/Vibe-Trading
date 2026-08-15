@@ -13,6 +13,7 @@ from backtest.engines.vietnam_equity import (
     hose_round_down,
     hose_round_up,
     hose_tick_size,
+    newest_opening_bar_idx,
 )
 from backtest.models import Position
 
@@ -126,6 +127,104 @@ class TestSettlement:
         engine._bar_idx = 10
         bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
         assert engine.can_execute("VIC.VN", 1, bar) is True
+
+
+class TestSettlementAfterScalingIn:
+    """A same-direction add re-arms the hold for the whole position.
+
+    ``BaseEngine._execute_position_increase`` folds an add into the open
+    position but preserves ``entry_bar_idx``, so a clock read from that field
+    alone releases later-bought shares early. These cases pin the fill-ledger
+    clock that replaces it.
+    """
+
+    def _fill(self, engine: VietnamEquityEngine, action: str, bar_idx: int) -> None:
+        engine._bar_idx = bar_idx
+        engine._record_fill(
+            symbol="VIC.VN",
+            timestamp=pd.Timestamp("2026-01-05") + pd.Timedelta(days=bar_idx),
+            action=action,
+            signed_quantity=1_000.0,
+            execution_price=24_250.0,
+            fee=0.0,
+            margin=24_250_000.0,
+            leverage=1.0,
+            reason="signal",
+        )
+
+    def _scaled_in_engine(self, **overrides) -> VietnamEquityEngine:
+        """Buy on bar 0, add on bar 1 — the position still carries entry idx 0."""
+        engine = _engine(price_limit=0, **overrides)
+        self._fill(engine, "open", bar_idx=0)
+        self._fill(engine, "increase", bar_idx=1)
+        engine.positions["VIC.VN"] = Position(
+            symbol="VIC.VN",
+            direction=1,
+            entry_price=24_250.0,
+            entry_time=pd.Timestamp("2026-01-05"),
+            size=2_000.0,
+            leverage=1.0,
+            entry_bar_idx=0,  # preserved by the increase — deliberately stale
+        )
+        return engine
+
+    @pytest.mark.parametrize("bar_idx,allowed", [(2, False), (3, True)])
+    def test_hold_runs_from_the_newest_lot(self, bar_idx: int, allowed: bool) -> None:
+        # Bar 2 is T+2 for the first lot but only T+1 for the added one.
+        engine = self._scaled_in_engine()
+        engine._bar_idx = bar_idx
+        bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
+        assert engine.can_execute("VIC.VN", 0, bar) is allowed
+
+    def test_partial_reduction_is_held_too(self) -> None:
+        # The compressed position carries no lot identity, so a partial sell
+        # cannot be shown to consume only settled shares. Hold all of it.
+        engine = self._scaled_in_engine()
+        engine._bar_idx = 2
+        bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
+        assert engine.can_execute("VIC.VN", 0, bar) is False
+        assert engine.positions["VIC.VN"].size == 2_000.0
+
+    def test_buying_more_is_never_held(self) -> None:
+        engine = self._scaled_in_engine()
+        engine._bar_idx = 2
+        bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
+        assert engine.can_execute("VIC.VN", 1, bar) is True
+
+    def test_stale_entry_idx_alone_would_have_released_early(self) -> None:
+        # Guards the regression itself: the position's own field still reads 0,
+        # so a clock built on it would have allowed the bar-2 sell above.
+        engine = self._scaled_in_engine()
+        assert engine.positions["VIC.VN"].entry_bar_idx == 0
+        assert newest_opening_bar_idx(engine, "VIC.VN") == 1
+
+    def test_configurable_lag_still_counts_from_newest(self) -> None:
+        engine = self._scaled_in_engine(vn_settlement_bars=1)
+        engine._bar_idx = 2
+        bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
+        assert engine.can_execute("VIC.VN", 0, bar) is True
+
+    def test_reopened_position_uses_its_own_lot(self) -> None:
+        # A close then a fresh buy starts a new clock; the old fills must not
+        # settle the new position.
+        engine = _engine(price_limit=0)
+        self._fill(engine, "open", bar_idx=0)
+        self._fill(engine, "close", bar_idx=2)
+        self._fill(engine, "open", bar_idx=5)
+        engine.positions["VIC.VN"] = Position(
+            symbol="VIC.VN",
+            direction=1,
+            entry_price=24_250.0,
+            entry_time=pd.Timestamp("2026-01-10"),
+            size=1_000.0,
+            leverage=1.0,
+            entry_bar_idx=5,
+        )
+        bar = pd.Series({"open": 24_250.0, "close": 24_300.0})
+        engine._bar_idx = 6
+        assert engine.can_execute("VIC.VN", 0, bar) is False
+        engine._bar_idx = 7
+        assert engine.can_execute("VIC.VN", 0, bar) is True
 
 
 class TestBandBlocking:

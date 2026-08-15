@@ -17,8 +17,11 @@ Market rules:
     the cycle is informally called T+1.5. A two-bar hold approximates that: a
     daily bar cannot represent the half-day boundary, so the sell is released
     on the second following session. No same-day round trip is possible.
-    ``vn_settlement_bars`` exists for scenario testing and to absorb a future
-    rule change; no shorter equity cycle is in force today.
+    The hold runs from the **newest** opening fill, so scaling into a position
+    re-arms it: the whole holding waits for the added lot rather than riding
+    the first lot's clock. ``vn_settlement_bars`` exists for scenario testing
+    and to absorb a future rule change; no shorter equity cycle is in force
+    today.
   - Price band (biên độ dao động): ±7% on HOSE in normal sessions, measured
     from the reference price (giá tham chiếu — ordinarily the preceding
     session's close, though corporate actions and special sessions adjust it).
@@ -81,6 +84,11 @@ _PRICE_EPS = 1e-9
 # before the afternoon session on T+2, so a buy at bar N releases at bar N+2.
 _DEFAULT_SETTLEMENT_BARS = 2
 
+# Fill actions that add quantity to a position. Both start a settlement clock:
+# ``increase`` is a same-direction add that BaseEngine folds into the existing
+# position without moving its entry index.
+_OPENING_ACTIONS = frozenset({"open", "increase"})
+
 
 def hose_tick_size(price: float) -> float:
     """Return the HOSE tick unit (bước giá) applying at *price*.
@@ -130,6 +138,220 @@ def hose_price_limits(base_price: float, band: float) -> tuple[float, float]:
     upper = hose_round_down(base_price * (1.0 + band))
     lower = hose_round_up(base_price * (1.0 - band))
     return upper, lower
+
+
+def newest_opening_bar_idx(engine: BaseEngine, symbol: str) -> Optional[int]:
+    """Bar index of the most recent opening fill for *symbol* on *engine*.
+
+    ``Position.entry_bar_idx`` alone is not a sound settlement clock.
+    :meth:`BaseEngine._execute_position_increase` folds a same-direction add
+    into the open position — updating size and weighted entry price — but
+    preserves the original entry index, so counting from it would release
+    later-bought shares as soon as the *first* lot settled: a buy on N, an add
+    on N+1 and a full sell on N+2 would pass while the added lot is one session
+    old.
+
+    The fill ledger is immutable evidence of when each opening delta actually
+    executed, so the newest one bounds the hold. Scanning back from the newest
+    fill stops at the first match, which belongs to the open position's own
+    lifecycle whenever a position exists.
+
+    Args:
+        engine: Engine owning the fill ledger — the Vietnam engine in a
+            single-market run, the composite in a cross-market one.
+        symbol: Symbol whose settlement clock is being read.
+
+    Returns:
+        The bar index of the newest opening fill, or ``None`` when the ledger
+        holds no opening fill for *symbol*.
+    """
+    for fill in reversed(getattr(engine, "fill_records", ()) or ()):
+        if fill.symbol == symbol and fill.action in _OPENING_ACTIONS:
+            return int(fill.bar_idx)
+    return None
+
+
+def hose_is_settled(
+    engine: BaseEngine, symbol: str, settlement_bars: int,
+) -> Optional[bool]:
+    """Return whether *symbol*'s position on *engine* has cleared the hold.
+
+    Settlement is counted in sessions rather than calendar days, because a
+    Friday buy settles on Tuesday and a calendar-day comparison would either
+    release it a session early or hold it a session late across the weekend.
+    The newest opening fill and the engine's bar cursor give the exact count.
+
+    The whole position is held until its newest lot settles, rather than only
+    the unsettled quantity being blocked. ``BaseEngine`` keeps one compressed
+    position per symbol with a weighted-average entry and no lot identity, so a
+    partial reduction cannot be shown to consume settled shares only. Holding
+    the position is the conservative reading: it can delay a sell that was
+    partly available, but it can never sell stock that has not arrived.
+
+    State is read from the passed engine rather than from ``self`` so that
+    :class:`~backtest.engines.composite.CompositeEngine` — which owns the
+    positions, fill ledger and bar cursor for every market in a cross-market
+    run — applies this identical rule to its Vietnam leg instead of carrying a
+    second implementation that could drift.
+
+    Args:
+        engine: Engine owning positions, fill ledger and bar cursor.
+        symbol: Symbol whose position is being closed.
+        settlement_bars: Sessions a buy is held before it may be sold.
+
+    Returns:
+        True when the position may be sold on this bar, False while it is still
+        held, and ``None`` when the engine's state cannot answer — leaving the
+        caller to decide how to report an unenforceable hold.
+    """
+    pos = engine.positions.get(symbol)
+    if pos is None:
+        return True
+
+    entry_idx = newest_opening_bar_idx(engine, symbol)
+    if entry_idx is None:
+        # No fill evidence (a position injected directly, as unit tests do).
+        entry_idx = getattr(pos, "entry_bar_idx", None)
+    current_idx = getattr(engine, "_bar_idx", None)
+    if entry_idx is None or current_idx is None:
+        return None
+    return (int(current_idx) - int(entry_idx)) >= int(settlement_bars)
+
+
+def hose_base_price(
+    state: BaseEngine, symbol: str, bar: pd.Series,
+) -> Optional[float]:
+    """Resolve the reference price (giá tham chiếu) for *symbol* on this bar.
+
+    Both sources are strictly historical, so neither leaks the decision bar's
+    own close into the pre-fill check:
+      1. ``pre_close`` on the bar, when the data source supplies one.
+      2. The previous row of the close panel that :class:`BaseEngine`
+         pre-extracts for the run.
+
+    An off-grid close is rounded onto the grid, since a reference price is
+    always a tradeable price.
+
+    Args:
+        state: Engine holding the run's close panel and bar cursor.
+        symbol: Symbol whose reference price is wanted.
+        bar: Current bar.
+
+    Returns:
+        The reference price in VND, or ``None`` when no historical close is
+        reachable (first bar of a run, or a rule book with no panel).
+    """
+    candidate: Optional[float] = None
+    if "pre_close" in bar.index:
+        raw = bar["pre_close"]
+        if pd.notna(raw) and float(raw) > 0:
+            candidate = float(raw)
+
+    if candidate is None:
+        close_arr = getattr(state, "_close_arr", None)
+        col = getattr(state, "_code_to_col", {}).get(symbol)
+        row = getattr(state, "_bar_idx", 0) - 1
+        if close_arr is not None and col is not None and row >= 0:
+            raw = close_arr[row, col]
+            if pd.notna(raw) and float(raw) > 0:
+                candidate = float(raw)
+
+    return None if candidate is None else hose_round_down(candidate)
+
+
+def hose_can_execute(
+    state: BaseEngine,
+    rules: "VietnamEquityEngine",
+    symbol: str,
+    direction: int,
+    bar: pd.Series,
+) -> bool:
+    """Apply the HOSE execution rules, reading state and rules separately.
+
+    A single-market run passes the same engine as both arguments. A composite
+    run cannot: it owns the positions, fill ledger, bar cursor and close panel
+    for every market, while the rule parameters (band, tick-quantized slippage,
+    settlement lag) live on the Vietnam sub-engine, which ``CompositeEngine``
+    holds as a stateless rule book. Splitting the two lets the composite apply
+    these rules in full rather than degrading to whichever of them a stateless
+    sub-engine could still answer — which, for the band and the hold, is
+    neither.
+
+    Args:
+        state: Engine owning positions, fill ledger, bar cursor, close panel.
+        rules: Vietnam engine supplying band, slippage and settlement lag.
+        symbol: HOSE symbol (e.g. ``VIC.VN``).
+        direction: 1 (buy), -1 (short — always blocked), 0 (sell/close).
+        bar: Current bar.
+
+    Returns:
+        True if the trade is allowed.
+    """
+    # 1. Short selling: structurally unavailable (see class docstring).
+    if direction == -1:
+        return False
+
+    # 2. T+2 settlement: shares normally arrive before the afternoon of
+    #    T+2, so the position cannot be sold before that session.
+    if direction == 0 and not hose_settlement_ok(state, rules, symbol):
+        return False
+
+    # 3. Daily price band ±7% (disabled when falsy).
+    if not rules.price_limit:
+        return True
+
+    base_price = hose_base_price(state, symbol, bar)
+    if base_price is None:
+        if not rules._limit_base_warned:
+            rules._limit_base_warned = True
+            logger.warning(
+                "%s: no reference price available (no 'pre_close' column and "
+                "no prior close panel row) — the HOSE ±%.0f%% band check is "
+                "inactive for this run",
+                symbol,
+                float(rules.price_limit) * 100,
+            )
+        return True
+
+    open_price = float(bar.get("open", bar.get("close", 0.0)) or 0.0)
+    if open_price <= 0:
+        return True  # order sizing rejects non-positive prices downstream
+
+    upper, lower = hose_price_limits(base_price, float(rules.price_limit))
+    fill_price = rules.apply_slippage(open_price, direction if direction else -1)
+    if direction == 1 and fill_price >= upper - _PRICE_EPS:
+        return False  # giá trần: no ask to buy from
+    if direction == 0 and fill_price <= lower + _PRICE_EPS:
+        return False  # giá sàn: no bid to sell into
+    return True
+
+
+def hose_settlement_ok(
+    state: BaseEngine, rules: "VietnamEquityEngine", symbol: str,
+) -> bool:
+    """Return whether *symbol* may be sold, warning once if unenforceable.
+
+    Args:
+        state: Engine owning positions, fill ledger and bar cursor.
+        rules: Vietnam engine supplying the settlement lag and warning latch.
+        symbol: Symbol whose position is being closed.
+
+    Returns:
+        True when the position may be sold on this bar. An engine whose state
+        cannot answer reports True and warns once, rather than blocking every
+        exit for the rest of the run.
+    """
+    settled = hose_is_settled(state, symbol, rules.settlement_bars)
+    if settled is None:
+        if not rules._settlement_warned:
+            rules._settlement_warned = True
+            logger.warning(
+                "%s: no bar cursor available — the HOSE settlement hold is "
+                "inactive for this run",
+                symbol,
+            )
+        return True
+    return settled
 
 
 class VietnamEquityEngine(BaseEngine):
@@ -193,56 +415,12 @@ class VietnamEquityEngine(BaseEngine):
         Returns:
             True if the trade is allowed.
         """
-        # 1. Short selling: structurally unavailable (see class docstring).
-        if direction == -1:
-            return False
-
-        # 2. T+2 settlement: shares normally arrive before the afternoon of
-        #    T+2, so the position cannot be sold before that session.
-        if direction == 0 and not self._is_settled(symbol):
-            return False
-
-        # 3. Daily price band ±7% (disabled when falsy).
-        if not self.price_limit:
-            return True
-
-        base_price = self._base_price(symbol, bar)
-        if base_price is None:
-            if not self._limit_base_warned:
-                self._limit_base_warned = True
-                logger.warning(
-                    "%s: no reference price available (no 'pre_close' column and "
-                    "no prior close panel row) — the HOSE ±%.0f%% band check is "
-                    "inactive for this run",
-                    symbol,
-                    float(self.price_limit) * 100,
-                )
-            return True
-
-        open_price = float(bar.get("open", bar.get("close", 0.0)) or 0.0)
-        if open_price <= 0:
-            return True  # order sizing rejects non-positive prices downstream
-
-        upper, lower = hose_price_limits(base_price, float(self.price_limit))
-        fill_price = self.apply_slippage(open_price, direction if direction else -1)
-        if direction == 1 and fill_price >= upper - _PRICE_EPS:
-            return False  # giá trần: no ask to buy from
-        if direction == 0 and fill_price <= lower + _PRICE_EPS:
-            return False  # giá sàn: no bid to sell into
-        return True
+        # This engine owns both the run state and the rule parameters. A
+        # composite run splits them; see :func:`hose_can_execute`.
+        return hose_can_execute(self, self, symbol, direction, bar)
 
     def _is_settled(self, symbol: str) -> bool:
         """Return whether *symbol*'s open position has cleared settlement.
-
-        Settlement is counted in sessions rather than calendar days, because a
-        Friday buy settles on Tuesday and a calendar-day comparison would either
-        release it a session early or hold it a session late across the weekend.
-        ``Position.entry_bar_idx`` and the engine's own bar cursor give the exact
-        session count.
-
-        In a cross-market composite run the sub-engines are stateless rule books
-        with no bar cursor of their own; there the hold cannot be enforced at
-        all, so it is skipped and warned about once rather than applied wrongly.
 
         Args:
             symbol: Symbol whose position is being closed.
@@ -250,35 +428,10 @@ class VietnamEquityEngine(BaseEngine):
         Returns:
             True when the position may be sold on this bar.
         """
-        pos = self.positions.get(symbol)
-        if pos is None:
-            return True
-
-        entry_idx = getattr(pos, "entry_bar_idx", None)
-        current_idx = getattr(self, "_bar_idx", None)
-        if entry_idx is None or current_idx is None:
-            if not self._settlement_warned:
-                self._settlement_warned = True
-                logger.warning(
-                    "%s: no bar cursor available — the HOSE settlement hold is "
-                    "inactive for this run",
-                    symbol,
-                )
-            return True
-        return (int(current_idx) - int(entry_idx)) >= self.settlement_bars
+        return hose_settlement_ok(self, self, symbol)
 
     def _base_price(self, symbol: str, bar: pd.Series) -> Optional[float]:
-        """Resolve the reference price (giá tham chiếu) for *symbol* on this bar.
-
-        Both sources are strictly historical, so neither leaks the decision
-        bar's own close into the pre-fill check:
-          1. ``pre_close`` on the bar, when the data source supplies one.
-          2. The previous row of the close panel that :class:`BaseEngine`
-             pre-extracts for the run (unavailable in a cross-market composite
-             run, whose sub-engines are stateless rule books).
-
-        An off-grid close is rounded onto the grid, since a reference price is
-        always a tradeable price.
+        """Resolve this run's reference price (giá tham chiếu) for *symbol*.
 
         Args:
             symbol: Symbol whose reference price is wanted.
@@ -288,22 +441,7 @@ class VietnamEquityEngine(BaseEngine):
             The reference price in VND, or ``None`` when no historical close is
             reachable (first bar of a run, or a composite sub-engine).
         """
-        candidate: Optional[float] = None
-        if "pre_close" in bar.index:
-            raw = bar["pre_close"]
-            if pd.notna(raw) and float(raw) > 0:
-                candidate = float(raw)
-
-        if candidate is None:
-            close_arr = getattr(self, "_close_arr", None)
-            col = getattr(self, "_code_to_col", {}).get(symbol)
-            row = getattr(self, "_bar_idx", 0) - 1
-            if close_arr is not None and col is not None and row >= 0:
-                raw = close_arr[row, col]
-                if pd.notna(raw) and float(raw) > 0:
-                    candidate = float(raw)
-
-        return None if candidate is None else hose_round_down(candidate)
+        return hose_base_price(self, symbol, bar)
 
     def round_size(self, raw_size: float, price: float) -> float:
         """Floor the order to whole 100-share board lots.
