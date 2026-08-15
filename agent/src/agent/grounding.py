@@ -399,7 +399,10 @@ _CLAUSE_SEPARATOR_RE = re.compile(r"[,，;；。、\n（）【】]")
 # Without this mask the gate reported 100, 3.5 and 4.0 as price claims
 # conflicting with the observed OHLC range and rejected a correct draft.
 # The @-price branch requires a leading quantity so a bare "@" (rare in
-# trading reports) stays checked; the keyword branch covers labelled orders.
+# trading reports) stays checked; the keyword branch covers labelled
+# resting orders (挂单/限价单/委托/订单/GTC). Suggested entry prices such
+# as "建议买入价" are deliberately NOT masked - the numeric gate must still
+# validate them against observed evidence.
 _ORDER_LEVEL_RE = re.compile(
     r"(?:"
     # (a) quantity (optional unit) @ price: "100 @ $3.50", "100 股 @ 4.00"
@@ -407,7 +410,7 @@ _ORDER_LEVEL_RE = re.compile(
     + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) order keyword + price: 挂单/限价单/限价/委托/订单/买入价/卖出价/GTC
-    r"(?:挂单|限价单|限价|委托|订单|买入价|卖出价|GTC(?:单)?)\s*(?:为|是|至|到|on|at|=)?\s*[:：]?\s*"
+    r"(?:挂单|限价单|委托|订单|GTC(?:单)?)\s*(?:为|是|至|到|on|at|=)?\s*[:：]?\s*(?!\s*[-+]?\d[\d,]*(?:\.\d+)?(?:\s*(?:股|手|张|份|shares?|units?))?\s*@)\s*"
     + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r")",
     re.IGNORECASE,

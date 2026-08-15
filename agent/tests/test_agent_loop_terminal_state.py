@@ -272,7 +272,7 @@ def test_session_service_renders_meaningful_error_from_result(tmp_path: Path) ->
 
     assert ui_error != "unknown"
     assert "empty_model_response" in ui_error
-    assert "iteration 1" in ui_error
+    assert "iteration 2" in ui_error
 
 
 def test_usage_metadata_is_persisted_to_run_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
