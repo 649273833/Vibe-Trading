@@ -1,0 +1,9 @@
+_TARGET_PATH_RE = re.compile(
+    r"[A-Za-z]:\\[^\s\x22\x27<>|?*]+\.md\b"
+    r"|\b[\w./\\-]+\.md\b"
+)
+def _named_target_paths(text: str) -> list[Path]:
+    """Docstring with "quotes" and \\ backslashes."""
+    for match in _TARGET_PATH_RE.finditer(text or ""):
+        raw = match.group(0).strip().strip("\x22\x27")
+    return []

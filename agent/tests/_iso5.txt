@@ -1,0 +1,5 @@
+_TARGET_ACTION_RE = re.compile(
+    r"update|create|write|add|make|edit|generate|overwrite|append",
+    r"更新|创建|写|添加|修改|生成|建立|编制",
+    re.IGNORECASE,
+)

@@ -604,6 +604,44 @@ def _looks_like_tool_call_syntax(content: str) -> bool:
     )
 
 
+
+
+# Task target-file detection: a user message usually names the file to
+# create or update ("update C:\\...\\plan.md"). If a run approaches its
+# iteration cap without having written that file, the loop must remind the
+# model instead of ending "answered but incomplete".
+_TARGET_PATH_RE = re.compile(
+    r"[A-Za-z]:\\[^\s\x22\x27<>|?*]+\.md\b"
+    r"|\b[\w./\\-]+\.md\b"
+)
+_TARGET_ACTION_RE = re.compile(
+    r"update|create|write|add|make|edit|generate|overwrite|append"
+    r"|更新|创建|写|添加|修改|生成|建立|编制",
+    re.IGNORECASE,
+)
+
+
+def _named_target_paths(text: str) -> list[Path]:
+    """Return the .md file paths named in a user message (deduped).
+
+    Both absolute Windows paths and bare or relative filenames are matched.
+    """
+    seen: set[str] = set()
+    paths: list[Path] = []
+    for match in _TARGET_PATH_RE.finditer(text or ""):
+        raw = match.group(0).strip().strip("\x22\x27")
+        try:
+            p = Path(raw)
+        except (ValueError, OSError):
+            continue
+        if p.suffix != ".md":
+            continue
+        key = str(p).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(p)
+    return paths
 def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) -> dict[str, Any]:
     """Normalize ``run_dir`` in tool args to an absolute path when possible.
 
@@ -741,6 +779,7 @@ class AgentLoop:
         self._has_run = False
         self._grounding: GroundingLedger | None = None
         self._released_fallback = False
+        self._written_files: set[str] = set()
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -829,6 +868,8 @@ class AgentLoop:
         self._called_ok = set()
         self._previous_summary = ""
         self._released_fallback = False
+        self._written_files = set()
+        run_started_wall = _time.time()
 
         state_store = RunStateStore()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -945,18 +986,33 @@ class AgentLoop:
                 # context as the most recent user message.
                 if iteration == wrap_up_at and 1 < iteration < self.max_iterations:
                     remaining = self.max_iterations - iteration
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[SYSTEM] You have {remaining} iterations remaining out of "
-                            f"{self.max_iterations}. Wrap up your work now: finish any "
-                            "outstanding file writes or data updates that are part of your "
-                            "task FIRST, while tools are still available for a few more "
-                            "iterations. Do not start new analysis or re-verify data you "
-                            "already hold. Then provide your final answer as plain text; "
-                            "if your task was to update a file, state that it is done and where."
-                        ),
-                    })
+                    wrap_content = (
+                        f"[SYSTEM] You have {remaining} iterations remaining out of "
+                        f"{self.max_iterations}. Wrap up your work now: finish any "
+                        "outstanding file writes or data updates that are part of your "
+                        "task FIRST, while tools are still available for a few more "
+                        "iterations. Do not start new analysis or re-verify data you "
+                        "already hold. Then provide your final answer as plain text; "
+                        "if your task was to update a file, state that it is done and where."
+                    )
+                    pending_directive = self._pending_write_directive(
+                        user_message, run_started_wall
+                    )
+                    if pending_directive:
+                        wrap_content += "\n\n" + pending_directive
+                    messages.append({"role": "user", "content": wrap_content})
+
+                # Safety net: on the second-to-last iteration tools are still
+                # available, but the final iteration is text-only and cannot
+                # call tools. If the task names a target file that has not been
+                # written, force the write now so the run does not end
+                # "answered but incomplete".
+                if iteration == self.max_iterations - 1:
+                    pending_directive = self._pending_write_directive(
+                        user_message, run_started_wall
+                    )
+                    if pending_directive:
+                        messages.append({"role": "system", "content": pending_directive})
 
                 # Streaming output + collect thinking text
                 thinking_chunks: List[str] = []
@@ -2010,6 +2066,59 @@ class AgentLoop:
             return False
         return bool(tool_def and getattr(tool_def, "is_readonly", False))
 
+    def _record_written_target(self, arguments: Mapping[str, Any]) -> None:
+        """Remember a file written by write_file/edit_file for completion checks."""
+        raw = arguments.get("path") or arguments.get("file_path")
+        if not raw:
+            return
+        p = Path(str(raw))
+        if not p.is_absolute() and self.memory.run_dir:
+            p = Path(self.memory.run_dir) / p
+        try:
+            self._written_files.add(str(p.resolve()).casefold())
+        except (OSError, ValueError):
+            self._written_files.add(str(p).casefold())
+
+    def _pending_write_directive(
+        self, user_message: str, run_started_wall: float
+    ) -> str:
+        """Return a directive naming task target files not yet written this run.
+
+        Empty when the message names no .md targets, carries no create/update
+        intent, or every named target has been written (directly via
+        write_file/edit_file, or by any process whose mtime is newer than the
+        run start - which covers the bash workaround).
+        """
+        if not _TARGET_ACTION_RE.search(user_message or ""):
+            return ""
+        targets = _named_target_paths(user_message)
+        if not targets:
+            return ""
+        pending: list[str] = []
+        for p in targets:
+            try:
+                key = str(p.resolve()).casefold()
+            except (OSError, ValueError):
+                key = str(p).casefold()
+            written = key in self._written_files
+            if not written:
+                try:
+                    if p.exists() and p.stat().st_mtime >= run_started_wall:
+                        written = True
+                except OSError:
+                    pass
+            if not written:
+                pending.append(str(p))
+        if not pending:
+            return ""
+        return (
+            "[SYSTEM] The following task target file(s) have NOT been written "
+            "yet in this run: " + ", ".join(pending) + ". Write them NOW using "
+            "write_file/edit_file (or bash for file operations). If your task "
+            "was to create or update a file, a plain-text answer without the "
+            "file write is a failure."
+        )
+
     def _finalize_tool_result(
         self,
         tc: Any,
@@ -2047,6 +2156,8 @@ class AgentLoop:
                     _archive_backtest_result(result, self.memory.run_dir)
                 except OSError as exc:
                     logger.warning("Could not archive backtest output into active run: %s", exc)
+            if tc.name in {"write_file", "edit_file"}:
+                self._record_written_target(tc.arguments)
 
         if self._grounding is not None:
             self._grounding.ingest_tool_result(

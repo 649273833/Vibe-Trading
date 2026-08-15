@@ -1,0 +1,4 @@
+x
+    r"更新|创建|写|添加",
+def f(text: str) -> list[str]:
+    return []
