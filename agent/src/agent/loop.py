@@ -780,6 +780,7 @@ class AgentLoop:
         self._has_run = False
         self._grounding: GroundingLedger | None = None
         self._released_fallback = False
+        self._released_fallback_reason: str | None = None
         self._written_files: set[str] = set()
 
     def cancel(self) -> None:
@@ -869,6 +870,7 @@ class AgentLoop:
         self._called_ok = set()
         self._previous_summary = ""
         self._released_fallback = False
+        self._released_fallback_reason = None
         self._written_files = set()
         run_started_wall = _time.time()
 
@@ -1281,6 +1283,10 @@ class AgentLoop:
                             "Please ask me to continue."
                         )
                         self._released_fallback = True
+                        self._released_fallback_reason = (
+                            "final answer withheld: it contained tool-call syntax on "
+                            "the forced-text iteration"
+                        )
                         self._emit(
                             "text_delta",
                             {"delta": final_content, "iter": current_iter},
@@ -1502,7 +1508,7 @@ class AgentLoop:
             state_store.mark_success(run_dir)
             final_status = "success"
             if self._released_fallback:
-                final_reason = (
+                final_reason = self._released_fallback_reason or (
                     "final answer degraded to the deterministic fallback after "
                     f"{self._grounding.validation_count if self._grounding else 0} "
                     "rejected drafts could not be corrected within the iteration budget"
