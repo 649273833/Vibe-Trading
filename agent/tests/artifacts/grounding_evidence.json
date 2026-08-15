@@ -1,8 +1,26 @@
 {
   "evidence": [],
   "identity": {
-    "authorized_symbols": [],
-    "records": [],
+    "authorized_symbols": [
+      "META.TO"
+    ],
+    "records": [
+      {
+        "candidates": [],
+        "currency": "CAD",
+        "instrument_type": "listed_security",
+        "query": "META.TO",
+        "source": [
+          "user_message"
+        ],
+        "source_tool_call_id": "user_message",
+        "status": "locked",
+        "symbol": "META.TO",
+        "updated_at": "2026-08-15T19:03:44.293010Z",
+        "venue": "toronto",
+        "version": 1
+      }
+    ],
     "recovery": {
       "max_price_evidence_attempts": 3,
       "max_rounds": 6,
@@ -11,12 +29,14 @@
       "rounds": 0,
       "symbol_resolution_attempts": 0
     },
-    "status": "not_required"
+    "status": "locked"
   },
   "schema_version": 1,
   "session_symbol_roots": [],
-  "session_symbols": [],
+  "session_symbols": [
+    "META.TO"
+  ],
   "tool_failures": [],
-  "updated_at": "2026-08-15T18:15:36.590075Z",
+  "updated_at": "2026-08-15T19:03:44.293226Z",
   "validations": []
 }

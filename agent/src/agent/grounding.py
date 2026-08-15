@@ -1232,12 +1232,44 @@ class GroundingLedger:
         ]
         for issue in validation.issues[:12]:
             lines.append(f"- {issue.get('message', issue.get('code', 'grounding error'))}")
+        # Name the exact values that must be REMOVED, not rephrased. The model
+        # tends to restate a rejected figure in a new format; the gate then
+        # rejects it again and the run burns iterations until the fallback.
+        banned: list[str] = []
+        for issue in validation.issues:
+            code = issue.get("code")
+            value = issue.get("value")
+            if code in {"numeric_claim_conflict", "numeric_claim_unavailable", "unsourced_symbol_figures"} and value is not None:
+                symbol = issue.get("symbol") or ""
+                label = f"{value:g}" if isinstance(value, (int, float)) else str(value)
+                banned.append(f"{label} ({symbol})" if symbol else label)
+        if banned:
+            deduped = list(dict.fromkeys(banned))
+            lines.append(
+                "REMOVE these rejected value(s) entirely - do NOT restate, rephrase, "
+                "or recompute them in any other format: " + ", ".join(deduped) + "."
+            )
+            repeated: list[str] = []
+            for prior in self._validations:
+                for prior_issue in prior.get("issues", []):
+                    prior_value = prior_issue.get("value")
+                    if isinstance(prior_value, (int, float)):
+                        mark = f"{prior_value:g}"
+                        if any(entry.startswith(mark) for entry in deduped):
+                            repeated.append(mark)
+            if repeated:
+                lines.append(
+                    "These value(s) have now been rejected repeatedly across drafts: "
+                    + ", ".join(dict.fromkeys(repeated))
+                    + ". Repeating them in any form keeps failing; drop them, or show "
+                    "the full derivation from the observed inputs."
+                )
         lines.extend(
             [
-                "Remove or reword every rejected claim above instead of repeating it; an",
-                "unsupported figure in a table row invalidates the whole draft.",
+                "If a value is a derived or prospective level (stop, target, entry, etc.), "
+                "you must EITHER show the full derivation with the observed inputs and the "
+                "formula, OR omit it from the draft.",
                 "Reuse the exact locked symbol and venue.",
-                "For every derived number, label it as derived and show the source inputs and formula.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
             ]
