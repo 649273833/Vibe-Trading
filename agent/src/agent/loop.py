@@ -612,6 +612,7 @@ def _looks_like_tool_call_syntax(content: str) -> bool:
 # model instead of ending "answered but incomplete".
 _TARGET_PATH_RE = re.compile(
     r"[A-Za-z]:\\[^\s\x22\x27<>|?*]+\.md\b"
+    r"|/[\w./\\-]+\.md\b"
     r"|\b[\w./\\-]+\.md\b"
 )
 _TARGET_ACTION_RE = re.compile(
