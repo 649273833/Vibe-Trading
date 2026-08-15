@@ -2124,21 +2124,40 @@ class AgentLoop:
         if not targets:
             return ""
         pending: list[str] = []
+        # A bare target ("create X.md at the same folder") carries no directory;
+        # resolve it against the folders of the absolute targets named in the
+        # same message, or the run would never see the file the model wrote to
+        # the intended folder and would report a false "not written".
+        base_dirs = [p.parent for p in targets if p.parent != Path(".")]
+        any_written = False
         for p in targets:
-            try:
-                key = str(p.resolve()).casefold()
-            except (OSError, ValueError):
-                key = str(p).casefold()
-            written = key in self._written_files
-            if not written:
+            candidates = [p]
+            if not p.is_absolute() and p.parent == Path("."):
+                candidates += [d / p.name for d in base_dirs]
+            written = False
+            for cand in candidates:
                 try:
-                    if p.exists() and p.stat().st_mtime >= run_started_wall:
-                        written = True
-                except OSError:
-                    pass
-            if not written:
+                    key = str(cand.resolve()).casefold()
+                except (OSError, ValueError):
+                    key = str(cand).casefold()
+                if key in self._written_files:
+                    written = True
+                    break
+                if not written:
+                    try:
+                        if cand.exists() and cand.stat().st_mtime >= run_started_wall:
+                            written = True
+                            break
+                    except OSError:
+                        pass
+            if written:
+                any_written = True
+            else:
                 pending.append(str(p))
-        if not pending:
+        # If any named target was written this run, the create/update task is
+        # addressed; reference files named alongside (e.g. "refer to A, create B")
+        # are never "written" and must not trigger the directive.
+        if any_written or not pending:
             return ""
         return (
             "[SYSTEM] The following task target file(s) have NOT been written "
