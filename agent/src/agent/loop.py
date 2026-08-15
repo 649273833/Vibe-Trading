@@ -2184,19 +2184,52 @@ class AgentLoop:
                 )
 
             # A silent provider stall on the summary call used to freeze the
-            # whole run (no chunk arrives, so nothing aborts it). Bound the
-            # call and fall back to hard truncation so the loop continues.
-            try:
-                summary_resp = self.llm.chat(
-                    [{"role": "user", "content": prompt}],
-                    timeout=_compact_timeout if _compact_timeout > 0 else None,
+            # whole run (no chunk arrives, so nothing aborts it). The provider
+            # httpx timeout only bounds time-between-bytes, not total time, and
+            # LangChain does not honor a per-call config "timeout", so a slow
+            # but alive server can run for many minutes. Enforce a hard
+            # wall-clock deadline via a daemon thread; on expiry fall back to
+            # hard truncation so the loop continues.
+            _compact_result: list = []
+            _compact_error: list = []
+
+            def _run_compact_summary() -> None:
+                try:
+                    resp = self.llm.chat(
+                        [{"role": "user", "content": prompt}],
+                        timeout=_compact_timeout if _compact_timeout > 0 else None,
+                    )
+                    _compact_result.append(resp)
+                except BaseException as exc:  # noqa: BLE001 - compaction must not crash the run
+                    _compact_error.append(exc)
+
+            if _compact_timeout > 0:
+                worker = threading.Thread(
+                    target=_run_compact_summary,
+                    name="compact-summary",
+                    daemon=True,
                 )
-                if summary_resp.content:
-                    summary = summary_resp.content
-            except Exception as exc:  # noqa: BLE001 - compaction must not crash the run
-                logger.warning("Auto compact LLM call failed (%s); degrading compaction", exc)
-                degraded_compact = True
-                break
+                worker.start()
+                worker.join(timeout=_compact_timeout)
+                if worker.is_alive():
+                    logger.warning(
+                        "Auto compact summary call exceeded %.1fs; degrading compaction",
+                        _compact_timeout,
+                    )
+                    degraded_compact = True
+                    break
+                if _compact_error:
+                    logger.warning(
+                        "Auto compact LLM call failed (%s); degrading compaction",
+                        _compact_error[0],
+                    )
+                    degraded_compact = True
+                    break
+                summary_resp = _compact_result[0]
+            else:
+                summary_resp = self.llm.chat([{"role": "user", "content": prompt}])
+            if summary_resp.content:
+                summary = summary_resp.content
         if degraded_compact and not summary:
             summary = (
                 "[compaction degraded: LLM summarization timed out or failed; "
