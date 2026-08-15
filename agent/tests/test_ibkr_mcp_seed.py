@@ -65,7 +65,8 @@ def test_ibkr_seed_validates_as_readonly_probe() -> None:
     cfg = AgentConfig.model_validate({"mcpServers": {"ibkr": IBKR_MCP_SERVER_SEED}})
     server = cfg.mcp_servers["ibkr"]
 
-    assert server.url == "https://api.ibkr.com/v1/api/mcp"
+    assert server.url == "https://api.ibkr.com/v1/api/mcp-public"
+    assert server.init_timeout == 300.0
     assert server.auth is not None
     assert server.auth.scopes == ["mcp.read"]
     assert server.enabled_tools == ["*"]
@@ -88,4 +89,4 @@ def test_ibkr_alias_url_resolves_to_live_broker_and_wraps_writes() -> None:
 
 
 def test_ibkr_lookalike_host_is_not_live_broker() -> None:
-    assert not is_live_broker("ib", "https://api.ibkr.com.evil.test/v1/api/mcp")
+    assert not is_live_broker("ib", "https://api.ibkr.com.evil.test/v1/api/mcp-public")

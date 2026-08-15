@@ -39,6 +39,38 @@ def _sdk_module(connector: str):
     return importlib.import_module(path)
 
 
+def _local_plugin_call(
+    profile: TradingProfile,
+    operation: str,
+    overrides: dict[str, Any],
+    *args: Any,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Call a read operation on a user-installed local connector adapter."""
+    from src.trading.connections import ConnectionStore, credential_fields
+    from src.trading.local_plugins import load_adapter, plugin_by_profile_id
+
+    connection_id = str(overrides.get("connection_id") or "").strip().lower()
+    if not connection_id:
+        raise ValueError("local connector plugins require a connection_id")
+    store = ConnectionStore()
+    connection = store.get(connection_id)
+    if connection.profile_id != profile.id:
+        raise ValueError("local connection profile does not match the requested plugin")
+    plugin = plugin_by_profile_id(profile.id)
+    adapter = load_adapter(plugin)
+    function = getattr(adapter, operation, None)
+    if not callable(function):
+        return _unsupported(profile, operation)
+    credentials = store.credentials.load(connection.id, credential_fields(profile.id))
+    return function(
+        *args,
+        credentials=credentials,
+        config=dict(profile.config),
+        **kwargs,
+    )
+
+
 def check_connection(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
     """Check a connector profile without mutating broker state."""
     profile = profile_by_id(profile_id)
@@ -62,6 +94,10 @@ def check_connection(profile_id: str | None = None, **overrides: Any) -> dict[st
         report["transport"] = profile.transport
         return report
 
+    if profile.transport == "local_plugin":
+        report = _local_plugin_call(profile, "check_status", overrides)
+        return _with_profile(profile, report)
+
     return _remote_status(profile)
 
 
@@ -75,7 +111,17 @@ def get_account(profile_id: str | None = None, **overrides: Any) -> dict[str, An
     if profile.transport == "broker_sdk":
         module = _sdk_module(profile.connector)
         return _with_profile(profile, module.get_account_snapshot(module.build_config(profile.config, overrides)))
-    return _call_remote(profile, "account", _account_arg(overrides))
+    if profile.transport == "local_plugin":
+        return _with_profile(
+            profile,
+            _local_plugin_call(profile, "get_account_snapshot", overrides),
+        )
+    return _call_remote(
+        profile,
+        "account",
+        _account_arg(overrides),
+        interactive_oauth=bool(overrides.get("interactive_oauth", True)),
+    )
 
 
 def get_positions(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
@@ -88,7 +134,17 @@ def get_positions(profile_id: str | None = None, **overrides: Any) -> dict[str, 
     if profile.transport == "broker_sdk":
         module = _sdk_module(profile.connector)
         return _with_profile(profile, module.get_positions(module.build_config(profile.config, overrides)))
-    return _call_remote(profile, "positions", _account_arg(overrides))
+    if profile.transport == "local_plugin":
+        return _with_profile(
+            profile,
+            _local_plugin_call(profile, "get_positions", overrides),
+        )
+    return _call_remote(
+        profile,
+        "positions",
+        _account_arg(overrides),
+        interactive_oauth=bool(overrides.get("interactive_oauth", True)),
+    )
 
 
 def get_open_orders(
@@ -112,6 +168,16 @@ def get_open_orders(
             profile,
             module.get_open_orders(
                 module.build_config(profile.config, overrides), include_executions=include_executions
+            ),
+        )
+    if profile.transport == "local_plugin":
+        return _with_profile(
+            profile,
+            _local_plugin_call(
+                profile,
+                "get_open_orders",
+                overrides,
+                include_executions=include_executions,
             ),
         )
     return _call_remote(profile, "orders", _account_arg(overrides))
@@ -144,6 +210,11 @@ def get_quote(
     if profile.transport == "broker_sdk":
         module = _sdk_module(profile.connector)
         return _with_profile(profile, module.get_quote(symbol, config=module.build_config(profile.config, overrides)))
+    if profile.transport == "local_plugin":
+        return _with_profile(
+            profile,
+            _local_plugin_call(profile, "get_quote", overrides, symbol),
+        )
     return _call_remote(profile, "quote", {"symbols": [symbol], "symbol": symbol})
 
 
@@ -222,6 +293,18 @@ def get_history(
             module.get_historical_bars(
                 symbol,
                 config=module.build_config(profile.config, overrides),
+                period=period,
+                limit=limit,
+            ),
+        )
+    if profile.transport == "local_plugin":
+        return _with_profile(
+            profile,
+            _local_plugin_call(
+                profile,
+                "get_historical_bars",
+                overrides,
+                symbol,
                 period=period,
                 limit=limit,
             ),
@@ -966,7 +1049,13 @@ def _account_arg(overrides: dict[str, Any]) -> dict[str, Any]:
     return {"account_number": account} if account else {}
 
 
-def _call_remote(profile: TradingProfile, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _call_remote(
+    profile: TradingProfile,
+    operation: str,
+    arguments: dict[str, Any],
+    *,
+    interactive_oauth: bool = True,
+) -> dict[str, Any]:
     """Call a known read operation on a remote MCP connector profile."""
     from src.config.loader import load_agent_config
     from src.live.registry import has_cached_oauth_token
@@ -1023,8 +1112,16 @@ def _call_remote(profile: TradingProfile, operation: str, arguments: dict[str, A
             ),
         }
 
-    adapter = MCPServerAdapter(server_name, server)
+    adapter = (
+        MCPServerAdapter(server_name, server)
+        if interactive_oauth
+        else MCPServerAdapter(server_name, server, interactive_oauth=False)
+    )
     call_result = adapter.call_tool(remote_name, _remote_arguments(profile.connector, operation, arguments))
+    if profile.connector == "ibkr":
+        from src.trading.connectors.ibkr.mcp import normalize_result
+
+        call_result = normalize_result(operation, call_result)
     account_number = arguments.get("account_number")
     if account_number:
         call_result = dict(call_result)
@@ -1038,6 +1135,10 @@ def _remote_tool_name(connector: str, operation: str) -> str | None:
         from src.trading.connectors.robinhood.mcp import remote_tool_name
 
         return remote_tool_name(operation)
+    if connector == "ibkr":
+        from src.trading.connectors.ibkr.mcp import remote_tool_name
+
+        return remote_tool_name(operation)
     return None
 
 
@@ -1045,6 +1146,10 @@ def _remote_arguments(connector: str, operation: str, arguments: dict[str, Any])
     """Normalize generic arguments for a remote MCP operation."""
     if connector == "robinhood":
         from src.trading.connectors.robinhood.mcp import remote_arguments
+
+        return remote_arguments(operation, arguments)
+    if connector == "ibkr":
+        from src.trading.connectors.ibkr.mcp import remote_arguments
 
         return remote_arguments(operation, arguments)
     return {}

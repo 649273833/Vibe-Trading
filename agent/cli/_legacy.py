@@ -3965,6 +3965,46 @@ def cmd_connector_list() -> int:
     return EXIT_SUCCESS
 
 
+def cmd_connector_init(connector_id: str, destination: str = ".") -> int:
+    """Create a local-only read connector template for Codex to implement."""
+    from src.trading.plugin_scaffold import scaffold_connector
+
+    try:
+        path = scaffold_connector(connector_id, Path(destination))
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return EXIT_USAGE_ERROR
+    console.print(f"[green]Created local connector template[/green] {path}")
+    console.print("[dim]Implement adapter.py, then run connector validate and connector install.[/dim]")
+    return EXIT_SUCCESS
+
+
+def cmd_connector_validate(directory: str) -> int:
+    """Validate a local read-only connector manifest."""
+    from src.trading.plugin_scaffold import validate_connector
+
+    try:
+        plugin = validate_connector(Path(directory))
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return EXIT_USAGE_ERROR
+    console.print(f"[green]Valid read-only connector[/green] {plugin.profile.id}")
+    return EXIT_SUCCESS
+
+
+def cmd_connector_install(directory: str) -> int:
+    """Install a validated connector into the user's private connector directory."""
+    from src.trading.plugin_scaffold import install_connector
+
+    try:
+        path = install_connector(Path(directory))
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return EXIT_USAGE_ERROR
+    console.print(f"[green]Installed local connector[/green] {path}")
+    return EXIT_SUCCESS
+
+
 def cmd_connector_use(profile_id: str) -> int:
     """Select the default trading connector profile."""
     from src.trading.profiles import profile_by_id, save_selected_profile_id
@@ -4665,6 +4705,12 @@ def _dispatch_connector(args: argparse.Namespace) -> int:
     sub = getattr(args, "connector_command", None)
     if sub == "list":
         return cmd_connector_list()
+    if sub == "init":
+        return cmd_connector_init(args.connector_id, args.destination)
+    if sub == "validate":
+        return cmd_connector_validate(args.directory)
+    if sub == "install":
+        return cmd_connector_install(args.directory)
     if sub == "use":
         return cmd_connector_use(args.profile)
     if sub == "configure":
@@ -4921,6 +4967,24 @@ def _build_parser() -> argparse.ArgumentParser:
     connector_subparsers = connector_parser.add_subparsers(dest="connector_command")
 
     connector_subparsers.add_parser("list", help="List selectable connector profiles")
+
+    connector_init = connector_subparsers.add_parser(
+        "init", help="Create a local read-only connector template"
+    )
+    connector_init.add_argument("connector_id", help="Lowercase connector id")
+    connector_init.add_argument(
+        "--destination", default=".", help="Parent directory for the template"
+    )
+
+    connector_validate = connector_subparsers.add_parser(
+        "validate", help="Validate a local connector directory"
+    )
+    connector_validate.add_argument("directory")
+
+    connector_install = connector_subparsers.add_parser(
+        "install", help="Install a validated connector locally"
+    )
+    connector_install.add_argument("directory")
 
     connector_use = connector_subparsers.add_parser("use", help="Select the default connector profile")
     connector_use.add_argument("profile", help="Profile id, e.g. ibkr-paper-local")
