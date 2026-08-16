@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def test_media_dir_lives_under_uploads_root(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
 
     from src.channels.utils import get_media_dir
@@ -16,6 +17,7 @@ def test_media_dir_lives_under_uploads_root(tmp_path, monkeypatch):
 
 
 def test_media_dir_is_within_allowed_file_roots(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
 
     from src.channels.utils import get_media_dir
