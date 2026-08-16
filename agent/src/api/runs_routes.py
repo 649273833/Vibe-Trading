@@ -570,16 +570,18 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
     from backtest.engines._market_hooks import _detect_market
 
     artifacts_dir = run_dir / "artifacts"
+    cache_path = artifacts_dir / "sector_map.json"
     try:
-        artifacts_symlinked = artifacts_dir.is_symlink()
+        symlinked = artifacts_dir.is_symlink() or cache_path.is_symlink()
     except OSError:
-        artifacts_symlinked = False
-    if artifacts_symlinked:
+        symlinked = False
+    if symlinked:
         # Mirror the factor scan's symlink rejection: a symlinked artifacts dir
-        # is treated as having no positions artifact rather than followed.
+        # — or a symlinked sector_map.json cache file inside a real one — is
+        # treated as having no positions artifact rather than followed, so
+        # neither the cache read nor the cache rewrite can escape the run dir.
         return {"ok": True, "run_id": run_id, "symbols": {}, "note": "no positions artifact"}
 
-    cache_path = run_dir / "artifacts" / "sector_map.json"
     if not refresh:
         cached = _load_json_file(cache_path)
         if isinstance(cached, dict) and isinstance(cached.get("symbols"), dict):
@@ -593,14 +595,17 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
 
     resolved: Dict[str, Any] = {}
     a_share_to_resolve: List[str] = []
-    for index, symbol in enumerate(symbols):
+    for symbol in symbols:
         asset_class = _detect_market(symbol)
         resolved[symbol] = {
             "asset_class": asset_class,
             "industry": None,
             "industry_source": None,
         }
-        if asset_class == "a_share" and index < _POSITIONS_SECTOR_MAX_SYMBOLS:
+        # The budget counts A-share network lookups only — non-A-share symbols
+        # never consume it, so a mixed book with a long non-A-share prefix
+        # still resolves its first _POSITIONS_SECTOR_MAX_SYMBOLS A-shares.
+        if asset_class == "a_share" and len(a_share_to_resolve) < _POSITIONS_SECTOR_MAX_SYMBOLS:
             a_share_to_resolve.append(symbol)
 
     if a_share_to_resolve:

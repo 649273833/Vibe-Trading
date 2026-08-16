@@ -279,6 +279,36 @@ def test_symlinked_artifacts_dir_returns_no_positions_note(tmp_path: Path, monke
     get.assert_not_called()
 
 
+def test_symlinked_cache_file_rejected_without_write_through(tmp_path: Path, monkeypatch) -> None:
+    """A symlinked ``sector_map.json`` is rejected like a symlinked artifacts dir.
+
+    The artifacts directory itself is real here; only the cache file is a
+    symlink. Neither the cache read nor the cache rewrite may follow it, or a
+    planted symlink becomes a write primitive outside the run directory.
+    """
+    run_dir = _make_run(tmp_path, "timestamp,600519.SH", ["2026-08-01T00:00:00,1.0"])
+    target = tmp_path / "elsewhere.json"
+    target.write_text("sentinel", encoding="utf-8")
+    (run_dir / "artifacts" / "sector_map.json").symlink_to(target)
+    client = _client(tmp_path, monkeypatch)
+
+    with patch("src.tools.sector_tool.resolve_secid") as resolve, patch(
+        "src.tools.sector_tool.get_json"
+    ) as get:
+        response = client.get(f"/runs/{RUN_ID}/positions/sectors")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "run_id": RUN_ID,
+        "symbols": {},
+        "note": "no positions artifact",
+    }
+    resolve.assert_not_called()
+    get.assert_not_called()
+    assert target.read_text(encoding="utf-8") == "sentinel"
+
+
 # ============================================================================
 # Endpoint: bounded contract for large books
 # ============================================================================
@@ -326,6 +356,87 @@ def test_large_symbol_list_caps_network_lookups(tmp_path: Path, monkeypatch) -> 
     # The capped tail degrades to unresolved instead of aborting.
     assert len(payload["unresolved"]) == total - 200
     assert payload["unresolved"] == symbols[200:]
+
+
+def _us_symbols(count: int) -> list[str]:
+    return [f"{chr(65 + i // 26)}{chr(65 + i % 26)}.US" for i in range(count)]
+
+
+def _any_secid(symbol: str) -> str | None:
+    return f"1.{symbol.split('.')[0]}"
+
+
+def _any_get_json(url: str, *, params: dict) -> dict:
+    code = params["secid"].split(".")[1]
+    return {
+        "data": {
+            "diff": {
+                "0": {"f12": code, "f13": 1, "f14": "S"},
+                "1": {"f12": "BK0001", "f13": 90, "f14": "银行Ⅱ"},
+            }
+        }
+    }
+
+
+def test_mixed_book_resolves_a_shares_after_non_a_share_prefix(tmp_path: Path, monkeypatch) -> None:
+    """The lookup budget counts A-share lookups, not list position.
+
+    Regression: gating on the symbol's index in the full list pushed every
+    A-share past the cap once 200+ non-A-share names came first, leaving the
+    whole book unresolved while the 200-lookup budget sat unused.
+    """
+    us = _us_symbols(205)
+    a_shares = [f"6{i:05d}.SH" for i in range(5)]
+    symbols = us + a_shares
+    _make_run(
+        tmp_path,
+        "timestamp," + ",".join(symbols),
+        ["2026-08-01T00:00:00," + ",".join(["0.001"] * len(symbols))],
+    )
+    client = _client(tmp_path, monkeypatch)
+
+    with patch(
+        "src.tools.sector_tool.resolve_secid", side_effect=_any_secid
+    ), patch("src.tools.sector_tool.get_json", side_effect=_any_get_json) as get:
+        response = client.get(f"/runs/{RUN_ID}/positions/sectors")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_symbols"] == len(symbols)
+    # Every A-share resolves despite sitting at list indices 205-209.
+    assert get.call_count == len(a_shares)
+    for symbol in a_shares:
+        assert payload["symbols"][symbol]["industry"] == "银行Ⅱ"
+    assert payload["unresolved"] == []
+    for symbol in us:
+        assert payload["symbols"][symbol]["asset_class"] == "us_equity"
+        assert payload["symbols"][symbol]["industry"] is None
+
+
+def test_mixed_book_cap_still_bounds_a_share_lookups(tmp_path: Path, monkeypatch) -> None:
+    us = _us_symbols(205)
+    a_shares = [f"6{i:05d}.SH" for i in range(250)]
+    symbols = us + a_shares
+    _make_run(
+        tmp_path,
+        "timestamp," + ",".join(symbols),
+        ["2026-08-01T00:00:00," + ",".join(["0.001"] * len(symbols))],
+    )
+    client = _client(tmp_path, monkeypatch)
+
+    with patch(
+        "src.tools.sector_tool.resolve_secid", side_effect=_any_secid
+    ), patch("src.tools.sector_tool.get_json", side_effect=_any_get_json) as get:
+        response = client.get(f"/runs/{RUN_ID}/positions/sectors")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_symbols"] == len(symbols)
+    assert payload["symbol_limit"] == 200
+    assert get.call_count == 200
+    assert payload["symbols"][a_shares[0]]["industry"] == "银行Ⅱ"
+    assert payload["symbols"][a_shares[-1]]["industry"] is None
+    assert payload["unresolved"] == a_shares[200:]
 
 
 def test_shared_executor_created_once_and_bounded(tmp_path: Path, monkeypatch) -> None:
