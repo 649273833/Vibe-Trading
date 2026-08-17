@@ -66,6 +66,9 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
       grid: { left: 8, right: 16, top: 36, bottom: 8, containLabel: true },
       xAxis: {
         type: "value",
+        // Pin to the curve's spot range: the default nice domain extends to 0 and leaves a dead zone.
+        min: "dataMin",
+        max: "dataMax",
         name: i18n.t("options.payoff.spot"),
         nameTextStyle: { color: t.textColor, fontSize: 10 },
         nameLocation: "middle",
@@ -90,6 +93,7 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
           data: pairs,
           smooth: false,
           symbol: "none",
+          itemStyle: { color: t.infoColor },
           lineStyle: { color: t.infoColor, width: 2 },
           markLine: {
             silent: true,

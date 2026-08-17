@@ -87,6 +87,8 @@ export function RollingBetaAlphaChart({ data, height = 280 }: Props) {
           data: betas,
           smooth: false,
           symbol: "none",
+          // itemStyle drives the legend swatch; keep it in sync with lineStyle.
+          itemStyle: { color: t.infoColor },
           lineStyle: { color: t.infoColor, width: 2 },
         },
         {
@@ -96,6 +98,7 @@ export function RollingBetaAlphaChart({ data, height = 280 }: Props) {
           data: alphas,
           smooth: false,
           symbol: "none",
+          itemStyle: { color: t.warningColor },
           lineStyle: { color: t.warningColor, width: 1.5 },
         },
       ],

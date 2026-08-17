@@ -61,7 +61,7 @@ describe("FactorResearchPanel", () => {
     expect(screen.getByText("0.8734")).toBeInTheDocument(); // ir
     expect(screen.getByText("62.50%")).toBeInTheDocument(); // ic_positive_ratio
     expect(screen.getByText("128")).toBeInTheDocument(); // ic_count
-    expect(screen.getByText("0.0210")).toBeInTheDocument(); // long_short_spread
+    expect(screen.getByText("+2.10%")).toBeInTheDocument(); // long_short_spread as signed percent
   });
 
   it("renders the factor selector only with multiple factors and switches the selection", () => {
@@ -82,6 +82,7 @@ describe("FactorResearchPanel", () => {
 
     expect(screen.getByTestId("factor-selected")).toHaveTextContent("value_pe");
     expect(screen.getByText("-0.0113")).toBeInTheDocument();
+    expect(screen.getByText("-1.20%")).toBeInTheDocument(); // negative spread keeps its sign
     expect(screen.queryByText("0.0521")).not.toBeInTheDocument();
   });
 

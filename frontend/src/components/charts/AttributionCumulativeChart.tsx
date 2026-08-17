@@ -78,6 +78,8 @@ export function AttributionCumulativeChart({ data, height = 300 }: Props) {
           data: data.map((d) => +(d.portfolio * 100).toFixed(4)),
           smooth: false,
           symbol: "none",
+          // itemStyle drives the legend swatch; keep it in sync with lineStyle.
+          itemStyle: { color: t.infoColor },
           lineStyle: { color: t.infoColor, width: 2 },
         },
         {
@@ -86,6 +88,7 @@ export function AttributionCumulativeChart({ data, height = 300 }: Props) {
           data: data.map((d) => +(d.benchmark * 100).toFixed(4)),
           smooth: false,
           symbol: "none",
+          itemStyle: { color: t.textColor },
           lineStyle: { color: t.textColor, width: 1.5 },
         },
         {
@@ -94,6 +97,7 @@ export function AttributionCumulativeChart({ data, height = 300 }: Props) {
           data: data.map((d) => +(d.active * 100).toFixed(4)),
           smooth: false,
           symbol: "none",
+          itemStyle: { color: pnl.profit },
           lineStyle: { color: pnl.profit, width: 1.5, type: "dashed" },
         },
       ],

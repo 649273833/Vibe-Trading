@@ -29,6 +29,17 @@ function pct(value: unknown, digits = 2): string {
   return parsed == null ? "—" : `${(parsed * 100).toFixed(digits)}%`;
 }
 
+function signedPct(value: unknown, digits = 2): string {
+  const parsed = num(value);
+  return parsed == null ? "—" : `${parsed > 0 ? "+" : ""}${(parsed * 100).toFixed(digits)}%`;
+}
+
+function signTone(value: unknown): "normal" | "positive" | "negative" {
+  const parsed = num(value);
+  if (parsed == null || parsed === 0) return "normal";
+  return parsed > 0 ? "positive" : "negative";
+}
+
 /** Stride-sample long series for rendering, keeping the LAST point pinned. */
 function downsample<T>(rows: T[], maxPoints = MAX_CHART_POINTS): T[] {
   if (rows.length <= maxPoints) return rows;
@@ -232,12 +243,12 @@ export function FactorResearchPanel({ report }: { report: FactorReportPayload })
 
       <RunCardPanel title={t("factor.icStats")} icon={Sigma}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <RunCardStat label={t("factor.icMean")} value={fixed(stats?.ic_mean)} />
+          <RunCardStat label={t("factor.icMean")} value={fixed(stats?.ic_mean)} tone={signTone(stats?.ic_mean)} />
           <RunCardStat label={t("factor.icStd")} value={fixed(stats?.ic_std)} />
-          <RunCardStat label={t("factor.ir")} value={fixed(stats?.ir)} />
+          <RunCardStat label={t("factor.ir")} value={fixed(stats?.ir)} tone={signTone(stats?.ir)} />
           <RunCardStat label={t("factor.icPositiveRatio")} value={pct(stats?.ic_positive_ratio)} />
           <RunCardStat label={t("factor.icCount")} value={stats?.ic_count != null ? String(stats.ic_count) : "—"} />
-          <RunCardStat label={t("factor.longShortSpread")} value={fixed(selected.long_short_spread)} />
+          <RunCardStat label={t("factor.longShortSpread")} value={signedPct(selected.long_short_spread)} tone={signTone(selected.long_short_spread)} />
           <RunCardStat label={t("factor.nGroups")} value={selected.n_groups ? String(selected.n_groups) : "—"} />
         </div>
       </RunCardPanel>
