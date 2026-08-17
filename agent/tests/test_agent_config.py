@@ -340,14 +340,11 @@ def test_runtime_overrides_fall_back_to_base_config_when_merge_is_invalid(tmp_pa
     assert config.mcp_servers["demo"].args == ["--base"]
 
 
-def test_explicit_config_path_does_not_mutate_default_runtime_root(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_explicit_config_path_does_not_mutate_default_runtime_root(tmp_path: Path) -> None:
     config_path = tmp_path / "nested" / "agent.json"
     load_agent_config(config_path)
 
     assert get_runtime_root(config_path) == config_path.parent
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     assert get_runtime_root() == Path.home() / ".vibe-trading"
     assert get_config_path(config_path) == config_path
 
@@ -415,7 +412,6 @@ def test_live_authorize_missing_robinhood_config_prints_safe_seed(
 ) -> None:
     from cli._legacy import EXIT_USAGE_ERROR, cmd_live_authorize
 
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     assert cmd_live_authorize("robinhood") == EXIT_USAGE_ERROR
@@ -436,7 +432,6 @@ def test_live_authorize_wildcard_robinhood_config_prints_safe_seed(
 ) -> None:
     from cli._legacy import EXIT_USAGE_ERROR, cmd_live_authorize
 
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config_path = tmp_path / ".vibe-trading" / "agent.json"
     config_path.parent.mkdir(parents=True)

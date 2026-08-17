@@ -26,7 +26,7 @@ except DailyOrderLockUnavailable:
 """
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["VIBE_TRADING_HOME"] = str(home / ".vibe-trading")
+    env["USERPROFILE"] = str(home)  # Windows Path.home()
     env["PYTHONPATH"] = str(repo_root / "agent")
     return subprocess.run(
         [sys.executable, "-c", script],

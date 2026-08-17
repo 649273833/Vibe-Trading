@@ -26,7 +26,6 @@ def _client(tmp_path: Path, monkeypatch) -> TestClient:
     # Redirect the runtime root (``~/.vibe-trading``) at the home boundary so the
     # live tree, HALT sentinel, mandate store, and proposal store all resolve
     # under tmp_path. get_runtime_root() == Path.home() / ".vibe-trading".
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     monkeypatch.setattr(api_server, "_runner_tasks", {}, raising=False)
     monkeypatch.setattr(api_server, "_runner_factory", None, raising=False)
@@ -261,7 +260,6 @@ def _seed_proposal(tmp_path: Path, proposal_id: str, broker: str = "robinhood") 
 
 
 def test_c1_relay_builds_mandate_proposal_frame(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     proposal_id = "mp_" + "1" * 32
     _seed_proposal(tmp_path, proposal_id)
@@ -284,7 +282,6 @@ def test_c1_relay_builds_mandate_proposal_frame(tmp_path: Path, monkeypatch) -> 
 
 
 def test_c1_relay_ignores_non_propose_events(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
 
     # A different tool's result: no relay.
@@ -301,7 +298,6 @@ def test_c1_relay_ignores_non_propose_events(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_c1_relay_returns_none_when_proposal_missing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     # Preview references an id with no persisted proposal on disk.
     event = SimpleNamespace(
@@ -322,7 +318,6 @@ def test_c1_relay_returns_none_when_proposal_missing(tmp_path: Path, monkeypatch
 
 
 def test_build_live_runner_no_broker_configured_raises_unavailable(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     monkeypatch.setattr(api_server, "_runner_factory", None, raising=False)
     # No robinhood MCP server in the default config → clean 503-class error,
@@ -334,7 +329,6 @@ def test_build_live_runner_no_broker_configured_raises_unavailable(tmp_path, mon
 
 
 def test_build_live_runner_wires_a_real_runner(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     monkeypatch.setattr(api_server, "_runner_factory", None, raising=False)
 
@@ -394,7 +388,6 @@ def _seed_ledger(tmp_path: Path, record: dict) -> None:
 
 
 def test_live_action_relay_builds_frame_from_guard_result(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     audit_id = "la_01abcDEF"
     _seed_ledger(tmp_path, {"audit_id": audit_id, "kind": "order_placed", "outcome": "accepted",
@@ -417,7 +410,6 @@ def test_live_action_relay_builds_frame_from_guard_result(tmp_path: Path, monkey
 
 
 def test_live_action_relay_ignores_non_live_results(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path), raising=False)
     # A normal tool_result with no live_action marker → no relay.
     event = SimpleNamespace(

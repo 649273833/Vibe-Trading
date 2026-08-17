@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import site
 import sys
 import tempfile
 from pathlib import Path
@@ -36,23 +37,94 @@ if str(AGENT_DIR) not in sys.path:
 # sandbox cannot be a pytest fixture (fixtures run AFTER collection); it has to
 # be installed at conftest import time, before pytest imports any test module.
 #
-# TEST DISCIPLINE: a test that asserts the DEFAULT config-root fallback (e.g.
-# ``get_runtime_root() == Path.home()/".vibe-trading"``) MUST call
-# ``monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)`` first, so it
-# exercises the real fallback instead of silently passing green against this
-# sandbox.
+# The sandbox owns exactly ONE knob: the home directory. ``get_runtime_root()``
+# consults ``VIBE_TRADING_HOME`` first and only falls back to
+# ``Path.home()/".vibe-trading"`` (src/config/paths.py:27-34), so the override is
+# DELETED rather than pointed at the sandbox. Two reasons, both load-bearing:
 #
-# On Windows Path.home() ignores $HOME and reads %USERPROFILE%, so we set all
-# three knobs: VIBE_TRADING_HOME (the project's documented Windows-safe
-# override, src/config/paths.py:27-33), HOME (POSIX) and USERPROFILE (Windows).
+#   * A developer with ``VIBE_TRADING_HOME`` exported in their shell would
+#     otherwise keep resolving to it — the leak this sandbox exists to close.
+#   * Setting it would outrank every per-test ``monkeypatch.setenv("HOME")`` /
+#     ``monkeypatch.setattr(Path, "home", ...)``, silently collapsing per-test
+#     roots into one shared directory. That is not hypothetical: it made
+#     test_shadow_account's "returns latest" read a profile another test in the
+#     same file had saved.
+#
+# With the override gone, ``Path.home()`` is the single point of control, so a
+# test redirecting home gets its own root on every platform and needs no
+# knowledge of this sandbox. On Windows ``Path.home()`` ignores $HOME and reads
+# %USERPROFILE%, so both spellings are set.
 _PRIOR_SANDBOX_ENV = {
-    key: os.environ.get(key) for key in ("VIBE_TRADING_HOME", "HOME", "USERPROFILE")
+    key: os.environ.get(key)
+    for key in ("VIBE_TRADING_HOME", "HOME", "USERPROFILE", "PYTHONPATH")
 }
-_SANDBOX_HOME = Path(tempfile.mkdtemp(prefix="vibe-trading-test-home-"))
-os.environ["VIBE_TRADING_HOME"] = str(_SANDBOX_HOME / ".vibe-trading")
+
+# Outcome guard, armed BEFORE the redirect so it reuses the app's own resolution
+# rather than restating it. The assertions in _sandbox_runtime_root check that
+# the redirect is INSTALLED, which is a proxy; this checks what #1116 is actually
+# about — that nothing reached the user's own state — so a path the redirect does
+# not cover fails the run with the artefact named, instead of quietly appending to
+# a live audit ledger for another release. The ledgers are the headline harm
+# (fabricated order_rejected records in an append-only, tamper-evident chain) and
+# they move only on a real live action, so they cannot produce noise.
+from src.config.paths import get_runtime_root  # noqa: E402 — needs AGENT_DIR above
+
+_REAL_LEDGERS = tuple(
+    get_runtime_root() / "live" / name for name in ("audit.jsonl", "audit_chain.jsonl")
+)
+# The sandbox root is RESOLVED. On macOS ``tempfile.mkdtemp()`` returns a path
+# under ``/var/folders/...``, which is a symlink to ``/private/var/folders/...``.
+# Handing the unresolved form to HOME breaks every guard that compares a
+# ``Path.resolve()``d path against a ``Path.home()``-derived prefix: the two
+# spellings of the same directory do not compare equal, the guard reads it as an
+# escape attempt and refuses. Resolving here keeps one spelling everywhere.
+_SANDBOX_HOME = Path(tempfile.mkdtemp(prefix="vibe-trading-test-home-")).resolve()
+os.environ.pop("VIBE_TRADING_HOME", None)
 os.environ["HOME"] = str(_SANDBOX_HOME)
 os.environ["USERPROFILE"] = str(_SANDBOX_HOME)
 (_SANDBOX_HOME / ".vibe-trading").mkdir(parents=True, exist_ok=True)
+
+# Tests that spawn a subprocess hand it this environment, HOME included. On a
+# machine whose dependencies live in the per-user site directory -- what
+# ``pip install --user`` does, and the default when no virtualenv is active --
+# that directory is derived FROM HOME, so redirecting HOME hides numpy, pandas
+# and pytest itself from every child. The child then comes up with a partial
+# tool registry rather than an error (tool auto-discovery logs an import failure
+# and moves on), which surfaces as a baffling "Tool 'x' not found" far from the
+# cause. ``site.USER_SITE`` was computed at interpreter startup, before this
+# redirect, so it still names the real directory: pin it for children.
+if site.ENABLE_USER_SITE and site.USER_SITE and Path(site.USER_SITE).is_dir():
+    _prior_path = os.environ.get("PYTHONPATH", "")
+    if site.USER_SITE not in _prior_path.split(os.pathsep):
+        os.environ["PYTHONPATH"] = os.pathsep.join(
+            part for part in (site.USER_SITE, _prior_path) if part
+        )
+
+
+def _ledger_state() -> dict[str, tuple[int, int] | None]:
+    """Return (size, mtime_ns) per real live ledger; None where absent."""
+    state: dict[str, tuple[int, int] | None] = {}
+    for path in _REAL_LEDGERS:
+        try:
+            stat = path.stat()
+        except OSError:
+            state[str(path)] = None
+        else:
+            state[str(path)] = (stat.st_size, stat.st_mtime_ns)
+    return state
+
+
+_REAL_LEDGER_BASELINE = _ledger_state()
+
+
+def _assert_real_root_untouched() -> None:
+    """Raise if the user's own live ledgers moved during the run."""
+    if changed := [p for p, now in _ledger_state().items() if _REAL_LEDGER_BASELINE[p] != now]:
+        raise AssertionError(
+            f"The suite wrote into the REAL config root (#1116): {changed}. "
+            f"Something resolved outside the sandbox at {_SANDBOX_HOME}. Route "
+            "the write through get_runtime_root(); do not widen this guard."
+        )
 
 
 def _teardown_sandbox() -> None:
@@ -68,20 +140,22 @@ def _teardown_sandbox() -> None:
 atexit.register(_teardown_sandbox)
 
 
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook
+    """Fail the run if anything escaped the sandbox into the user's own state."""
+    _assert_real_root_untouched()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _sandbox_runtime_root():
     """Guard the import-time sandbox and tear it down at session end.
 
-    The environment (VIBE_TRADING_HOME/HOME/USERPROFILE) is installed at
-    conftest import time above — before collection — so both import-time-baked
-    constants and runtime ``Path.home()`` calls resolve to the temp sandbox,
-    never the real ``~/.vibe-trading``. This fixture only asserts that the
-    invariant is still active and removes the temp dir at session end. The
+    Home is redirected at conftest import time above — before collection, so
+    constants baked at module import resolve there too. This fixture only asserts
+    the invariant is still active and removes the temp dir at session end. The
     function-scoped ``_reset_env_config`` fixture snapshots the environment each
-    test, so the sandbox values survive every test while per-test monkeypatches
-    still work.
+    test, so the sandbox survives every test while per-test monkeypatches keep
+    working.
     """
-    assert os.environ["VIBE_TRADING_HOME"] == str(_SANDBOX_HOME / ".vibe-trading")
     assert os.environ["HOME"] == str(_SANDBOX_HOME)
     assert os.environ["USERPROFILE"] == str(_SANDBOX_HOME)
     yield _SANDBOX_HOME / ".vibe-trading"
