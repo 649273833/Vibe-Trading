@@ -39,6 +39,10 @@ _ATTRIBUTION_BENCHMARK_VARIANCE_FLOOR = 1e-16
 _ATTRIBUTION_CASH_WEIGHT_TOLERANCE = 1e-6
 #: Smallest invested weight still reported in the invested/cash fallback.
 _ATTRIBUTION_MIN_INVESTED_WEIGHT = 1e-9
+#: Net asset-class weight below which asset-class Brinson degrades to the
+#: invested/cash fallback instead of dividing by the class weight (a
+#: market-neutral pair inside one class nets to zero and would crash).
+_ATTRIBUTION_CLASS_WEIGHT_FLOOR = 1e-9
 #: Annualization factor used when the run's interval is unknown.
 _ATTRIBUTION_DEFAULT_BARS_PER_YEAR = 252
 
@@ -225,12 +229,30 @@ def _attribution_benchmark_returns_from_equity(benchmark_equity: List[float]) ->
     return returns
 
 
+def _attribution_symbol_is_path_safe(symbol: str) -> bool:
+    """Reject symbols that could escape the artifacts directory when used in paths.
+
+    Symbols come from ``positions.csv`` headers and ``config.json`` codes and
+    are interpolated into ``ohlcv_<symbol>.csv`` file names, so path
+    separators, ``..`` sequences, and NUL bytes must never reach the path join.
+    """
+    return (
+        bool(symbol)
+        and "\x00" not in symbol
+        and "/" not in symbol
+        and "\\" not in symbol
+        and ".." not in symbol
+    )
+
+
 def _attribution_symbol_cumulative_return(run_dir: Path, symbol: str) -> Optional[float]:
     """Buy-and-hold close-to-close return for one symbol from its OHLCV artifact.
 
     Returns ``last_close / first_close - 1`` over the date-sorted rows, or
     ``None`` when the artifact is missing, too short, or starts non-positive.
     """
+    if not _attribution_symbol_is_path_safe(symbol):
+        return None
     fieldnames, rows = _attribution_read_csv(run_dir / "artifacts" / f"ohlcv_{symbol}.csv")
     if fieldnames is None or "close" not in fieldnames or not rows:
         return None
@@ -256,12 +278,15 @@ def _attribution_equal_weight_returns(
 
     Used as the auto-benchmark series when ``equity.csv`` carries no
     ``benchmark_equity`` column. A symbol's first observed date contributes
-    0.0. Returns ``None`` when any date lacks symbol coverage.
+    0.0. A date with no symbol coverage at all fails the whole series
+    (``None``); dates with partial coverage average the available subset.
     """
     if not codes or not dates:
         return None
     per_symbol: List[Dict[str, float]] = []
     for symbol in codes:
+        if not _attribution_symbol_is_path_safe(symbol):
+            continue
         fieldnames, rows = _attribution_read_csv(run_dir / "artifacts" / f"ohlcv_{symbol}.csv")
         if fieldnames is None or "close" not in fieldnames or not rows:
             continue
@@ -541,7 +566,7 @@ def _attribution_brinson_section(
     weights = _attribution_load_position_weights(run_dir, notes)
     if weights is None:
         return None
-    if all(abs(weight) <= 0.0 for weight in weights.values()):
+    if all(weight == 0.0 for weight in weights.values()):
         notes.append("brinson attribution skipped: all position weights are zero")
         return None
 
@@ -574,7 +599,9 @@ def _attribution_brinson_symbol_mode(
             returns[symbol] = symbol_return
     included = [symbol for symbol in symbols if symbol in returns]
     if not included:
-        notes.append("brinson attribution skipped: positions.csv could not be parsed")
+        notes.append(
+            "brinson attribution skipped: no per-symbol returns could be resolved from ohlcv artifacts"
+        )
         return None
 
     portfolio_weights = {symbol: weights.get(symbol, 0.0) for symbol in included}
@@ -618,13 +645,16 @@ def _attribution_brinson_asset_class_mode(
     if benchmark_equity_state != "ok" or not benchmark_equity:
         notes.append("brinson attribution skipped: no benchmark_equity series in equity.csv")
         return None
+    if benchmark_equity[0] <= 0.0:
+        notes.append("brinson attribution skipped: benchmark_equity starts at a non-positive value")
+        return None
     benchmark_cumulative = benchmark_equity[-1] / benchmark_equity[0] - 1.0
     benchmark_class = str(_detect_market(benchmark_ticker))
 
     class_weights: Dict[str, float] = {}
     class_return_sums: Dict[str, float] = {}
     for symbol, weight in weights.items():
-        if abs(weight) <= 0.0:
+        if weight == 0.0:
             continue
         asset_class = str(_detect_market(symbol))
         class_weights[asset_class] = class_weights.get(asset_class, 0.0) + weight
@@ -636,7 +666,9 @@ def _attribution_brinson_asset_class_mode(
     portfolio_returns_by_class: Dict[str, float] = {}
     degraded = False
     for asset_class, class_weight in class_weights.items():
-        if asset_class not in class_return_sums:
+        # A class whose long/short weights net to zero (market-neutral pair
+        # inside one class) would divide by zero below; degrade instead.
+        if asset_class not in class_return_sums or abs(class_weight) <= _ATTRIBUTION_CLASS_WEIGHT_FLOOR:
             degraded = True
             break
         portfolio_weights[asset_class] = class_weight

@@ -309,6 +309,37 @@ def test_symlinked_cache_file_rejected_without_write_through(tmp_path: Path, mon
     assert target.read_text(encoding="utf-8") == "sentinel"
 
 
+def test_symlinked_positions_csv_rejected_without_read(tmp_path: Path, monkeypatch) -> None:
+    """A symlinked ``positions.csv`` is rejected like a symlinked artifacts dir.
+
+    The artifacts directory itself is real here; only positions.csv is a
+    symlink. Following it would disclose the target file's header line in the
+    response, so the endpoint must treat it as having no positions artifact.
+    """
+    run_dir = tmp_path / "runs" / RUN_ID
+    (run_dir / "artifacts").mkdir(parents=True)
+    target = tmp_path / "secret.csv"
+    target.write_text("timestamp,LEAKED.SECRET\n2026-08-01T00:00:00,1.0\n", encoding="utf-8")
+    (run_dir / "artifacts" / "positions.csv").symlink_to(target)
+    client = _client(tmp_path, monkeypatch)
+
+    with patch("src.tools.sector_tool.resolve_secid") as resolve, patch(
+        "src.tools.sector_tool.get_json"
+    ) as get:
+        response = client.get(f"/runs/{RUN_ID}/positions/sectors")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "run_id": RUN_ID,
+        "symbols": {},
+        "note": "no positions artifact",
+    }
+    resolve.assert_not_called()
+    get.assert_not_called()
+    assert target.read_text(encoding="utf-8").startswith("timestamp,LEAKED.SECRET")
+
+
 # ============================================================================
 # Endpoint: bounded contract for large books
 # ============================================================================

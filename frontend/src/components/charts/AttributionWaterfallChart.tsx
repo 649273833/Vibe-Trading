@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import i18n from "@/i18n";
 import type { AttributionBrinson } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
 import { getPnlColors } from "@/lib/pnl-colors";
-import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
-import { useThemeDark } from "@/lib/theme-store";
+import { useChartLifecycle } from "@/hooks/useChartLifecycle";
 
 export interface WaterfallBar {
   base: number;
@@ -41,15 +40,10 @@ interface Props {
 
 export function AttributionWaterfallChart({ brinson, height = 300 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const dark = useThemeDark();
 
-  useEffect(() => {
-    if (!ref.current) return;
+  useChartLifecycle(ref, () => {
     const t = getChartTheme();
     const pnl = getPnlColors();
-    const chart = echarts.init(ref.current);
-    chart.group = CHART_GROUP;
-    connectCharts();
 
     const bars = buildWaterfallBars(brinson);
     const categories = [
@@ -77,7 +71,7 @@ export function AttributionWaterfallChart({ brinson, height = 300 }: Props) {
       },
     }));
 
-    chart.setOption({
+    return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis",
@@ -125,23 +119,8 @@ export function AttributionWaterfallChart({ brinson, height = 300 }: Props) {
           barWidth: "45%",
         },
       ],
-    });
-
-    let resizeFrame: number | null = null;
-    const ro = new ResizeObserver(() => {
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = null;
-        chart.resize();
-      });
-    });
-    ro.observe(ref.current!);
-    return () => {
-      ro.disconnect();
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      chart.dispose();
     };
-  }, [brinson, dark]);
+  }, [brinson]);
 
   return <div ref={ref} style={{ height }} />;
 }

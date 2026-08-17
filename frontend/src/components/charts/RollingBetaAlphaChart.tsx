@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import i18n from "@/i18n";
 import type { AttributionRollingPoint } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
-import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
+import { useChartLifecycle } from "@/hooks/useChartLifecycle";
 import { escapeHtml } from "@/lib/escapeHtml";
-import { useThemeDark } from "@/lib/theme-store";
 
 interface Props {
   data: AttributionRollingPoint[];
@@ -13,14 +12,9 @@ interface Props {
 
 export function RollingBetaAlphaChart({ data, height = 280 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const dark = useThemeDark();
 
-  useEffect(() => {
-    if (!ref.current || data.length === 0) return;
+  useChartLifecycle(ref, () => {
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
-    chart.group = CHART_GROUP;
-    connectCharts();
 
     const betaLabel = i18n.t("runDetail.attrBeta");
     const alphaLabel = i18n.t("runDetail.attrAlpha");
@@ -28,7 +22,7 @@ export function RollingBetaAlphaChart({ data, height = 280 }: Props) {
     const betas = data.map((d) => +d.beta.toFixed(4));
     const alphas = data.map((d) => +(d.alpha_annualized * 100).toFixed(4));
 
-    chart.setOption({
+    return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis",
@@ -105,23 +99,8 @@ export function RollingBetaAlphaChart({ data, height = 280 }: Props) {
           lineStyle: { color: t.warningColor, width: 1.5 },
         },
       ],
-    });
-
-    let resizeFrame: number | null = null;
-    const ro = new ResizeObserver(() => {
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = null;
-        chart.resize();
-      });
-    });
-    ro.observe(ref.current!);
-    return () => {
-      ro.disconnect();
-      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      chart.dispose();
     };
-  }, [data, dark]);
+  }, [data]);
 
   if (data.length === 0) {
     return <div className="text-muted-foreground text-sm p-4">{i18n.t("runDetail.attrNoFactor")}</div>;

@@ -505,10 +505,10 @@ def _read_positions_symbols(path: Path) -> List[str]:
 
     Returns:
         Symbol column names in file order; empty when the file is missing,
-        empty, or unreadable.
+        a symlink, empty, or unreadable.
     """
     try:
-        if not path.exists():
+        if not path.exists() or path.is_symlink():
             return []
         with path.open("r", encoding="utf-8", newline="") as handle:
             fieldnames = csv.DictReader(handle).fieldnames
@@ -630,11 +630,16 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
         "total_symbols": len(symbols),
         "symbol_limit": _POSITIONS_SECTOR_MAX_SYMBOLS,
     }
+    tmp_path = cache_path.with_name(f".sector_map.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, cache_path)
     except OSError:
-        pass
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     return payload
 
 

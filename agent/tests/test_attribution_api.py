@@ -301,3 +301,124 @@ def test_attribution_long_series_downsampled_with_last_point_pinned(
     benchmark[0] = 0.0
     expected_total = float(np.prod(1.0 + (0.001 + 1.2 * benchmark)) - 1.0)
     assert factor["cumulative"][-1]["portfolio"] == pytest.approx(expected_total, abs=1e-6)
+
+
+def _build_market_neutral_run(tmp_path: Path, run_id: str) -> Path:
+    """Explicit-benchmark run whose only asset class nets to zero (+0.5/-0.5 pair)."""
+    run_dir = tmp_path / "runs" / run_id
+    benchmark = np.array([0.001 if i % 2 else -0.001 for i in range(N_BARS)])
+    benchmark[0] = 0.0
+    portfolio = 0.0005 + 0.8 * benchmark
+    dates = _trading_dates(N_BARS)
+
+    _write_equity(run_dir, dates, portfolio, benchmark)
+    _write_csv(
+        run_dir / "artifacts" / "positions.csv",
+        ["timestamp", SYMBOL_A, SYMBOL_B],
+        [[day, "0.5", "-0.5"] for day in dates],
+    )
+    _write_ohlcv(run_dir, SYMBOL_A, dates, 100.0, 110.0)
+    _write_ohlcv(run_dir, SYMBOL_B, dates, 100.0, 95.0)
+    _write_config(run_dir, [SYMBOL_A, SYMBOL_B], benchmark="SPY.US")
+    _write_metrics(run_dir, extra={"benchmark_ticker": "SPY.US"})
+    return run_dir
+
+
+def test_attribution_market_neutral_pair_degrades_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A +0.5/-0.5 pair nets its asset-class weight to zero: the class return
+    would divide by zero, so asset-class mode must degrade, not 500."""
+    client = _client(tmp_path, monkeypatch)
+    _build_market_neutral_run(tmp_path, "attr-pair")
+
+    response = client.get("/runs/attr-pair/attribution")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exists"] is True
+    assert data["factor"] is not None
+    assert data["factor"]["beta"] == pytest.approx(0.8, abs=1e-6)
+    brinson = data["brinson"]
+    assert brinson is not None
+    assert brinson["mode"] == "invested_cash"
+    sectors = {sector["sector"]: sector for sector in brinson["sectors"]}
+    assert sectors["invested"]["portfolio_weight"] == pytest.approx(1.0, abs=1e-9)
+    assert any("invested/cash" in note for note in data["notes"])
+
+
+def test_attribution_benchmark_equity_starting_at_zero_skips_brinson(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """benchmark_equity[0] == 0 would divide by zero in the cumulative return;
+    the endpoint must skip Brinson with a note instead of crashing."""
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "attr-zero-bench"
+    dates = _trading_dates(N_BARS)
+    rows = [
+        [day, "0.001", f"{1_000_000.0 + index:.6f}", "0.0", f"{index:.6f}", "0.0005"]
+        for index, day in enumerate(dates)
+    ]
+    _write_csv(
+        run_dir / "artifacts" / "equity.csv",
+        ["timestamp", "ret", "equity", "drawdown", "benchmark_equity", "active_ret"],
+        rows,
+    )
+    _write_csv(
+        run_dir / "artifacts" / "positions.csv",
+        ["timestamp", SYMBOL_A],
+        [[day, "0.6"] for day in dates],
+    )
+    _write_ohlcv(run_dir, SYMBOL_A, dates, 100.0, 110.0)
+    _write_config(run_dir, [SYMBOL_A], benchmark="SPY.US")
+    _write_metrics(run_dir, extra={"benchmark_ticker": "SPY.US"})
+
+    response = client.get("/runs/attr-zero-bench/attribution")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exists"] is True
+    assert data["brinson"] is None
+    assert any("non-positive" in note for note in data["notes"])
+
+
+def test_attribution_artifact_symbol_path_traversal_is_contained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symbols from positions.csv headers are interpolated into ohlcv file
+    names; traversal-shaped symbols must be ignored, not resolved as paths.
+
+    The fixture plants ``run_dir/target.csv`` plus an ``artifacts/ohlcv_x``
+    directory so that on unpatched code the symbol ``x/../../target`` would
+    resolve to ``ohlcv_x/../../target.csv`` == ``run_dir/target.csv`` and leak
+    its return series into the Brinson sectors.
+    """
+    client = _client(tmp_path, monkeypatch)
+    run_dir = tmp_path / "runs" / "attr-traversal"
+    dates = _trading_dates(N_BARS)
+    rng = np.random.default_rng(13)
+    benchmark = rng.normal(0.0004, 0.008, N_BARS)
+    benchmark[0] = 0.0
+    portfolio = 0.0002 + 0.9 * benchmark
+    _write_equity(run_dir, dates, portfolio, benchmark)
+    (run_dir / "artifacts" / "ohlcv_x").mkdir(parents=True)
+    _write_csv(run_dir / "target.csv", ["trade_date", "close"], [[dates[0], "100.0"], [dates[-1], "999.0"]])
+    _write_csv(
+        run_dir / "artifacts" / "positions.csv",
+        ["timestamp", SYMBOL_A, "x/../../target"],
+        [[day, "0.6", "0.4"] for day in dates],
+    )
+    _write_ohlcv(run_dir, SYMBOL_A, dates, 100.0, 110.0)
+    _write_config(run_dir, [SYMBOL_A, "x/../../target"])
+    _write_metrics(run_dir)
+
+    response = client.get("/runs/attr-traversal/attribution")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exists"] is True
+    brinson = data["brinson"]
+    assert brinson is not None
+    assert brinson["mode"] == "symbol"
+    sectors = {sector["sector"]: sector for sector in brinson["sectors"]}
+    assert set(sectors) == {SYMBOL_A, "Cash"}
