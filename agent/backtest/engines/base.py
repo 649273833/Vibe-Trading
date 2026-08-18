@@ -414,6 +414,15 @@ class BaseEngine(ABC):
         # insufficient cash can all make the executed book differ from the
         # optimiser's request.
         self.actual_position_snapshots: List[tuple[pd.Timestamp, Dict[str, float]]] = []
+        # Hold mode executes a target change only when the direction flips or
+        # the target reaches zero, so a same-direction resize is dropped. That
+        # is a legitimate mode -- it is what "enter once, hold to exit" means --
+        # but dropping a request the strategy actually made must not be silent
+        # (#918). The previous target is what makes the difference visible:
+        # comparing against the CURRENT weight would fire on every bar of a
+        # buy-and-hold position, whose weight drifts with price by design.
+        self._last_target_weight: Dict[str, float] = {}
+        self.dropped_target_adjustments: List[Dict[str, Any]] = []
         self._bar_idx: int = 0
         self._active_symbol: str = ""  # set by _rebalance/_close_position for subclass use
 
@@ -803,6 +812,31 @@ class BaseEngine(ABC):
         m["rebalance_turnover_mean"] = rebalance_notes["summary"]["turnover_mean"]
         m["rebalance_turnover_max"] = rebalance_notes["summary"]["turnover_max"]
 
+        # The notes above count what the STRATEGY asked for. Under
+        # position_adjustment="hold" a same-direction resize is not executed,
+        # so a run can report rebalances whose weight changes never reached the
+        # book. Say which ones, rather than leaving the reader to reconcile a
+        # rebalance count against a trade log that does not match it (#918).
+        m["position_adjustment"] = self.position_adjustment
+        m["dropped_target_adjustment_count"] = len(self.dropped_target_adjustments)
+        m["dropped_target_adjustments"] = [
+            {
+                "timestamp": str(event["timestamp"]),
+                "symbol": event["symbol"],
+                "previous_target_weight": round(event["previous_target_weight"], 6),
+                "requested_target_weight": round(event["requested_target_weight"], 6),
+            }
+            for event in self.dropped_target_adjustments[:20]
+        ]
+        if self.dropped_target_adjustments:
+            logger.warning(
+                "position_adjustment='hold' dropped %d target change(s) across %d "
+                "symbol(s); the report's rebalance_count describes requests, not "
+                "fills. Set position_adjustment='rebalance' to execute them.",
+                len(self.dropped_target_adjustments),
+                len({event["symbol"] for event in self.dropped_target_adjustments}),
+            )
+
         # Portfolio Studio: risk x-ray over the strategy's average basket.
         # Short runs and never-invested strategies raise ValueError in the
         # derivation and simply get no x-ray artifact.
@@ -912,6 +946,8 @@ class BaseEngine(ABC):
             if self.position_adjustment == "rebalance":
                 self._execute_target_rebalance(target_weights, data_map, ts, equity, codes)
                 target_weights = {}
+            else:
+                self._record_dropped_target_adjustments(target_weights, ts)
 
             # b. In legacy hold mode, release capital before opening replacement
             # positions or increasing other positions.  A
@@ -1237,6 +1273,61 @@ class BaseEngine(ABC):
             margin=margin,
             commission=commission,
         )
+
+    # A target move smaller than this is optimiser float noise, not a decision.
+    _TARGET_CHANGE_EPSILON = 1e-6
+    # Detail lines are logged for the first few only; the rest are counted.
+    _DROPPED_ADJUSTMENT_LOG_LIMIT = 3
+
+    def _record_dropped_target_adjustments(
+        self, target_weights: Dict[str, Optional[float]], ts: pd.Timestamp
+    ) -> None:
+        """Note every same-direction resize that hold mode is about to drop.
+
+        Only a change in the TARGET counts. A held position's weight drifts
+        with price on its own, so comparing the target against the current
+        weight would report a buy-and-hold position as a dropped request on
+        every bar.
+
+        Args:
+            target_weights: This bar's target per symbol; ``None`` means the
+                strategy produced no decision and nothing is dropped.
+            ts: The decision timestamp, recorded with each dropped request.
+        """
+        for symbol, target_w in target_weights.items():
+            if target_w is None:
+                continue
+            previous = self._last_target_weight.get(symbol)
+            self._last_target_weight[symbol] = target_w
+            if previous is None or abs(target_w - previous) <= self._TARGET_CHANGE_EPSILON:
+                continue
+            position = self.positions.get(symbol)
+            if position is None:
+                continue
+            target_dir = 1 if target_w > 1e-9 else (-1 if target_w < -1e-9 else 0)
+            # A flip or an exit IS executed in hold mode; only a same-direction
+            # resize is dropped.
+            if target_dir == 0 or target_dir != position.direction:
+                continue
+            self.dropped_target_adjustments.append(
+                {
+                    "timestamp": ts,
+                    "symbol": symbol,
+                    "previous_target_weight": previous,
+                    "requested_target_weight": target_w,
+                    "direction": position.direction,
+                }
+            )
+            if len(self.dropped_target_adjustments) <= self._DROPPED_ADJUSTMENT_LOG_LIMIT:
+                logger.warning(
+                    "position_adjustment='hold' dropped a resize: %s at %s asked for "
+                    "weight %.6f (was %.6f) and the position was left unchanged. "
+                    "Set position_adjustment='rebalance' to execute target changes.",
+                    symbol,
+                    ts,
+                    target_w,
+                    previous,
+                )
 
     def _execute_target_rebalance(
         self,
