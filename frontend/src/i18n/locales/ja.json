@@ -162,7 +162,18 @@
     "delete": "削除",
     "deleteAria": "スケジュールを削除：{{prompt}}",
     "confirmDelete": "削除を確認",
-    "confirmDeleteAria": "スケジュールの削除を確認：{{prompt}}"
+    "confirmDeleteAria": "スケジュールの削除を確認：{{prompt}}",
+    "deliveryChannelLabel": "配信先チャンネル",
+    "deliveryChannelPlaceholder": "telegram、feishu など（空欄ならアプリ内のみ）",
+    "deliveryTargetLabel": "チャンネル送信先",
+    "deliveryTargetPlaceholder": "チャット / グループ / ユーザー ID",
+    "deliveryHint": "既定はオフです。ブリーフィングは実行の**完了後**に配信され、スケジュール時ではありません。",
+    "deliveryTargetRequired": "そのチャンネルの送信先を指定するか、チャンネルを空にしてください。",
+    "delivery_none": "次回の実行完了後に {{channel}} へ配信します",
+    "delivery_pending": "{{channel}} への配信待ちです",
+    "delivery_sending": "{{channel}} へ配信中です",
+    "delivery_sent": "{{channel}} へ配信しました",
+    "delivery_failed": "{{channel}} へ配信できませんでした"
   },
   "reports": {
     "badge": "レポート",

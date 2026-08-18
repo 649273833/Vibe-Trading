@@ -162,7 +162,18 @@
     "delete": "删除",
     "deleteAria": "删除定时任务：{{prompt}}",
     "confirmDelete": "确认删除",
-    "confirmDeleteAria": "确认删除定时任务：{{prompt}}"
+    "confirmDeleteAria": "确认删除定时任务：{{prompt}}",
+    "deliveryChannelLabel": "推送到频道",
+    "deliveryChannelPlaceholder": "telegram、feishu…（留空则结果只留在应用内）",
+    "deliveryTargetLabel": "频道目标",
+    "deliveryTargetPlaceholder": "会话 / 群 / 用户 id",
+    "deliveryHint": "默认关闭。简报在运行**结束后**推送，而不是在排定时推送。",
+    "deliveryTargetRequired": "请为该频道填写目标，或清空频道。",
+    "delivery_none": "下次运行结束后推送到 {{channel}}",
+    "delivery_pending": "待推送到 {{channel}}",
+    "delivery_sending": "正在推送到 {{channel}}",
+    "delivery_sent": "已推送到 {{channel}}",
+    "delivery_failed": "推送到 {{channel}} 失败"
   },
   "reports": {
     "badge": "报告",

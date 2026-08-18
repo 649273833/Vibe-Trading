@@ -162,7 +162,18 @@
     "delete": "삭제",
     "deleteAria": "예약 삭제: {{prompt}}",
     "confirmDelete": "삭제 확인",
-    "confirmDeleteAria": "예약 삭제 확인: {{prompt}}"
+    "confirmDeleteAria": "예약 삭제 확인: {{prompt}}",
+    "deliveryChannelLabel": "전달할 채널",
+    "deliveryChannelPlaceholder": "telegram, feishu … (비우면 앱 안에만 남습니다)",
+    "deliveryTargetLabel": "채널 대상",
+    "deliveryTargetPlaceholder": "채팅 / 그룹 / 사용자 ID",
+    "deliveryHint": "기본은 꺼짐입니다. 브리핑은 예약 시점이 아니라 실행이 **끝난 뒤** 전달됩니다.",
+    "deliveryTargetRequired": "해당 채널의 대상을 지정하거나 채널을 비워 주세요.",
+    "delivery_none": "다음 실행이 끝나면 {{channel}}(으)로 전달합니다",
+    "delivery_pending": "{{channel}}(으)로 전달 대기 중",
+    "delivery_sending": "{{channel}}(으)로 전달하는 중",
+    "delivery_sent": "{{channel}}(으)로 전달했습니다",
+    "delivery_failed": "{{channel}}(으)로 전달하지 못했습니다"
   },
   "reports": {
     "badge": "리포트",

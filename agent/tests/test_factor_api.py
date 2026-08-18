@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import api_server
 from src.api import runs_routes
+from tests.module_os_helpers import patch_module_os
 
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
@@ -246,7 +247,7 @@ def test_factor_scan_caps_directory_entries(tmp_path: Path, monkeypatch) -> None
             assert entries_seen <= entry_limit
             return entry
 
-    monkeypatch.setattr(runs_routes.os, "scandir", GuardedScandir)
+    patch_module_os(monkeypatch, runs_routes, scandir=GuardedScandir)
 
     assert runs_routes._has_factor_artifacts(run_dir) is False
     assert entries_seen == entry_limit
