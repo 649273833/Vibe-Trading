@@ -305,6 +305,32 @@ _INDICATOR_VALUE_RE = re.compile(
 # it, the number survives masking and is compared against observed OHLC as a
 # price claim even though it is a prospective level, not an observed quote.
 _CURRENCY_TOKEN = r"(?:\$|US\$|C\$|HK\$|CAD|USD|CNY|HKD|¥|￥)?"
+
+# An order line is an instruction, not an observation. "100 @ $3.50" states
+# where a limit sits and "100" is a share count that was never a price at all,
+# yet both went to the OHLC check and rejected a weekly update whose quotes
+# were correct. This is the same category as the target/stop levels below -- a
+# level the report proposes, not one the data source reported.
+_ORDER_LEVEL_RE = re.compile(
+    r"(?:"
+    # (a) "<qty> [股|shares] @ <price>" -- the whole clause, quantity included
+    r"\d[\d,]*(?:\.\d+)?\s*(?:股|shares?)?\s*@\s*"
+    + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"|"
+    # (b) a bare "@ <price>" with no quantity in front
+    r"@\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"|"
+    # (c) an order label introducing the level
+    # 买入价/卖出价 are deliberately absent: in running prose they name the
+    # price a report OBSERVED entering at, not an instruction, and masking
+    # them stopped a genuinely ungrounded quote from being rejected.
+    r"(?:挂单|限价单|限价|委托价?|订单"
+    r"|limit\s+(?:order|price)|\bGTC\b|\bGTD\b|\bIOC\b|\bFOK\b)"
+    r"\s*(?:为|是|at|@|=)?\s*[:：]?\s*"
+    + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r")" + _RANGE_TAIL,
+    re.IGNORECASE,
+)
 # A historical reference names a price the instrument once traded at — an
 # all-time high, a 52-week extreme — and the answer is not claiming it as
 # today's observed quote. "8/12 高 149.60 为 6/16 ATH 225.64 以来最高" was
@@ -2366,6 +2392,7 @@ class GroundingLedger:
         masked = _SHORT_DATE_RE.sub(" ", masked)
         masked = _DASH_DATE_RE.sub(" ", masked)
         masked = _PERCENT_RANGE_RE.sub(" ", masked)
+        masked = _ORDER_LEVEL_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)

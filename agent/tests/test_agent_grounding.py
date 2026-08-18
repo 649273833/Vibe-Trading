@@ -2204,3 +2204,38 @@ def test_a_level_stated_as_a_range_masks_both_bounds(tmp_path: Path) -> None:
         "000543.SZ 收盘价 8.20 CNY，目标价 10-20 元（source: tencent）"
     )
     assert result.valid is True, result.issues
+
+
+def test_an_order_line_is_an_instruction_not_an_observation(tmp_path: Path) -> None:
+    """"100 @ $3.50" states where a limit sits; 100 was never a price at all.
+
+    A GTC summary in a weekly update was read as two observed quotes and
+    rejected against the session's range, which is the same category error the
+    target/stop masks already prevent.
+    """
+    extract = GroundingLedger._numbers_without_dates_or_percent
+
+    for draft in (
+        "GTC 100 @ $3.50",
+        "buy 100 @ $3.50 GTC",
+        "挂单 100 股 @ 4.00",
+        "限价单 100 @ 3.50",
+        "委托价 3.50",
+    ):
+        assert extract(draft) == [], draft
+
+    # 买入价/卖出价 stay OUT of the label set: in running prose they name the
+    # price a report says it observed, and masking them let an ungrounded
+    # quote through the gate.
+    assert extract("买入价 0.881") == [0.881]
+
+    # An observed quote standing beside an order line is still checked, and a
+    # bare handle carries no price to mask.
+    assert extract("现价 8.20 CNY，挂单 100 @ 8.50") == [8.2]
+    assert extract("联系 @user 获取") == []
+
+    ledger = _screened_ledger(tmp_path)
+    result = ledger.validate_final_answer(
+        "000543.SZ 收盘价 8.20 CNY，挂单 100 股 @ 12.00（source: tencent）"
+    )
+    assert result.valid is True, result.issues
