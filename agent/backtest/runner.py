@@ -21,12 +21,6 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
 from backtest.loaders.registry import (
     FALLBACK_CHAINS,
     LOADER_REGISTRY,
@@ -1146,6 +1140,19 @@ def main(run_dir: Path) -> None:
             file is read so an arbitrary filesystem location cannot be used
             to source ``code/signal_engine.py``.
     """
+    # Loading `.env` belongs to the process that RUNS a backtest, not to
+    # importing this module. At import time it ran during pytest collection --
+    # before the per-test os.environ snapshot exists -- so a developer's own
+    # LANGCHAIN_MODEL_NAME leaked into every later test and could not be undone
+    # by any fixture, which is how seven redaction tests failed locally while
+    # CI (with no .env checked out) stayed green.
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
     # Guard the CLI entry point with the same root whitelist the MCP
     # ``backtest`` tool already uses (src/tools/backtest_tool.py:23). Without
     # this, ``python -m backtest.runner /tmp/attacker_path`` would happily

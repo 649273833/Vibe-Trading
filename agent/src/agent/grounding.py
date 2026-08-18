@@ -239,14 +239,15 @@ _DASH_DATE_RE = re.compile(
     r")(?![\d/-])",
     re.IGNORECASE,
 )
-# A percentage range masks only its upper bound through the "%" tail check
-# below, because the sign touches the second number: "1–2%" left 1 behind
-# (#983). Mask the span as a whole.
 # A level stated as a RANGE has the same shape: the separator touches the
 # second number, so masking "目标价 10" left "-20" behind and a negative price
 # matches no OHLC window at all -- a guaranteed rejection of a correct draft.
 # The tail is optional, so a single-value level is unaffected.
 _RANGE_TAIL = r"(?:\s*[-–—~～至到]\s*[-+]?\d[\d,]*(?:\.\d+)?)?"
+
+# A percentage range masks only its upper bound through the "%" tail check
+# below, because the sign touches the second number: "1–2%" left 1 behind
+# (#983). Mask the span as a whole.
 _PERCENT_RANGE_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?\s*[%％]"
 )
