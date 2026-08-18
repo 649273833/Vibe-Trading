@@ -2160,3 +2160,47 @@ def test_in_text_decimal_survives_list_marker_mask(
     ):
         result = ledger.validate_final_answer(draft)
         assert result.valid is True, (draft, result.issues)
+
+
+def test_dash_form_trading_day_is_a_date_but_a_price_range_is_not() -> None:
+    """A report writes the day as "08-10(一)"; a target still writes "10-20 元".
+
+    The dash carries both meanings, so the mask splits them: a zero-padded
+    month reads as a date on its own, October through December need a weekday
+    or session marker, and a range with neither stays checkable.
+    """
+    extract = GroundingLedger._numbers_without_dates_or_percent
+
+    assert extract("08-10(一) 收盘 8.20 CNY") == [8.2]
+    assert extract("08-10盘中最低 8.20 CNY") == [8.2]
+    assert extract("08-10 close 8.20 USD") == [8.2]
+    assert extract("10-20(周一)盘中 8.20 CNY") == [8.2]
+
+    # No date marker and no zero-padded month: an ordinary quoted range, and
+    # masking it would stop checking a claim the ledger exists to check.
+    assert extract("区间 8-10 元") == [8.0, 10.0]
+    assert extract("跌 12-25 元") == [12.0, 25.0]
+
+
+def test_a_level_stated_as_a_range_masks_both_bounds(tmp_path: Path) -> None:
+    """Masking only the lower bound left a negative upper bound behind.
+
+    The separator touches the second number, so "目标价 10-20 元" used to
+    reduce to "-20" — and a negative price is outside every OHLC window, which
+    made a correct draft impossible to pass rather than merely unchecked.
+    """
+    extract = GroundingLedger._numbers_without_dates_or_percent
+
+    for draft in ("目标价 10-20 元", "支撑位 8-10 元", "阻力位 12.0~13.5", "52周高 15.0-16.0"):
+        assert extract(draft) == [], draft
+
+    # A single-value level is unchanged, and an observed quote beside a ranged
+    # level is still extracted and checked.
+    assert extract("止损位 7.5 元") == []
+    assert extract("目标价 10-20 元，现价 8.20 CNY") == [8.2]
+
+    ledger = _screened_ledger(tmp_path)
+    result = ledger.validate_final_answer(
+        "000543.SZ 收盘价 8.20 CNY，目标价 10-20 元（source: tencent）"
+    )
+    assert result.valid is True, result.issues

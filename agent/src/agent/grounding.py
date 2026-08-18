@@ -214,9 +214,30 @@ _DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b", re.ASCII)
 _SHORT_DATE_RE = re.compile(
     r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![\d/])"
 )
+# A report writes a trading day as "08-10(一)" or "08-10盘中", and the dash form
+# leaked 8 and 10 as candidate prices exactly as "8/5" once did. The dash is
+# NOT symmetric with the slash, though: it also separates a range, and "目标价
+# 10-20 元" must stay checkable. So the two halves are split -- a zero-padded
+# month (01-09) is a formatting intent no price range imitates, while 10/11/12
+# have to carry a weekday or session marker to read as a date.
+_DASH_DATE_RE = re.compile(
+    r"(?<![\d/-])(?:"
+    r"0[1-9]-(?:0[1-9]|[12]\d|3[01])"
+    r"|1[0-2]-(?:0[1-9]|[12]\d|3[01])"
+    r"(?=\s*(?:[(（]\s*(?:周|星期)?[一二三四五六日天]\s*[)）]"
+    r"|盘中|盘后|盘前|收盘|开盘|最低|最高"
+    r"|\s*(?:close|open|intraday|low|high)\b))"
+    r")(?![\d/-])",
+    re.IGNORECASE,
+)
 # A percentage range masks only its upper bound through the "%" tail check
 # below, because the sign touches the second number: "1–2%" left 1 behind
 # (#983). Mask the span as a whole.
+# A level stated as a RANGE has the same shape: the separator touches the
+# second number, so masking "目标价 10" left "-20" behind and a negative price
+# matches no OHLC window at all -- a guaranteed rejection of a correct draft.
+# The tail is optional, so a single-value level is unaffected.
+_RANGE_TAIL = r"(?:\s*[-–—~～至到]\s*[-+]?\d[\d,]*(?:\.\d+)?)?"
 _PERCENT_RANGE_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?\s*[%％]"
 )
@@ -302,7 +323,7 @@ _REFERENCE_LEVEL_RE = re.compile(
     r"上市以来(?:最高|最低)(?:点|位|价)?"
     r")"
     r"\s*(?:of|为|是|约|at)?\s*[:：]?\s*\(?"
-    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?" + _RANGE_TAIL,
     re.IGNORECASE,
 )
 # A date-anchored reference puts the historical extreme after the number:
@@ -368,18 +389,19 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
     r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)"
-    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
-    r"|"
+    r"\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?" + _RANGE_TAIL
+    + r"|"
     # (b) a level marker introducing the number
     r"(?:目标位|目标区|目标价|均值目标(?:价)?|平均目标(?:价)?|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
     r"支撑(?:阶梯|位|线)?|阻力(?:位|线)?|压力位|压力线|support(?:\s+(?:level|line|zone))?|"
     r"resistance(?:\s+(?:level|line|zone))?|target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
     r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*"
     + _CURRENCY_TOKEN
-    + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
-    r"|"
+    + r"\s*[-+]?\d[\d,]*(?:\.\d+)?" + _RANGE_TAIL
+    + r"|"
     # (c) the number followed by a level marker
-    r"" + _CURRENCY_TOKEN + r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"" + _CURRENCY_TOKEN + r"[-+]?\d[\d,]*(?:\.\d+)?" + _RANGE_TAIL
+    + r"\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach
@@ -2342,6 +2364,7 @@ class GroundingLedger:
         masked = _LOCALIZED_DATE_RE.sub(" ", masked)
         masked = _DATE_RE.sub(" ", masked)
         masked = _SHORT_DATE_RE.sub(" ", masked)
+        masked = _DASH_DATE_RE.sub(" ", masked)
         masked = _PERCENT_RANGE_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
