@@ -167,7 +167,18 @@
     "delete": "Eliminar",
     "deleteAria": "Eliminar ejecución programada: {{prompt}}",
     "confirmDelete": "Confirmar eliminación",
-    "confirmDeleteAria": "Confirmar eliminación de ejecución programada: {{prompt}}"
+    "confirmDeleteAria": "Confirmar eliminación de ejecución programada: {{prompt}}",
+    "deliveryChannelLabel": "Enviar al canal",
+    "deliveryChannelPlaceholder": "telegram, feishu… (vacío para que los resultados queden en la app)",
+    "deliveryTargetLabel": "Destino en el canal",
+    "deliveryTargetPlaceholder": "id de chat / grupo / usuario",
+    "deliveryHint": "Desactivado por defecto. El informe se envía **cuando la ejecución termina**, no cuando se programa.",
+    "deliveryTargetRequired": "Indica un destino para ese canal, o deja el canal vacío.",
+    "delivery_none": "Se enviará a {{channel}} tras la próxima ejecución",
+    "delivery_pending": "Informe pendiente de envío a {{channel}}",
+    "delivery_sending": "Enviando el informe a {{channel}}",
+    "delivery_sent": "Informe enviado a {{channel}}",
+    "delivery_failed": "No se pudo enviar a {{channel}}"
   },
   "reports": {
     "badge": "Informes",

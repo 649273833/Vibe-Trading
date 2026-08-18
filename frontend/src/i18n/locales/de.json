@@ -167,7 +167,18 @@
     "delete": "Löschen",
     "deleteAria": "Geplanten Lauf löschen: {{prompt}}",
     "confirmDelete": "Löschen bestätigen",
-    "confirmDeleteAria": "Löschen des geplanten Laufs bestätigen: {{prompt}}"
+    "confirmDeleteAria": "Löschen des geplanten Laufs bestätigen: {{prompt}}",
+    "deliveryChannelLabel": "An Kanal senden",
+    "deliveryChannelPlaceholder": "telegram, feishu … (leer lassen, dann bleibt alles in der App)",
+    "deliveryTargetLabel": "Ziel im Kanal",
+    "deliveryTargetPlaceholder": "Chat- / Gruppen- / Benutzer-ID",
+    "deliveryHint": "Standardmäßig aus. Das Briefing wird **nach dem Lauf** gesendet, nicht bei der Planung.",
+    "deliveryTargetRequired": "Geben Sie ein Ziel für diesen Kanal an, oder leeren Sie das Kanalfeld.",
+    "delivery_none": "Wird nach dem nächsten Lauf an {{channel}} gesendet",
+    "delivery_pending": "Briefing wartet auf Versand an {{channel}}",
+    "delivery_sending": "Briefing wird an {{channel}} gesendet",
+    "delivery_sent": "Briefing an {{channel}} gesendet",
+    "delivery_failed": "Versand an {{channel}} fehlgeschlagen"
   },
   "reports": {
     "badge": "Berichte",

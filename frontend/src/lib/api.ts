@@ -331,6 +331,13 @@ export interface ScheduledRun {
   failure_kind: string | null;
   config: Record<string, unknown>;
   timezone: string | null;
+  // Delivery is opt-in per monitor: a null channel means results stay in the
+  // app, which is what every monitor created before this did.
+  delivery_channel: string | null;
+  delivery_target: string | null;
+  delivery_status: string;
+  delivery_error: string | null;
+  delivery_updated_at: number | null;
 }
 
 export interface CreateScheduledRunRequest {
@@ -339,6 +346,8 @@ export interface CreateScheduledRunRequest {
   schedule: string;
   timezone?: string | null;
   config?: Record<string, unknown>;
+  delivery_channel?: string | null;
+  delivery_target?: string | null;
 }
 
 // --- Swarm types ---
