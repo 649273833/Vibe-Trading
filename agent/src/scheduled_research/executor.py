@@ -219,6 +219,8 @@ class ScheduledResearchExecutor:
         self._briefing_reader = briefing_reader
         self._channel_sender = channel_sender
         self._delivery_lease_ms = delivery_lease_ms
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._sweep_task: asyncio.Task | None = None
         self._tick_interval_ms = tick_interval_ms
         self._now_fn = now_fn
         self._enabled = enabled
@@ -342,6 +344,10 @@ class ScheduledResearchExecutor:
         return recovered
 
     async def _run(self) -> None:
+        # Captured here rather than at construction: the executor is built
+        # before the server's loop exists, and request_sweep needs a loop that
+        # is actually running to schedule onto.
+        self._loop = asyncio.get_running_loop()
         while not self._stopping:
             try:
                 await self.tick(self._now_fn())
@@ -480,6 +486,43 @@ class ScheduledResearchExecutor:
             return False
         claimed_at = job.delivery.updated_at
         return claimed_at is None or now_ms - claimed_at >= self._delivery_lease_ms
+
+    def request_sweep(self) -> None:
+        """Ask for a delivery sweep as soon as the loop is free.
+
+        Called from the session event listener, so it runs on whichever thread
+        published the event and must not block. Sweeps coalesce: one already in
+        flight covers anything that arrived while it was running, and the claim
+        makes an overlap harmless in any case. Without a running loop this is a
+        no-op — the periodic tick is what makes delivery correct, and this only
+        makes it prompt.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+        if self._sweep_task is not None and not self._sweep_task.done():
+            return
+
+        def _schedule() -> None:
+            if self._sweep_task is not None and not self._sweep_task.done():
+                return
+            self._sweep_task = loop.create_task(self._sweep_quietly())
+
+        try:
+            loop.call_soon_threadsafe(_schedule)
+        except RuntimeError:
+            # The loop closed between the check and the call; the next tick
+            # picks the row up.
+            pass
+
+    async def _sweep_quietly(self) -> None:
+        """Run a sweep whose failure must not escape into the event path."""
+        try:
+            await self.sweep_deliveries()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("requested delivery sweep failed", exc_info=True)
 
     async def sweep_deliveries(self) -> int:
         """Deliver every briefing whose run has reached a terminal state.
