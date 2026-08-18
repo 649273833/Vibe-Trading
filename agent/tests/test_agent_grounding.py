@@ -1119,6 +1119,36 @@ def test_price_validation_ignores_short_dates_and_percent_ranges(
         assert result.valid is True, (draft, result.issues)
 
 
+def test_numbers_without_dates_or_percent_masks_cjk_glued_iso_dates() -> None:
+    """An ISO date running into CJK text is one date, not three prices (#1122).
+
+    ``\b`` is Unicode-aware, so CJK letters count as word characters and
+    ``(2026-07-14最低)`` had no boundary after ``14`` -- the date survived and
+    contributed 2026/7/14 as candidate prices. ``re.ASCII`` restores the byte
+    boundary so the whole date masks while a genuine quote beside it stays.
+    """
+    assert (
+        GroundingLedger._numbers_without_dates_or_percent("若跌破观测支撑位0.980 CNY (2026-07-14最低)")
+        == []
+    )
+    assert (
+        GroundingLedger._numbers_without_dates_or_percent("收盘价 8.20 CNY 自2026-07-14以来最低")
+        == [8.2]
+    )
+
+
+def test_iso_date_running_into_cjk_text_is_still_masked(tmp_path: Path) -> None:
+    """The end-to-end gate no longer rejects a correct report over a glued date (#1122)."""
+    ledger = _screened_ledger(tmp_path)
+
+    for draft in (
+        "000543.SZ 收盘价 8.20 CNY（2026-07-14最低）（source: tencent）",
+        "000543.SZ 收盘价 8.20 CNY 自2026-07-14以来最低（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
+
+
 def test_short_date_mask_does_not_swallow_a_plain_ratio(tmp_path: Path) -> None:
     """The month/day mask is bounded, so an ordinary ratio still reads (#983).
 
