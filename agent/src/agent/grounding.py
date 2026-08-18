@@ -201,7 +201,12 @@ _RATE_FORMULA_IDENTITY_RE = re.compile(
     r"\b[01](?=\s*[-+]\s*(?:[A-Za-z_][A-Za-z0-9_]*_?rate\b|[^\d\s()+*/=-]{0,12}(?:成本率|费率|税率|滑点率)))",
     re.IGNORECASE,
 )
-_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+# re.ASCII keeps ``\b`` a *byte* word boundary. Without it, ``\w`` is
+# Unicode-aware and CJK letters count as word characters, so a date that runs
+# straight into Chinese text -- "(2026-07-14最低)" -- has no boundary after
+# "14" and is left unmasked, contributing 2026/7/14 as candidate prices that
+# reject a correct report (#1122).
+_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b", re.ASCII)
 # A year-less "8/5" is how a trading day is written in running prose, and it
 # contributed 8 and 5 as candidate prices (#983). The month and day ranges are
 # bounded, and both sides are fenced off from a longer slash run, so the window
