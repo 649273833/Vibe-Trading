@@ -201,6 +201,12 @@ class DeliveryStatus(str, Enum):
 
     NONE = "none"
     PENDING = "pending"
+    #: Claimed by a sweep that is inside the send call. The claim is a lease,
+    #: not a lock: a process that dies mid-send would otherwise strand the row
+    #: forever, so a stale SENDING row becomes eligible again once its lease
+    #: expires. Without the claim, a concurrent sweep reads PENDING while the
+    #: first send is still in flight and delivers the same briefing twice.
+    SENDING = "sending"
     SENT = "sent"
     FAILED = "failed"
 

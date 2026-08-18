@@ -194,3 +194,74 @@ def test_the_sweep_is_inert_without_collaborators(tmp_path: Path) -> None:
 
     assert asyncio.run(executor.sweep_deliveries()) == 0
     assert store.get("j1").delivery.status is DeliveryStatus.PENDING
+
+
+def test_a_sweep_running_inside_another_sweep_cannot_double_send(tmp_path: Path) -> None:
+    """The race the claim exists for: a second sweep while the first sends.
+
+    A re-read alone would not have caught this — while the first send is in
+    flight the row still reads PENDING, so the second sweep would deliver the
+    same briefing again. Claiming the row before the network call is what makes
+    the second sweep skip it.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job(delivery_channel="telegram"))
+    executor = _executor(store, reader=lambda _s: ("completed", "once"))
+
+    reentered: list[int] = []
+
+    async def _sender(channel: str, target: str | None, text: str) -> None:
+        # The event hook firing (or an overlapping tick) mid-send.
+        reentered.append(await executor.sweep_deliveries())
+        sender.sent.append((channel, target, text))
+
+    sender = _Sender()
+    executor._channel_sender = _sender
+
+    asyncio.run(executor.tick(now_ms=1_000))
+
+    assert sender.sent == [("telegram", None, "once")]
+    assert reentered == [0]  # the nested sweep found nothing to do
+    assert store.get("j1").delivery.status is DeliveryStatus.SENT
+
+
+def test_a_claim_left_by_a_dead_process_is_taken_over_once_it_expires(
+    tmp_path: Path,
+) -> None:
+    """A lease, not a lock: nothing may hold a briefing hostage forever."""
+    store = _store(tmp_path)
+    job = _job(delivery_channel="telegram")
+    job.delivery.status = DeliveryStatus.SENDING
+    job.delivery.session_id = "sess-1"
+    job.delivery.key = "j1:sess-1:telegram"
+    job.delivery.updated_at = 1_000
+    store.upsert(job)
+    sender = _Sender()
+
+    fresh = ScheduledResearchExecutor(
+        store,
+        lambda _j: None,
+        now_fn=lambda: 1_000 + 60_000,
+        enabled=False,
+        briefing_reader=lambda _s: ("completed", "recovered"),
+        channel_sender=sender,
+        max_consecutive_failures=3,
+        delivery_lease_ms=300_000,
+    )
+    asyncio.run(fresh.sweep_deliveries())
+    assert sender.sent == []  # still inside the lease
+
+    expired = ScheduledResearchExecutor(
+        store,
+        lambda _j: None,
+        now_fn=lambda: 1_000 + 300_000,
+        enabled=False,
+        briefing_reader=lambda _s: ("completed", "recovered"),
+        channel_sender=sender,
+        max_consecutive_failures=3,
+        delivery_lease_ms=300_000,
+    )
+    asyncio.run(expired.sweep_deliveries())
+
+    assert sender.sent == [("telegram", None, "recovered")]
+    assert store.get("j1").delivery.status is DeliveryStatus.SENT

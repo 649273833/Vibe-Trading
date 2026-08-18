@@ -35,6 +35,10 @@ DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 _MAX_PERSISTED_ERROR_CHARS = 1000
 
+#: A send that has not returned within this long is assumed to belong to a
+#: process that is no longer running.
+DEFAULT_DELIVERY_LEASE_MS = 5 * 60 * 1000
+
 NowFn = Callable[[], int]
 # A dispatcher may return the session id it enqueued into. Returning None keeps
 # the pre-delivery contract working unchanged.
@@ -181,6 +185,7 @@ class ScheduledResearchExecutor:
         retry_max_delay_ms: int | None = None,
         briefing_reader: "BriefingReader | None" = None,
         channel_sender: "ChannelSender | None" = None,
+        delivery_lease_ms: int = DEFAULT_DELIVERY_LEASE_MS,
     ) -> None:
         """Initialize the executor.
 
@@ -199,6 +204,9 @@ class ScheduledResearchExecutor:
                 collaborators are injected rather than imported so the outbox
                 can be driven in a test without a session runtime or a network.
             channel_sender: Async callable delivering one briefing.
+            delivery_lease_ms: How long a claimed row stays claimed before a
+                later sweep may take it over. Too short duplicates a slow
+                send; too long strands a briefing behind a dead process.
 
         Raises:
             ValueError: If the retry policy is invalid.
@@ -210,6 +218,7 @@ class ScheduledResearchExecutor:
         self._dispatch = dispatch
         self._briefing_reader = briefing_reader
         self._channel_sender = channel_sender
+        self._delivery_lease_ms = delivery_lease_ms
         self._tick_interval_ms = tick_interval_ms
         self._now_fn = now_fn
         self._enabled = enabled
@@ -448,6 +457,30 @@ class ScheduledResearchExecutor:
                 )
         self._persist_completion(job)
 
+    def _delivery_is_eligible(self, job: ScheduledResearchJob, now_ms: int) -> bool:
+        """Whether this row is a sweep's to take.
+
+        PENDING is owed. SENDING is claimed, and the claim is a lease rather
+        than a lock: a process that died inside the send call would otherwise
+        hold the row forever, so once the lease has expired the row is owed
+        again. The idempotency key remains the backstop for the window that
+        leaves.
+
+        Args:
+            job: The job whose outbox row is being considered.
+            now_ms: Reference time in epoch milliseconds.
+
+        Returns:
+            True when a sweep should attempt this row now.
+        """
+        status = job.delivery.status
+        if status is DeliveryStatus.PENDING:
+            return True
+        if status is not DeliveryStatus.SENDING:
+            return False
+        claimed_at = job.delivery.updated_at
+        return claimed_at is None or now_ms - claimed_at >= self._delivery_lease_ms
+
     async def sweep_deliveries(self) -> int:
         """Deliver every briefing whose run has reached a terminal state.
 
@@ -462,8 +495,9 @@ class ScheduledResearchExecutor:
             return 0
 
         changed = 0
+        now = self._now_fn()
         for job in list(self._store.load().values()):
-            if job.delivery.status is not DeliveryStatus.PENDING:
+            if not self._delivery_is_eligible(job, now):
                 continue
             if not job.delivery.session_id or not job.delivery_channel:
                 continue
@@ -487,13 +521,18 @@ class ScheduledResearchExecutor:
                 changed += 1
                 continue
 
-            # Re-read immediately before sending: a concurrent sweep or the
-            # event hook may already have delivered this row.
+            # Claim the row BEFORE the network call. A re-read alone would not
+            # help: while the first send is in flight the row still reads
+            # PENDING, so a concurrent sweep or the event hook would deliver
+            # the same briefing again.
             current = self._store.get(job.id)
             if current is None or current.delivery.key != job.delivery.key:
                 continue
-            if current.delivery.status is not DeliveryStatus.PENDING:
+            if not self._delivery_is_eligible(current, now):
                 continue
+            current.delivery.status = DeliveryStatus.SENDING
+            current.delivery.updated_at = now
+            self._store.upsert(current, validate=False)
 
             try:
                 await self._channel_sender(job.delivery_channel, job.delivery_target, text)
