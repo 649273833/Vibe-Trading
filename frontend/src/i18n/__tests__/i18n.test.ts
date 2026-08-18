@@ -154,9 +154,12 @@ describe("i18n utilities", () => {
     expect(isRtl("")).toBe(false);
   });
 
-  it("SUPPORTED_LANGUAGES contains all 6 registered locales", () => {
+  it("SUPPORTED_LANGUAGES lists every locale in switcher order", () => {
+    // The set is pinned against the locales directory above; this case pins
+    // the order the switcher renders, and that "en" stays first so the
+    // primary-match fallback in Layout resolves regional codes to it.
     const codes = SUPPORTED_LANGUAGES.map((l) => l.code);
-    expect(codes).toEqual(["en", "zh-CN", "ja", "ko", "ar", "es"]);
+    expect(codes).toEqual(["en", "zh-CN", "ja", "ko", "ar", "es", "de"]);
   });
 
   it("accepts zh-CN as an explicit supported language", async () => {

@@ -1007,7 +1007,7 @@
     "expiresIn": "läuft ab in {{time}}",
     "expired": "abgelaufen",
     "limitsUnavailable": "Limits nicht verfügbar",
-    "noActiveMandate": "Kein aktives Mandat. Agent bitten, eines vorzuschlagen, dann committed werden, bevor die Connector-Runtime gestartet wird.",
+    "noActiveMandate": "Kein aktives Mandat. Bitten Sie den Agenten, eines vorzuschlagen, und bestätigen Sie es, bevor die Connector-Runtime gestartet wird.",
     "haltedControlsDisabled": "Angehalten — Runner-Steuerung deaktiviert",
     "runtimeActive": "Runtime aktiv innerhalb Mandat",
     "idle": "Inaktiv",
