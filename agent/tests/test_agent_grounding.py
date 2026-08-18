@@ -2239,3 +2239,31 @@ def test_an_order_line_is_an_instruction_not_an_observation(tmp_path: Path) -> N
         "000543.SZ 收盘价 8.20 CNY，挂单 100 股 @ 12.00（source: tencent）"
     )
     assert result.valid is True, result.issues
+
+
+def test_a_report_style_date_cell_still_matches_its_evidence_row() -> None:
+    """"08-10(一)" and "08-10盘中" are the same trading day as "08-10".
+
+    A weekday or session suffix made the cell match no evidence row, so every
+    price in that row was reported numeric_claim_unavailable even though the
+    run had fetched the bar.
+    """
+    from src.agent.grounding import _timestamp_matches_claim_date
+
+    stamp = "2026-08-10T15:00:00Z"
+    for claim in ("08-10", "8-10", "08-10(一)", "08-10(周一)", "08-10(周一)盘中", "08-10盘中", "08-10收盘"):
+        assert _timestamp_matches_claim_date(stamp, claim) is True, claim
+
+    # The suffix is decoration, not a wildcard — a different day still misses.
+    assert _timestamp_matches_claim_date(stamp, "08-11(一)") is False
+
+
+def test_a_us_csv_stem_resolves_to_its_venue_suffix() -> None:
+    """``INTC_US.csv`` is ``INTC.US``; without the row it was no evidence at all."""
+    from src.agent.grounding import _symbol_from_csv_filename
+
+    assert _symbol_from_csv_filename("INTC_US") == "INTC.US"
+    assert _symbol_from_csv_filename("BYN_V") == "BYN.V"
+    assert _symbol_from_csv_filename("GC_F") == "GC=F"
+    # A bare name has no venue suffix and must stay unresolvable.
+    assert _symbol_from_csv_filename("AAPL") is None

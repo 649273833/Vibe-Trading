@@ -88,7 +88,16 @@ _CSV_DATE_COLUMNS = {"date", "datetime", "trade_date", "timestamp", "index"}
 # Filename -> symbol mapping for run-dir CSVs. The bash workaround writes each
 # series with a filesystem-safe stem: ``BYN_V.csv`` for ``BYN.V``, ``PDI_TO.csv``
 # for ``PDI.TO``, ``GC_F.csv`` for ``GC=F``.
-_CSV_FILENAME_SUFFIX_MAP = (("_V", ".V"), ("_TO", ".TO"), ("_F", "=F"))
+_CSV_FILENAME_SUFFIX_MAP = (
+    ("_V", ".V"),
+    ("_TO", ".TO"),
+    ("_F", "=F"),
+    # A US name is written ``INTC_US.csv`` by the same workaround, and
+    # ``.US`` is the venue suffix the rest of the project resolves on. Without
+    # this row the CSV was ingested as no evidence at all, so every price the
+    # run had actually fetched came back "numeric_claim_unavailable".
+    ("_US", ".US"),
+)
 
 # Only ``get_market_data`` returns bars whose columns are already the canonical
 # OHLC field names. Every other market-sensitive tool nests its quote somewhere,
@@ -643,8 +652,18 @@ def _coerce_csv_number(value: Any) -> int | float | None:
 
 # "." is deliberately not a separator: a decimal price such as 8.5 would parse
 # as month 8 day 5 and match a real trading day.
+# A report writes the day as a table cell -- "08-10(一)", "08-10(周一)盘中",
+# "08-10盘中" -- and the weekday or session suffix made the cell match no
+# evidence row at all, so every price in that row came back
+# "numeric_claim_unavailable" even though the run had fetched the bar.
+_TRADING_DAY_SUFFIX = (
+    r"(?:\s*[(（]\s*(?:周|星期)?[一二三四五六日天]\s*[)）])?"
+    r"\s*(?:盘中|盘后|盘前|收盘|开盘|早盘|尾盘)?"
+)
 _YEARLESS_CLAIM_DATE_RE = re.compile(
-    r"^(0?[1-9]|1[0-2])\s*[-/月]\s*(0?[1-9]|[12]\d|3[01])\s*[日号]?$"
+    r"^(0?[1-9]|1[0-2])\s*[-/月]\s*(0?[1-9]|[12]\d|3[01])\s*[日号]?"
+    + _TRADING_DAY_SUFFIX
+    + r"$"
 )
 _ISO_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
 
