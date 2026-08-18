@@ -2229,6 +2229,11 @@ def test_an_order_line_is_an_instruction_not_an_observation(tmp_path: Path) -> N
     # quote through the gate.
     assert extract("买入价 0.881") == [0.881]
 
+    # There is no bare "@ <price>" branch either. Dates are masked before this
+    # runs, so an observed close written "2026-08-10 @ 8.20" would reach the
+    # order mask as "@ 8.20" and stop being checked at all.
+    assert extract("收盘 2026-08-10 @ 8.20") == [8.2]
+
     # An observed quote standing beside an order line is still checked, and a
     # bare handle carries no price to mask.
     assert extract("现价 8.20 CNY，挂单 100 @ 8.50") == [8.2]

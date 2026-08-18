@@ -326,16 +326,16 @@ _ORDER_LEVEL_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?\s*(?:股|shares?)?\s*@\s*"
     + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
-    # (b) a bare "@ <price>" with no quantity in front
-    r"@\s*" + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
-    r"|"
-    # (c) an order label introducing the level
-    # 买入价/卖出价 are deliberately absent: in running prose they name the
-    # price a report OBSERVED entering at, not an instruction, and masking
-    # them stopped a genuinely ungrounded quote from being rejected.
+    # (b) an order label, optionally carrying its own "<qty> @", then the level.
+    # There is deliberately no bare "@ <price>" branch: dates are masked before
+    # this runs, so "收盘 2026-08-10 @ 8.20" would arrive here as "@ 8.20" and a
+    # genuinely observed close would stop being checked. 买入价 / 卖出价 are
+    # absent for the same reason -- in running prose they name a price the
+    # report says it observed, not an instruction it proposes.
     r"(?:挂单|限价单|限价|委托价?|订单"
     r"|limit\s+(?:order|price)|\bGTC\b|\bGTD\b|\bIOC\b|\bFOK\b)"
-    r"\s*(?:为|是|at|@|=)?\s*[:：]?\s*"
+    r"\s*(?:为|是|at|=)?\s*[:：]?\s*"
+    r"(?:\d[\d,]*(?:\.\d+)?\s*(?:股|shares?)?\s*@\s*)?"
     + _CURRENCY_TOKEN + r"\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r")" + _RANGE_TAIL,
     re.IGNORECASE,
