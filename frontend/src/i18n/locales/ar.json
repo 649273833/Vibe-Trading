@@ -162,7 +162,18 @@
     "delete": "حذف",
     "deleteAria": "حذف المهمة المجدولة: {{prompt}}",
     "confirmDelete": "تأكيد الحذف",
-    "confirmDeleteAria": "تأكيد حذف المهمة المجدولة: {{prompt}}"
+    "confirmDeleteAria": "تأكيد حذف المهمة المجدولة: {{prompt}}",
+    "deliveryChannelLabel": "الإرسال إلى قناة",
+    "deliveryChannelPlaceholder": "telegram أو feishu … (اتركه فارغًا لإبقاء النتائج داخل التطبيق)",
+    "deliveryTargetLabel": "وجهة القناة",
+    "deliveryTargetPlaceholder": "معرّف محادثة / مجموعة / مستخدم",
+    "deliveryHint": "مُعطّل افتراضيًا. يُرسل الملخص **بعد انتهاء** التشغيل، لا عند جدولته.",
+    "deliveryTargetRequired": "حدّد وجهة لهذه القناة أو أفرغ حقل القناة.",
+    "delivery_none": "سيُرسل إلى {{channel}} بعد التشغيل القادم",
+    "delivery_pending": "الملخص بانتظار الإرسال إلى {{channel}}",
+    "delivery_sending": "جارٍ الإرسال إلى {{channel}}",
+    "delivery_sent": "تم الإرسال إلى {{channel}}",
+    "delivery_failed": "تعذّر الإرسال إلى {{channel}}"
   },
   "reports": {
     "badge": "التقارير",

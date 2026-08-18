@@ -167,7 +167,18 @@
     "delete": "Delete",
     "deleteAria": "Delete scheduled run: {{prompt}}",
     "confirmDelete": "Confirm delete",
-    "confirmDeleteAria": "Confirm deleting scheduled run: {{prompt}}"
+    "confirmDeleteAria": "Confirm deleting scheduled run: {{prompt}}",
+    "deliveryChannelLabel": "Deliver to channel",
+    "deliveryChannelPlaceholder": "telegram, feishu, … (leave empty to keep results in the app)",
+    "deliveryTargetLabel": "Channel target",
+    "deliveryTargetPlaceholder": "chat / group / user id",
+    "deliveryHint": "Off by default. A briefing is pushed once the run finishes, not when it is scheduled.",
+    "deliveryTargetRequired": "Choose a target for that channel, or clear the channel.",
+    "delivery_none": "Delivering to {{channel}} after the next run",
+    "delivery_pending": "Briefing owed to {{channel}}",
+    "delivery_sending": "Sending the briefing to {{channel}}",
+    "delivery_sent": "Briefing delivered to {{channel}}",
+    "delivery_failed": "Could not deliver to {{channel}}"
   },
   "reports": {
     "badge": "Reports",
