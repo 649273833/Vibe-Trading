@@ -40,3 +40,42 @@ def test_build_registry_surfaces_aggregate_failure_warning(monkeypatch, caplog) 
         "Registered 0 local tools; 1 tool source(s) failed during registry construction"
         in caplog.messages
     )
+
+
+def test_discovery_names_each_failed_module_at_warning(monkeypatch, caplog) -> None:
+    """Discovery must name the module that dropped out, not just count it (#1124).
+
+    The aggregate line in ``build_registry`` reports *how many* sources failed;
+    only this per-module record says *which*. Demoting it to DEBUG puts an
+    operator back in front of the silent partial registry the issue is about.
+    """
+    import src.tools as tools_module
+
+    real_import = tools_module.importlib.import_module
+    target = "sentiment_tool"
+
+    class _ShimImportlib:
+        @staticmethod
+        def import_module(name: str):
+            if name == f"src.tools.{target}":
+                raise ImportError("no module named 'nowhere'")
+            return real_import(name)
+
+    # Patched on this package's namespace rather than on the shared
+    # ``importlib`` module, whose replacement would reach every importer in
+    # the process for the duration of the test (#1123).
+    monkeypatch.setattr(tools_module, "importlib", _ShimImportlib)
+    monkeypatch.setattr(tools_module, "_SUBCLASSES_CACHE", None)
+    monkeypatch.setattr(tools_module, "_DISCOVERY_FAILURES", {})
+
+    with caplog.at_level(logging.WARNING, logger="src.tools"):
+        tools_module._discover_subclasses()
+
+    assert [
+        message
+        for message in caplog.messages
+        if target in message and "no module named 'nowhere'" in message
+    ], caplog.messages
+    assert tools_module._DISCOVERY_FAILURES[target] == (
+        "ImportError: no module named 'nowhere'"
+    )

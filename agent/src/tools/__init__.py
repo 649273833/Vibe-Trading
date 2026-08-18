@@ -53,11 +53,11 @@ def _discover_subclasses() -> list[type[BaseTool]]:
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
             discovery_failures[module_name] = reason
-            logger.debug(
-                "Skipped src.tools.%s during discovery: %s",
-                module_name,
-                reason,
-                exc_info=True,
+            # Stays at WARNING: an operator who cannot see *which* module
+            # dropped out is back to the silent partial registry of #1124.
+            # The aggregate line below counts them; this one names them.
+            logger.warning(
+                "Skipped src.tools.%s during discovery: %s", module_name, reason
             )
 
     classes: list[type[BaseTool]] = []
