@@ -71,6 +71,14 @@ class BacktestConfigSchema(BaseModel):
     interval: str = "1D"
     engine: str = "daily"
     position_adjustment: Literal["hold", "rebalance"] = "hold"
+    # Under "rebalance", a resize executes only once the held weight has
+    # drifted further than this fraction of its target -- the tolerance band
+    # practitioners describe as "rebalance when weights move more than X".
+    # 0.0 is the historical behaviour and stays the default: without a band the
+    # resize test is decided by the slippage width alone, which re-pins a
+    # position on a one-basis-point move. A CHANGED target breaches any sane
+    # band on its own, so target changes always execute whatever this is set to.
+    rebalance_tolerance: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     # Returns divide by initial_cash, so a non-positive value yields inf/NaN
     # metrics (total_return, annual_return, ...). Reject it at the config
     # boundary instead of letting the run produce non-finite results.

@@ -392,6 +392,14 @@ class BaseEngine(ABC):
         self.position_adjustment = str(config.get("position_adjustment", "hold")).lower()
         if self.position_adjustment not in {"hold", "rebalance"}:
             raise ValueError("position_adjustment must be 'hold' or 'rebalance'")
+        # Relative drift band around the target weight. Zero reproduces the
+        # historical behaviour, where the only thing separating "resize" from
+        # "leave it alone" was the slippage width -- measured, a 0.01% daily
+        # move re-pinned the position on 19 of 30 bars, which is noise being
+        # traded, not a decision being executed.
+        self.rebalance_tolerance = float(config.get("rebalance_tolerance", 0.0) or 0.0)
+        if not math.isfinite(self.rebalance_tolerance) or self.rebalance_tolerance < 0.0:
+            raise ValueError("rebalance_tolerance must be a finite, non-negative fraction")
         # Markets that clear at or below zero (e.g. EU day-ahead power) opt in
         # to opening on negative-price bars. Default False preserves the legacy
         # "reject any open_price <= 0" behavior. An exactly-zero open is always
@@ -818,6 +826,7 @@ class BaseEngine(ABC):
         # book. Say which ones, rather than leaving the reader to reconcile a
         # rebalance count against a trade log that does not match it (#918).
         m["position_adjustment"] = self.position_adjustment
+        m["rebalance_tolerance"] = self.rebalance_tolerance
         m["dropped_target_adjustment_count"] = len(self.dropped_target_adjustments)
         m["dropped_target_adjustments"] = [
             {
@@ -1396,6 +1405,23 @@ class BaseEngine(ABC):
                 for price in prices
             )
             self._validate_rebalance_values(*prices, *sizes)
+            # Tolerance band. The held size is compared against the size the
+            # target implies at the unslipped price -- keeping the slippage side
+            # out of a drift question is the principled choice, though its
+            # practical effect is one slippage width and only reaches the
+            # outcome within that distance of the band edge, which is why no
+            # test pins it: such a test would assert a coincidence.
+            # A changed target moves this reference far past any sane band, so
+            # target changes still execute at every tolerance.
+            if self.rebalance_tolerance > 0.0:
+                reference_size = self.round_size(
+                    self._calc_raw_size(symbol, target_notional, raw_price), raw_price
+                )
+                if abs(before.size - reference_size) <= self.rebalance_tolerance * abs(
+                    reference_size
+                ):
+                    continue
+
             increase = sizes[0] > before.size + 1e-9
             reduction = sizes[1] < before.size - 1e-9
             # Both or neither means the target lies inside the fill-price band.
