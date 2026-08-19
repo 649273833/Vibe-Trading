@@ -42,6 +42,15 @@ EVIDENCE_STAGES = (
     "retired",
 )
 
+#: Stages that assert a computed result. A row at one of these stages claims
+#: evidence that something reproduced it, so it must name that something:
+#: ``__post_init__`` refuses to build one with an empty ``provenance``.
+#: ``hypothesis`` (nothing computed yet) and ``retired`` (withdrawn) are
+#: exempt — neither claims a current result.
+STAGES_REQUIRING_PROVENANCE = frozenset(
+    {"backtest", "holdout", "shadow", "live_canary"}
+)
+
 # ---------------------------------------------------------------------------
 # Evidence-quality ladder
 # ---------------------------------------------------------------------------
@@ -114,7 +123,9 @@ class EvidenceRow:
     #: ISO date string ("YYYY-MM-DD") of the last harness verification.
     last_verified: str = ""
     #: Pipeline stage that produced this row; one of ``EVIDENCE_STAGES``.
-    evidence_stage: str = "backtest"
+    #: Defaults to the weakest claim: a row that says nothing about how it was
+    #: produced must not read as though a backtest stood behind it.
+    evidence_stage: str = "hypothesis"
     #: Reproducible artifact reference: the backtest run directory whose
     #: ``artifacts/`` this row was computed from.
     provenance: str = ""
@@ -131,6 +142,13 @@ class EvidenceRow:
             raise ValueError(
                 f"invalid evidence_stage {self.evidence_stage!r}; "
                 f"expected one of {EVIDENCE_STAGES}"
+            )
+        if self.evidence_stage in STAGES_REQUIRING_PROVENANCE and not self.provenance:
+            raise ValueError(
+                f"evidence_stage {self.evidence_stage!r} claims a computed "
+                f"result, so provenance must name the run it was computed "
+                f"from; got an empty provenance for strategy "
+                f"{self.strategy_id!r} / regime {self.regime!r}"
             )
 
 

@@ -82,7 +82,7 @@ class TestEvidenceRow:
         assert row.evidence_quality == "insufficient"
         assert row.warnings == ()
         assert row.last_verified == ""
-        assert row.evidence_stage == "backtest"
+        assert row.evidence_stage == "hypothesis"
         assert row.provenance == ""
         assert row.regime_definition == ""
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -110,8 +110,37 @@ class TestEvidenceRow:
                 regime="bear_market",
                 trades_in_regime=12,
                 evidence_stage=stage,
+                # A computed stage must name what computed it; supplying it for
+                # every stage keeps this test about the vocabulary alone.
+                provenance="/runs/run-1",
             )
             assert row.evidence_stage == stage
+
+    def test_a_computed_stage_cannot_be_claimed_without_provenance(self) -> None:
+        """A row may not assert a result it cannot point at.
+
+        ``evidence_stage`` names what produced the row, so a stage that claims a
+        computed result has to name the run. Without this the cheapest possible
+        row — three positional fields — used to assert backtest-grade evidence
+        with nothing behind it.
+        """
+        for stage in sorted(sd_models.STAGES_REQUIRING_PROVENANCE):
+            with pytest.raises(ValueError, match="provenance"):
+                sd_models.EvidenceRow(
+                    strategy_id="s",
+                    regime="bear_market",
+                    trades_in_regime=12,
+                    evidence_stage=stage,
+                )
+
+    def test_stages_that_claim_nothing_need_no_provenance(self) -> None:
+        """``hypothesis`` and ``retired`` assert no current result."""
+        for stage in set(sd_models.EVIDENCE_STAGES) - sd_models.STAGES_REQUIRING_PROVENANCE:
+            row = sd_models.EvidenceRow(
+                strategy_id="s", regime="bear_market", trades_in_regime=12,
+                evidence_stage=stage,
+            )
+            assert row.provenance == ""
 
     def test_full_construction_roundtrip(self) -> None:
         row = sd_models.EvidenceRow(
