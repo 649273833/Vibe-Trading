@@ -277,23 +277,57 @@ def build_worker_prompt(
         # instruction to prefer these prices over training data.
         prompt_parts.append(grounding_block)
 
-    prompt_parts.append(
-        "## Execution Rules\n\n"
-        "You have a HARD LIMIT of 20 tool calls. After that you will be cut off. Work efficiently.\n\n"
-        "**Phase 1 — Plan (0 tool calls):** Before calling any tool, state your plan in 3-5 bullet points.\n\n"
-        "**Phase 2 — Execute (≤15 tool calls):**\n"
-        "- `load_skill` first to get data access methods and analysis patterns.\n"
-        "- Write ONE focused Python script via `write_file`, then run it with `bash python script.py`.\n"
-        "- Do NOT write long Python code inside bash. Use write_file + bash.\n"
-        "- Do NOT fetch data with curl/requests. Use the patterns from load_skill (yfinance, OKX API via Python).\n"
-        "- If a script fails, read the error, fix with `edit_file`, re-run. Max 2 retries per script.\n\n"
-        "**Phase 3 — Summarize (MUST use write_file):**\n"
-        "- You MUST call `write_file` with path `report.md` to save your final report as a markdown file.\n"
-        "- This is REQUIRED, not optional. Your final response MUST include a write_file call for report.md.\n"
-        "- The report must include specific numbers, dates, and actionable conclusions.\n"
-        "- After writing report.md, output a brief 2-3 sentence summary in your text response.\n"
-        "- Respond in the same language as the task prompt."
-    )
+    # The code-writing/report-file workflow below only makes sense for an
+    # agent whose whitelist (agent_spec.tools, projected by
+    # build_swarm_registry -- see run_worker step 1) actually grants
+    # write_file/bash/edit_file. A preset can and does hand a role a
+    # narrower, MCP-data-only whitelist (e.g. this deployment's
+    # deriv_fx_execution.yaml gives market_analyst/devils_advocate/
+    # optimist/contract_risk_reviewer no write_file at all, reserving it
+    # for desk_lead's final report) -- _classify_deliverable already
+    # relaxes the tool-evidence/report_written requirement for exactly
+    # this case via is_data_agent, but this block used to tell EVERY
+    # agent it "MUST" call write_file regardless, unconditionally
+    # contradicting the framework's own acceptance criteria for that same
+    # agent. In practice this produced a confused response that noticed
+    # the contradiction at runtime (e.g. "write_file is not available in
+    # this environment, so the report is delivered inline below") and
+    # improvised a preamble around it -- which, for agents relying on the
+    # SKIPPED: short-circuit convention, buried the marker several
+    # paragraphs in under markdown decoration instead of leading with it
+    # as their own role instructions require.
+    has_code_tools = bool({"write_file", "bash", "edit_file"} & set(agent_spec.tools or []))
+    if has_code_tools:
+        prompt_parts.append(
+            "## Execution Rules\n\n"
+            "You have a HARD LIMIT of 20 tool calls. After that you will be cut off. Work efficiently.\n\n"
+            "**Phase 1 — Plan (0 tool calls):** Before calling any tool, state your plan in 3-5 bullet points.\n\n"
+            "**Phase 2 — Execute (≤15 tool calls):**\n"
+            "- `load_skill` first to get data access methods and analysis patterns.\n"
+            "- Write ONE focused Python script via `write_file`, then run it with `bash python script.py`.\n"
+            "- Do NOT write long Python code inside bash. Use write_file + bash.\n"
+            "- Do NOT fetch data with curl/requests. Use the patterns from load_skill (yfinance, OKX API via Python).\n"
+            "- If a script fails, read the error, fix with `edit_file`, re-run. Max 2 retries per script.\n\n"
+            "**Phase 3 — Summarize (MUST use write_file):**\n"
+            "- You MUST call `write_file` with path `report.md` to save your final report as a markdown file.\n"
+            "- This is REQUIRED, not optional. Your final response MUST include a write_file call for report.md.\n"
+            "- The report must include specific numbers, dates, and actionable conclusions.\n"
+            "- After writing report.md, output a brief 2-3 sentence summary in your text response.\n"
+            "- Respond in the same language as the task prompt."
+        )
+    else:
+        prompt_parts.append(
+            "## Execution Rules\n\n"
+            "You have a HARD LIMIT of 20 tool calls. After that you will be cut off. Work efficiently.\n\n"
+            "**Plan (0 tool calls):** Before calling any tool, state your plan in 3-5 bullet points.\n\n"
+            "**Execute:** You do not have `write_file`/`bash`/`edit_file` in this role -- call your "
+            "assigned data/analysis tools directly to gather what your role needs. Do not attempt to "
+            "write or run a script; it is not possible with your tool whitelist.\n\n"
+            "**Summarize:** There is no report.md for this role. Output your final analysis directly "
+            "as your plain-text response, in the exact format your role's instructions above require "
+            "(including any short-circuit marker convention they describe).\n\n"
+            "Respond in the same language as the task prompt."
+        )
 
     now = datetime.now(timezone.utc)
     prompt_parts.append(
@@ -533,13 +567,24 @@ def run_worker(
         # Inject wrap-up nudge when approaching iteration limit
         if iteration == wrap_up_at:
             remaining = max_iterations - iteration
-            messages.append({
-                "role": "user",
-                "content": (
+            if "write_file" in (agent_spec.tools or []):
+                wrap_up_content = (
                     f"[SYSTEM] You have {remaining} iterations remaining. "
                     "If report.md is not written yet, make one final write_file call for report.md. "
                     "Otherwise stop calling tools and output your final analysis summary as plain text."
-                ),
+                )
+            else:
+                # This role's whitelist has no write_file -- see
+                # build_worker_prompt's has_code_tools branch for why
+                # telling it to "write report.md" here would be the same
+                # contradiction that block exists to avoid.
+                wrap_up_content = (
+                    f"[SYSTEM] You have {remaining} iterations remaining. "
+                    "Stop calling tools and output your final analysis as your plain-text response now."
+                )
+            messages.append({
+                "role": "user",
+                "content": wrap_up_content,
             })
 
         # On last iteration, call LLM without tool definitions to force text output
