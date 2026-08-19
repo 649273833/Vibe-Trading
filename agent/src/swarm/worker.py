@@ -417,16 +417,13 @@ def run_worker(
     grounding_block: str = "",
     agent_config: AgentConfig | None = None,
 ) -> WorkerResult:
-    """Execute a single worker task using a lightweight ReAct loop.
+    """Run one worker task, releasing the per-task LLM client on exit.
 
-    Steps:
-      1. Build filtered ToolRegistry from agent_spec.tools
-      2. Create ChatLLM with agent_spec.model_name
-      3. Build system prompt with role + upstream summaries + filtered skills
-      4. Resolve task.prompt_template with user_vars
-      5. Run ReAct loop (for iteration in range(max_iterations))
-      6. Write summary to artifacts/{agent_id}/summary.md
-      7. Return WorkerResult
+    Builds a fresh :class:`ChatLLM` for the task and guarantees it is closed
+    even on early returns (timeout, token limit, tool error). The underlying
+    LangChain adapter owns a pooled ``httpx.Client`` that is not promptly
+    refcount-collected; without this, long-running swarm deployments
+    accumulate one CLOSE-WAIT socket per task (#1141).
 
     Args:
         agent_spec: Agent role specification with tools/skills/model config.
@@ -434,6 +431,69 @@ def run_worker(
         upstream_summaries: Summaries from upstream tasks keyed by input_from keys.
         user_vars: User-provided variables for template rendering.
         run_dir: Path to .swarm/runs/{run_id}/ directory.
+        event_callback: Optional callback for swarm events.
+        include_shell_tools: Whether this worker may register shell tools.
+        grounding_block: Optional pre-rendered "Ground Truth" markdown that
+            anchors the worker on real recent prices for symbols mentioned in
+            ``user_vars``. Forwarded verbatim to :func:`build_worker_prompt`.
+        agent_config: Optional resolved agent config carrying remote MCP
+            server definitions. Threaded from :class:`SwarmRuntime` and
+            consumed by :func:`build_swarm_registry` to merge remote MCP
+            tools with the local-tool pool before applying the agent's
+            whitelist. ``None`` preserves the prior local-only behavior.
+
+    Returns:
+        WorkerResult with status, summary, artifacts, and iteration count.
+    """
+    llm = ChatLLM(model_name=agent_spec.model_name)
+    try:
+        return _run_worker_impl(
+            agent_spec=agent_spec,
+            task=task,
+            upstream_summaries=upstream_summaries,
+            user_vars=user_vars,
+            run_dir=run_dir,
+            llm=llm,
+            event_callback=event_callback,
+            include_shell_tools=include_shell_tools,
+            grounding_block=grounding_block,
+            agent_config=agent_config,
+        )
+    finally:
+        llm.close()
+
+
+def _run_worker_impl(
+    agent_spec: SwarmAgentSpec,
+    task: SwarmTask,
+    upstream_summaries: dict[str, str],
+    user_vars: dict[str, str],
+    run_dir: Path,
+    event_callback: Callable[[SwarmEvent], None] | None = None,
+    include_shell_tools: bool = False,
+    grounding_block: str = "",
+    agent_config: AgentConfig | None = None,
+    *,
+    llm: ChatLLM,
+) -> WorkerResult:
+    """Execute a single worker task using a lightweight ReAct loop.
+
+    Steps:
+      1. Build filtered ToolRegistry from agent_spec.tools
+      2. Build system prompt with role + upstream summaries + filtered skills
+      3. Resolve task.prompt_template with user_vars
+      4. Run ReAct loop (for iteration in range(max_iterations))
+      5. Write summary to artifacts/{agent_id}/summary.md
+      6. Return WorkerResult
+
+    Args:
+        agent_spec: Agent role specification with tools/skills/model config.
+        task: The task to execute, including prompt template.
+        upstream_summaries: Summaries from upstream tasks keyed by input_from keys.
+        user_vars: User-provided variables for template rendering.
+        run_dir: Path to .swarm/runs/{run_id}/ directory.
+        llm: Pre-built ChatLLM; ownership stays with the caller
+            (:func:`run_worker` closes it in a ``finally``).
         event_callback: Optional callback for swarm events.
         include_shell_tools: Whether this worker may register shell tools.
         grounding_block: Optional pre-rendered "Ground Truth" markdown that
@@ -463,10 +523,7 @@ def run_worker(
         include_shell_tools=include_shell_tools,
     )
 
-    # 2. Create LLM
-    llm = ChatLLM(model_name=agent_spec.model_name)
-
-    # 3. Build system prompt with filtered skills
+    # 2. Build system prompt with filtered skills
     skills_loader = SkillsLoader()
     skill_desc = _filter_skill_descriptions(skills_loader, agent_spec.skills)
     system_prompt = build_worker_prompt(

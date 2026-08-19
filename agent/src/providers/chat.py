@@ -296,6 +296,27 @@ class ChatLLM:
             reasoning_effort=runtime_cfg.langchain_reasoning_effort.strip().lower(),
         )
 
+    def close(self) -> None:
+        """Best-effort release of the underlying provider HTTP client.
+
+        The LangChain adapter (ChatOpenAI and its OpenAI-compatible
+        subclasses) owns a pooled ``httpx.Client`` that is not guaranteed to
+        be refcount-collected promptly — cyclic references can defer it to a
+        GC pass. Long-running callers (swarm workers build one ChatLLM per
+        task) must call this when the instance is done with, or sockets
+        accumulate in CLOSE-WAIT. Safe to call multiple times; providers
+        without a closeable client are a no-op.
+        """
+        llm = self._llm
+        for attr in ("root_client", "root_async_client", "client"):
+            client = getattr(llm, attr, None)
+            close_fn = getattr(client, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    logger.debug("ChatLLM.close: failed to close %s", attr, exc_info=True)
+
     def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, timeout: Optional[int] = None) -> LLMResponse:
         """Call the LLM synchronously.
 
