@@ -507,21 +507,26 @@ def list_skills() -> str:
 
 
 @mcp.tool
-def load_skill(name: str) -> str:
-    """Load full documentation for a named finance skill.
+def load_skill(name: str, section: str | None = None, offset: int | None = None) -> str:
+    """Load documentation for a named finance skill.
 
-    Each skill is a comprehensive knowledge document covering methodology,
-    code templates, parameters, and examples. Use list_skills() first to
-    discover available skills.
+    A skill over the tool-result cap is returned as a skeleton (outline plus
+    per-section summaries) instead of being silently cut off. Request a
+    specific section by name, or page through one with offset, to read the
+    rest. Use list_skills() first to discover available skills.
 
     Args:
         name: Skill name (e.g. 'strategy-generate', 'risk-analysis', 'technical-basic').
+        section: Optional section title to expand (see the skeleton's outline).
+        offset: Optional character offset to resume a long section/document from.
     """
-    loader = _get_skills_loader()
-    content = loader.get_content(name)
-    if content.startswith("Error:"):
-        return json.dumps({"status": "error", "error": content}, ensure_ascii=False)
-    return json.dumps({"status": "ok", "skill": name, "content": content}, ensure_ascii=False)
+    registry = _get_registry()
+    params: dict[str, Any] = {"name": name}
+    if section is not None:
+        params["section"] = section
+    if offset is not None:
+        params["offset"] = offset
+    return registry.execute("load_skill", params)
 
 
 # ---------------------------------------------------------------------------
@@ -1861,6 +1866,7 @@ def get_sec_filings(
     form: str | None = None,
     metric: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> str:
     """Fetch U.S. SEC EDGAR filings or reported XBRL financials for a company.
 
@@ -1874,8 +1880,12 @@ def get_sec_filings(
         form: Optional SEC form type filter (e.g. "10-K", "10-Q", "8-K").
         metric: Optional XBRL us-gaap concept name (e.g. "Revenues").
         limit: Maximum number of most-recent filings and metric points to return.
+        offset: Index of the first filing to return, newest first; defaults
+            to 0. Results are returned whole and only as many as fit one
+            response — read paging.total and paging.next_offset and call
+            again with that offset to continue.
     """
-    params: dict[str, Any] = {"ticker": ticker, "limit": limit}
+    params: dict[str, Any] = {"ticker": ticker, "limit": limit, "offset": offset}
     if form:
         params["form"] = form
     if metric:
@@ -1885,7 +1895,7 @@ def get_sec_filings(
 
 
 @mcp.tool
-def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual") -> str:
+def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual", offset: int = 0) -> str:
     """Fetch a stock's financial statements or key per-period indicators.
 
     Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US) and Hong Kong (.HK, via
@@ -1896,11 +1906,15 @@ def get_financial_statements(code: str, statement: str = "indicators", period: s
         code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US").
         statement: "balance", "income", "cashflow", or "indicators".
         period: "annual" or "quarter".
+        offset: Index of the first period to return, newest first; defaults
+            to 0. Periods are returned whole and only as many as fit one
+            response — read paging.total and paging.next_offset and call
+            again with that offset to continue.
     """
     registry = _get_registry()
     return registry.execute(
         "get_financial_statements",
-        {"code": code, "statement": statement, "period": period},
+        {"code": code, "statement": statement, "period": period, "offset": offset},
     )
 
 
