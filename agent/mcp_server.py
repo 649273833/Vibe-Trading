@@ -1866,6 +1866,7 @@ def get_sec_filings(
     form: str | None = None,
     metric: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> str:
     """Fetch U.S. SEC EDGAR filings or reported XBRL financials for a company.
 
@@ -1879,8 +1880,12 @@ def get_sec_filings(
         form: Optional SEC form type filter (e.g. "10-K", "10-Q", "8-K").
         metric: Optional XBRL us-gaap concept name (e.g. "Revenues").
         limit: Maximum number of most-recent filings and metric points to return.
+        offset: Index of the first filing to return, newest first; defaults
+            to 0. Results are returned whole and only as many as fit one
+            response — read paging.total and paging.next_offset and call
+            again with that offset to continue.
     """
-    params: dict[str, Any] = {"ticker": ticker, "limit": limit}
+    params: dict[str, Any] = {"ticker": ticker, "limit": limit, "offset": offset}
     if form:
         params["form"] = form
     if metric:
@@ -1890,7 +1895,7 @@ def get_sec_filings(
 
 
 @mcp.tool
-def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual") -> str:
+def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual", offset: int = 0) -> str:
     """Fetch a stock's financial statements or key per-period indicators.
 
     Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US) and Hong Kong (.HK, via
@@ -1901,11 +1906,15 @@ def get_financial_statements(code: str, statement: str = "indicators", period: s
         code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US").
         statement: "balance", "income", "cashflow", or "indicators".
         period: "annual" or "quarter".
+        offset: Index of the first period to return, newest first; defaults
+            to 0. Periods are returned whole and only as many as fit one
+            response — read paging.total and paging.next_offset and call
+            again with that offset to continue.
     """
     registry = _get_registry()
     return registry.execute(
         "get_financial_statements",
-        {"code": code, "statement": statement, "period": period},
+        {"code": code, "statement": statement, "period": period, "offset": offset},
     )
 
 
