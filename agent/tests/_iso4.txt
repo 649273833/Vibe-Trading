@@ -1,4 +1,0 @@
-# Task target-file detection: a user message usually names the file to
-# create or update ("update C:\\...\\plan.md"). If a run approaches its
-# iteration cap without having written that file, the loop must remind the
-# model instead of ending "answered but incomplete".
