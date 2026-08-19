@@ -507,21 +507,26 @@ def list_skills() -> str:
 
 
 @mcp.tool
-def load_skill(name: str) -> str:
-    """Load full documentation for a named finance skill.
+def load_skill(name: str, section: str | None = None, offset: int | None = None) -> str:
+    """Load documentation for a named finance skill.
 
-    Each skill is a comprehensive knowledge document covering methodology,
-    code templates, parameters, and examples. Use list_skills() first to
-    discover available skills.
+    A skill over the tool-result cap is returned as a skeleton (outline plus
+    per-section summaries) instead of being silently cut off. Request a
+    specific section by name, or page through one with offset, to read the
+    rest. Use list_skills() first to discover available skills.
 
     Args:
         name: Skill name (e.g. 'strategy-generate', 'risk-analysis', 'technical-basic').
+        section: Optional section title to expand (see the skeleton's outline).
+        offset: Optional character offset to resume a long section/document from.
     """
-    loader = _get_skills_loader()
-    content = loader.get_content(name)
-    if content.startswith("Error:"):
-        return json.dumps({"status": "error", "error": content}, ensure_ascii=False)
-    return json.dumps({"status": "ok", "skill": name, "content": content}, ensure_ascii=False)
+    registry = _get_registry()
+    params: dict[str, Any] = {"name": name}
+    if section is not None:
+        params["section"] = section
+    if offset is not None:
+        params["offset"] = offset
+    return registry.execute("load_skill", params)
 
 
 # ---------------------------------------------------------------------------
