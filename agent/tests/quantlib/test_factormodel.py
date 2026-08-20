@@ -14,8 +14,11 @@ from src.quantlib.factormodel import (
     MARKET_FACTOR,
     MIN_CROSS_SECTION,
     STYLE_FACTOR_DEFINITIONS,
+    FactorICResult,
+    FactorReturnFit,
     build_style_exposures,
     cross_sectional_factor_returns,
+    factor_ic_analysis,
     factor_return_attribution,
     portfolio_style_exposure,
     standardise_exposures,
@@ -425,3 +428,52 @@ def test_attribution_rejects_disjoint_factor_sets():
         factor_return_attribution(
             pd.Series({"value": 1.0}), pd.Series({"momentum": 0.01}), portfolio_return=0.0
         )
+
+# --- factor IC analysis ---
+
+
+def test_factor_ic_analysis_positive_predictive_factor():
+    dates = pd.date_range("2024-01-01", periods=20, freq="B")
+    assets = _assets(50)
+    rng = np.random.default_rng(101)
+
+    # Create factor scores and positively correlated forward returns
+    factor_data = rng.normal(0, 1, size=(len(dates), len(assets)))
+    noise = rng.normal(0, 0.5, size=(len(dates), len(assets)))
+    returns_data = 0.02 * factor_data + 0.01 * noise
+
+    factor_panel = pd.DataFrame(factor_data, index=dates, columns=assets)
+    forward_returns = pd.DataFrame(returns_data, index=dates, columns=assets)
+
+    result = factor_ic_analysis(factor_panel, forward_returns, method="spearman")
+
+    assert isinstance(result, FactorICResult)
+    assert result.n_periods == 20
+    assert result.ic_mean > 0.5  # strong positive correlation
+    assert result.ic_ir > 1.0
+    assert result.ic_t_stat > 3.0
+    assert result.ic_p_value < 0.01
+    assert result.positive_ic_fraction == pytest.approx(1.0)
+    assert len(result.ic_series) == 20
+
+
+def test_factor_ic_analysis_methods_and_validation():
+    dates = pd.date_range("2024-01-01", periods=5, freq="B")
+    assets = _assets(20)
+    rng = np.random.default_rng(102)
+
+    factor_panel = pd.DataFrame(rng.normal(0, 1, size=(5, 20)), index=dates, columns=assets)
+    forward_returns = pd.DataFrame(rng.normal(0, 0.02, size=(5, 20)), index=dates, columns=assets)
+
+    # Test Pearson method
+    res_pearson = factor_ic_analysis(factor_panel, forward_returns, method="pearson")
+    assert isinstance(res_pearson, FactorICResult)
+    assert -1.0 <= res_pearson.ic_mean <= 1.0
+
+    # Invalid method
+    with pytest.raises(ValueError, match="method must be"):
+        factor_ic_analysis(factor_panel, forward_returns, method="kendall")
+
+    # Empty inputs
+    with pytest.raises(ValueError, match="non-empty"):
+        factor_ic_analysis(pd.DataFrame(), forward_returns)

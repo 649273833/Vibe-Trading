@@ -55,6 +55,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy.stats import rankdata, skew, kurtosis, t as student_t
 
 __all__ = [
     "DEFAULT_WINSORISE",
@@ -62,6 +63,7 @@ __all__ = [
     "MIN_CROSS_SECTION",
     "STYLE_FACTOR_DEFINITIONS",
     "FactorReturnFit",
+    "FactorICResult",
     "StyleDrift",
     "standardise_exposures",
     "build_style_exposures",
@@ -69,6 +71,7 @@ __all__ = [
     "portfolio_style_exposure",
     "style_drift",
     "factor_return_attribution",
+    "factor_ic_analysis",
 ]
 
 #: Fraction trimmed from each tail before standardising.
@@ -133,6 +136,35 @@ class FactorReturnFit:
     r_squared: float
     observations: int
 
+
+
+@dataclass(frozen=True)
+class FactorICResult:
+    """Summary of cross-sectional Information Coefficient (IC) time-series dynamics.
+
+    Attributes:
+        ic_mean: Mean Information Coefficient across observed cross-sections.
+        ic_std: Sample standard deviation (ddof=1) of the IC time series.
+        ic_ir: Information Ratio of the factor IC (mean / std).
+        ic_t_stat: t-statistic for H0: mean IC == 0.
+        ic_p_value: Two-sided p-value of ic_t_stat.
+        ic_skewness: Skewness of the daily IC distribution.
+        ic_kurtosis: Non-excess kurtosis (3.0 for normal) of the daily IC distribution.
+        positive_ic_fraction: Fraction of cross-sections with positive IC.
+        n_periods: Number of valid cross-sectional dates evaluated.
+        ic_series: Time series of cross-sectional IC values per date.
+    """
+
+    ic_mean: float
+    ic_std: float
+    ic_ir: float
+    ic_t_stat: float
+    ic_p_value: float
+    ic_skewness: float
+    ic_kurtosis: float
+    positive_ic_fraction: float
+    n_periods: int
+    ic_series: pd.Series
 
 @dataclass(frozen=True)
 class StyleDrift:
@@ -513,3 +545,109 @@ def factor_return_attribution(
     contributions["specific"] = portfolio_return - explained
     contributions["total"] = portfolio_return
     return contributions
+
+
+def factor_ic_analysis(
+    factor_panel: pd.DataFrame,
+    forward_returns: pd.DataFrame,
+    method: str = "spearman",
+    min_cross_section: int = MIN_CROSS_SECTION,
+) -> FactorICResult:
+    """Evaluate cross-sectional Information Coefficient (IC) time-series dynamics.
+
+    Measures the predictive power and persistence of a factor by calculating
+    daily/periodic cross-sectional correlations between factor scores and subsequent
+    forward returns (Grinold-Kahn fundamental law framework).
+
+    Args:
+        factor_panel: DataFrame of factor scores (index = dates, columns = assets).
+        forward_returns: DataFrame of forward returns (same shape and alignment).
+        method: Correlation method, ``'spearman'`` (Rank IC) or ``'pearson'`` (Linear IC).
+        min_cross_section: Minimum number of valid assets on a date to compute IC.
+
+    Returns:
+        :class:`FactorICResult` containing mean IC, IC IR, t-statistic, p-value,
+        higher moments, and full IC time series.
+
+    Raises:
+        ValueError: If inputs are empty, mismatch in shape, or method is unknown.
+    """
+    if method not in ("spearman", "pearson"):
+        raise ValueError(f"method must be 'spearman' or 'pearson', got {method!r}")
+
+    if factor_panel.empty or forward_returns.empty:
+        raise ValueError("factor_panel and forward_returns must be non-empty")
+
+    # Align dates and assets
+    common_dates = factor_panel.index.intersection(forward_returns.index)
+    common_assets = factor_panel.columns.intersection(forward_returns.columns)
+
+    if common_dates.empty or common_assets.empty:
+        raise ValueError("No common dates and assets between factor_panel and forward_returns")
+
+    f_sub = factor_panel.loc[common_dates, common_assets]
+    r_sub = forward_returns.loc[common_dates, common_assets]
+
+    ic_records: dict[object, float] = {}
+
+    for date in common_dates:
+        f_row = f_sub.loc[date].dropna()
+        r_row = r_sub.loc[date].dropna()
+        shared = f_row.index.intersection(r_row.index)
+        if len(shared) < min_cross_section:
+            continue
+
+        f_vals = f_row.loc[shared].to_numpy(dtype=float)
+        r_vals = r_row.loc[shared].to_numpy(dtype=float)
+
+        if method == "spearman":
+            f_vals = rankdata(f_vals)
+            r_vals = rankdata(r_vals)
+
+        f_std = np.std(f_vals, ddof=1)
+        r_std = np.std(r_vals, ddof=1)
+
+        if f_std > 0 and r_std > 0:
+            corr = float(np.corrcoef(f_vals, r_vals)[0, 1])
+            if np.isfinite(corr):
+                ic_records[date] = corr
+
+    if not ic_records:
+        raise ValueError(
+            f"No cross-section had at least {min_cross_section} valid asset pairs to compute IC"
+        )
+
+    ic_series = pd.Series(ic_records, dtype=float, name="ic").sort_index()
+    n = len(ic_series)
+    mean_ic = float(ic_series.mean())
+
+    if n > 1:
+        std_ic = float(ic_series.std(ddof=1))
+        ic_ir = mean_ic / std_ic if std_ic > 0 else float("nan")
+        t_stat = ic_ir * np.sqrt(n) if std_ic > 0 else float("nan")
+        p_val = float(2 * student_t.sf(abs(t_stat), df=n - 1)) if np.isfinite(t_stat) else float("nan")
+        sk = float(skew(ic_series.to_numpy(), bias=False)) if n > 2 else 0.0
+        # Non-excess kurtosis (normal == 3.0)
+        kurt = float(kurtosis(ic_series.to_numpy(), fisher=False, bias=False)) if n > 3 else 3.0
+    else:
+        std_ic = float("nan")
+        ic_ir = float("nan")
+        t_stat = float("nan")
+        p_val = float("nan")
+        sk = 0.0
+        kurt = 3.0
+
+    pos_frac = float((ic_series > 0).mean()) if n > 0 else 0.0
+
+    return FactorICResult(
+        ic_mean=mean_ic,
+        ic_std=std_ic,
+        ic_ir=ic_ir,
+        ic_t_stat=t_stat,
+        ic_p_value=p_val,
+        ic_skewness=sk,
+        ic_kurtosis=kurt,
+        positive_ic_fraction=pos_frac,
+        n_periods=n,
+        ic_series=ic_series,
+    )
