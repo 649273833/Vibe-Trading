@@ -14,9 +14,12 @@ from src.quantlib.factormodel import (
     MARKET_FACTOR,
     MIN_CROSS_SECTION,
     STYLE_FACTOR_DEFINITIONS,
+    FactorReturnFit,
+    FactorRiskDecomposition,
     build_style_exposures,
     cross_sectional_factor_returns,
     factor_return_attribution,
+    factor_risk_decomposition,
     portfolio_style_exposure,
     standardise_exposures,
     style_drift,
@@ -424,4 +427,124 @@ def test_attribution_rejects_disjoint_factor_sets():
     with pytest.raises(ValueError, match="share no factor"):
         factor_return_attribution(
             pd.Series({"value": 1.0}), pd.Series({"momentum": 0.01}), portfolio_return=0.0
+        )
+
+# --- risk decomposition ---
+
+
+def test_factor_risk_decomposition_euler_sum_identities():
+    assets = _assets(4)
+    factors = ["market", "value", "momentum"]
+    weights = pd.Series([0.4, 0.3, 0.2, 0.1], index=assets)
+    exposures = pd.DataFrame(
+        [
+            [1.0, 0.5, -0.2],
+            [0.9, -0.4, 0.8],
+            [1.1, 0.2, 0.5],
+            [0.8, -0.1, -0.6],
+        ],
+        index=assets,
+        columns=factors,
+    )
+    factor_cov = pd.DataFrame(
+        [
+            [0.04, 0.005, -0.002],
+            [0.005, 0.02, 0.001],
+            [-0.002, 0.001, 0.03],
+        ],
+        index=factors,
+        columns=factors,
+    )
+    specific_vars = pd.Series([0.01, 0.015, 0.02, 0.008], index=assets)
+
+    decomp = factor_risk_decomposition(
+        portfolio_weights=weights,
+        exposures=exposures,
+        factor_cov=factor_cov,
+        specific_variances=specific_vars,
+    )
+
+    assert isinstance(decomp, FactorRiskDecomposition)
+    # 1. Total variance = factor_variance + specific_variance
+    assert decomp.total_variance == pytest.approx(
+        decomp.factor_variance + decomp.specific_variance, abs=1e-12
+    )
+    assert decomp.total_volatility == pytest.approx(np.sqrt(decomp.total_variance), abs=1e-12)
+
+    # 2. Variance fractions sum to 1.0
+    assert decomp.factor_variance_fraction + decomp.specific_variance_fraction == pytest.approx(
+        1.0, abs=1e-12
+    )
+
+    # 3. Euler decomposition across assets: sum(asset_risk_contributions) == total_volatility
+    assert float(decomp.asset_risk_contributions.sum()) == pytest.approx(
+        decomp.total_volatility, abs=1e-12
+    )
+
+    # 4. Asset PCR sum to 1.0 (100%)
+    assert float(decomp.asset_pcr.sum()) == pytest.approx(1.0, abs=1e-12)
+
+    # 5. Factor risk + specific risk = total volatility
+    total_rc_by_factors = (
+        float(decomp.factor_risk_contributions.sum()) + float(decomp.specific_risk_contributions.sum())
+    )
+    assert total_rc_by_factors == pytest.approx(decomp.total_volatility, abs=1e-12)
+
+    # 6. Factor PCR + specific PCR = 1.0
+    assert float(decomp.factor_pcr.sum()) + float(decomp.specific_pcr.sum()) == pytest.approx(
+        1.0, abs=1e-12
+    )
+
+
+def test_factor_risk_decomposition_without_specific_variance():
+    assets = _assets(2)
+    factors = ["market"]
+    weights = pd.Series([0.6, 0.4], index=assets)
+    exposures = pd.DataFrame([[1.0], [1.0]], index=assets, columns=factors)
+    factor_cov = pd.DataFrame([[0.04]], index=factors, columns=factors)
+
+    decomp = factor_risk_decomposition(weights, exposures, factor_cov)
+
+    assert decomp.specific_variance == 0.0
+    assert decomp.specific_volatility == 0.0
+    assert decomp.factor_variance_fraction == 1.0
+    assert decomp.specific_variance_fraction == 0.0
+    # Portfolio beta is 1.0, vol is sqrt(0.04) = 0.20
+    assert decomp.total_volatility == pytest.approx(0.20, abs=1e-12)
+    assert decomp.factor_risk_contributions["market"] == pytest.approx(0.20, abs=1e-12)
+
+
+def test_factor_risk_decomposition_zero_weights_safe():
+    assets = _assets(2)
+    factors = ["market"]
+    weights = pd.Series([0.0, 0.0], index=assets)
+    exposures = pd.DataFrame([[1.0], [1.0]], index=assets, columns=factors)
+    factor_cov = pd.DataFrame([[0.04]], index=factors, columns=factors)
+
+    decomp = factor_risk_decomposition(weights, exposures, factor_cov)
+    assert decomp.total_variance == 0.0
+    assert decomp.total_volatility == 0.0
+    assert (decomp.asset_risk_contributions == 0.0).all()
+    assert (decomp.asset_pcr == 0.0).all()
+
+
+def test_factor_risk_decomposition_input_validation():
+    assets = _assets(2)
+    factors = ["market"]
+    weights = pd.Series([0.5, 0.5], index=assets)
+    exposures = pd.DataFrame([[1.0], [1.0]], index=assets, columns=factors)
+    factor_cov = pd.DataFrame([[0.04]], index=factors, columns=factors)
+
+    with pytest.raises(ValueError, match="weights cannot be empty"):
+        factor_risk_decomposition(pd.Series(dtype=float), exposures, factor_cov)
+
+    with pytest.raises(ValueError, match="non-finite"):
+        factor_risk_decomposition(pd.Series([np.nan, 0.5], index=assets), exposures, factor_cov)
+
+    with pytest.raises(ValueError, match="No matching assets"):
+        factor_risk_decomposition(pd.Series([0.5, 0.5], index=["X1", "X2"]), exposures, factor_cov)
+
+    with pytest.raises(ValueError, match="No matching factors"):
+        factor_risk_decomposition(
+            weights, exposures, pd.DataFrame([[0.04]], index=["other"], columns=["other"])
         )
