@@ -548,3 +548,17 @@ def test_factor_risk_decomposition_input_validation():
         factor_risk_decomposition(
             weights, exposures, pd.DataFrame([[0.04]], index=["other"], columns=["other"])
         )
+
+    with pytest.raises(ValueError, match="symmetric"):
+        factor_risk_decomposition(
+            pd.Series([0.5, 0.5], index=["A", "B"]),
+            pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], index=["A", "B"], columns=["F1", "F2"]),
+            pd.DataFrame([[0.04, 0.01], [0.03, 0.04]], index=["F1", "F2"], columns=["F1", "F2"]),
+        )
+
+    with pytest.raises(ValueError, match="positive semi-definite"):
+        factor_risk_decomposition(
+            pd.Series([0.5, 0.5], index=["A", "B"]),
+            pd.DataFrame([[1.0], [1.0]], index=["A", "B"], columns=["F1"]),
+            pd.DataFrame([[-0.04]], index=["F1"], columns=["F1"]),
+        )

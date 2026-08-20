@@ -180,7 +180,7 @@ class FactorRiskDecomposition:
         factor_pcr: Percentage contribution to risk (PCR) per factor.
         asset_marginal_contributions: Marginal contribution to risk (MCR) per asset.
         asset_risk_contributions: Absolute risk contribution per asset (sums to total volatility).
-        asset_pcr: Percentage contribution to risk (PCR) per asset (sums to 1.0).
+        asset_pcr: Percentage contribution to risk (PCR) per asset (sums to 1.0 when total_volatility > 0, otherwise zero).
         specific_risk_contributions: Specific risk contribution per asset.
         specific_pcr: Percentage contribution from specific risk per asset.
     """
@@ -630,6 +630,12 @@ def factor_risk_decomposition(
 
     X = X[factors]
     F = factor_cov.loc[factors, factors]
+    F_mat = F.to_numpy(dtype=float)
+    if not np.allclose(F_mat, F_mat.T, atol=1e-8):
+        raise ValueError("factor_cov matrix must be symmetric")
+    eigvals = np.linalg.eigvalsh(F_mat)
+    if np.min(eigvals) < -1e-8:
+        raise ValueError("factor_cov matrix must be positive semi-definite")
 
     # Align specific variances
     if specific_variances is not None:
