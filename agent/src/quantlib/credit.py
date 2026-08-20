@@ -269,9 +269,7 @@ def merton_asset_solve(
         E       = V*N(d1) - D*exp(-r*T)*N(d2)
         sigma_E = N(d1) * sigma_V * V / E
 
-    The unknowns are solved in log space so the root finder cannot wander into a
-    negative asset value or a negative volatility, which the markdown version
-    could.
+    The unknowns are solved in log space to enforce strictly positive domain.
 
     Args:
         equity_value: Market capitalisation.
@@ -279,15 +277,13 @@ def merton_asset_solve(
         debt_face: Face value of debt, treated as a single zero-coupon claim.
         risk_free: Continuously compounded risk-free rate as a decimal.
         horizon: Years to the debt's maturity.
-        tolerance: Largest residual, relative to ``equity_value``, accepted as a
-            solution.
+        tolerance: Largest acceptable relative residual to ``equity_value``.
 
     Returns:
         Tuple ``(asset_value, asset_vol)``.
 
     Raises:
-        ValueError: If any input is non-positive, or the system does not
-            converge to within ``tolerance``.
+        ValueError: If any input is non-positive or system fails to converge.
     """
     if min(equity_value, equity_vol, debt_face, horizon) <= 0:
         raise ValueError(
@@ -665,6 +661,9 @@ def hazard_rate_to_survival_probability(hazard_rate: float, tenor_years: float) 
 
     Returns:
         Survival probability in [0.0, 1.0].
+
+    Raises:
+        ValueError: If hazard_rate or tenor_years is negative.
     """
     if hazard_rate < 0.0 or tenor_years < 0.0:
         raise ValueError(f"hazard_rate and tenor_years must be non-negative, got {hazard_rate}, {tenor_years}")
@@ -680,6 +679,9 @@ def survival_probability_to_hazard_rate(survival_prob: float, tenor_years: float
 
     Returns:
         Annualised hazard rate lambda.
+
+    Raises:
+        ValueError: If survival_prob is not in (0.0, 1.0] or tenor_years <= 0.
     """
     if survival_prob <= 0.0 or survival_prob > 1.0:
         raise ValueError(f"survival_prob must be in (0.0, 1.0], got {survival_prob}")
