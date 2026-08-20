@@ -587,7 +587,7 @@ Barras intradía: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 métricas + comparació
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>265 funciones probadas en 19 módulos, invocables desde cualquier transporte</sub></summary>
+<summary><b>Quant Library</b> <sub>268 funciones probadas en 19 módulos, invocables desde cualquier transporte</sub></summary>
 
 `src/quantlib` contiene una implementación probada de cada pieza de matemática
 financiera que el agente necesita. Las skills **importan** estas funciones en
