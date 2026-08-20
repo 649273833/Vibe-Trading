@@ -582,7 +582,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>265 دالة مختبَرة عبر 19 وحدة، قابلة للاستدعاء من كل المسارات</sub></summary>
+<summary><b>Quant Library</b> <sub>266 دالة مختبَرة عبر 19 وحدة، قابلة للاستدعاء من كل المسارات</sub></summary>
 
 يحتفظ `src/quantlib` بتنفيذ مختبَر **واحد فقط** لكل قطعة من الرياضيات المالية التي
 يحتاجها الـ agent. صارت الـ skills **تستورد** هذه الدوال بدلاً من حمل الصيغ داخل كتل
