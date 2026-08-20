@@ -552,13 +552,14 @@ def barrier_option_price(
     # Degenerate expiry or zero/negative volatility
     if T <= 0.0 or sigma <= 0.0:
         vanilla = bs_price(S, K, T, r, sigma, opt_type, q)
+        rebate_pv = rebate * float(np.exp(-r * T))
         # Check if breached at T=0
         is_down = "down" in b_type
         breached = (S <= H) if is_down else (S >= H)
         if "out" in b_type:
-            return rebate if breached else vanilla
+            return rebate_pv if breached else vanilla
         else:  # "in"
-            return vanilla if breached else rebate
+            return vanilla if breached else rebate_pv
 
     # Check initial boundary conditions
     is_down = "down" in b_type
@@ -606,24 +607,24 @@ def barrier_option_price(
 
     if opt_type == _CALL:
         if b_type == "down-and-out":
-            price = (A - C + E) if K >= H else (B - D + E)
+            price = (A - C + (rebate * df_r - E)) if K >= H else (B - D + (rebate * df_r - E))
         elif b_type == "down-and-in":
-            price = (C + (rebate * df_r - E)) if K >= H else (A - B + D + (rebate * df_r - E))
+            price = (C + E) if K >= H else (A - B + D + E)
         elif b_type == "up-and-out":
-            price = E if K >= H else (A - B + C - D + E)
+            price = (rebate * df_r - E) if K >= H else (A - B + C - D + (rebate * df_r - E))
         elif b_type == "up-and-in":
-            price = (A + (rebate * df_r - E)) if K >= H else (B - C + D + (rebate * df_r - E))
+            price = (A + E) if K >= H else (B - C + D + E)
         else:
             raise ValueError(f"Unhandled barrier type {b_type}")
     else:  # PUT
         if b_type == "down-and-out":
-            price = (A - B + C - D + E) if K >= H else E
+            price = (A - B + C - D + (rebate * df_r - E)) if K >= H else (rebate * df_r - E)
         elif b_type == "down-and-in":
-            price = (B - C + D + (rebate * df_r - E)) if K >= H else (A + (rebate * df_r - E))
+            price = (B - C + D + E) if K >= H else (A + E)
         elif b_type == "up-and-out":
-            price = (B - D + E) if K >= H else (A - C + E)
+            price = (B - D + (rebate * df_r - E)) if K >= H else (A - C + (rebate * df_r - E))
         elif b_type == "up-and-in":
-            price = (A - B + D + (rebate * df_r - E)) if K >= H else (C + (rebate * df_r - E))
+            price = (A - B + D + E) if K >= H else (C + E)
         else:
             raise ValueError(f"Unhandled barrier type {b_type}")
 
