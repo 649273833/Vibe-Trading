@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Dict, List, Optional
 import ssl
 import urllib.request
@@ -25,6 +26,16 @@ from backtest.loaders.registry import register
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+
+# Tencent fqkline caps a single response at `_PAGE_SIZE` bars.  Requests for a
+# multi-year window (e.g. 2018-2025 daily) silently truncate at 500 bars
+# (roughly the first 2 years) unless we paginate by advancing the start date.
+_PAGE_SIZE = 500
+# 12 pages * 500 bars = 6000 bars ≈ 24 trading years; a hard cap also guards
+# against pathological loop behavior if the API ever stops advancing.
+_MAX_PAGES = 12
+_PAGE_RETRIES = 3
+_PAGE_BACKOFF = 0.6
 
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -85,7 +96,9 @@ class DataLoader:
                     start_date=start_date,
                     end_date=end_date,
                     fields=None,
-                    fetch=lambda code=code: self._fetch_one(code, start_date, end_date),
+                    fetch=lambda code=code: self._fetch_one_paginated(
+                        code, start_date, end_date
+                    ),
                 )
                 if df is not None and not df.empty:
                     result[code] = df
@@ -96,6 +109,13 @@ class DataLoader:
     def _fetch_one(
         self, code: str, start_date: str, end_date: str,
     ) -> Optional[pd.DataFrame]:
+        """Single-page fetch (backward compatible; used by tests)."""
+        return self._request_page(code, start_date, end_date)
+
+    def _request_page(
+        self, code: str, start_date: str, end_date: str,
+    ) -> Optional[pd.DataFrame]:
+        """Fetch up to `_PAGE_SIZE` bars in [start_date, end_date]."""
         if not _is_a_share(code) and not _is_hk_equity(code):
             return None
 
@@ -115,7 +135,7 @@ class DataLoader:
 
         url = (
             f"{_BASE_URL}?param={tencent_code},day,"
-            f"{start_date},{end_date},500,qfq"
+            f"{start_date},{end_date},{_PAGE_SIZE},qfq"
         )
 
         req = urllib.request.Request(url, headers={
@@ -163,4 +183,55 @@ class DataLoader:
         df = df[["open", "high", "low", "close", "volume"]].dropna(
             subset=["open", "high", "low", "close"]
         )
+        return df
+
+    def _fetch_one_paginated(
+        self, code: str, start_date: str, end_date: str,
+    ) -> Optional[pd.DataFrame]:
+        """Paginate [start_date, end_date] in `_PAGE_SIZE`-bar windows.
+
+        The Tencent API returns at most 500 bars per request regardless of the
+        requested window, so a multi-year range is silently truncated unless we
+        advance the start date by one day past the last bar of each page.
+        """
+        chunks: List[pd.DataFrame] = []
+        cursor = start_date
+        seen_starts: set[str] = set()
+
+        for _ in range(_MAX_PAGES):
+            if cursor in seen_starts:
+                logger.warning("tencent paginate loop at %s; stopping", cursor)
+                break
+            seen_starts.add(cursor)
+
+            page: Optional[pd.DataFrame] = None
+            for attempt in range(_PAGE_RETRIES):
+                try:
+                    page = self._request_page(code, cursor, end_date)
+                    break
+                except Exception as exc:  # noqa: BLE001 - transient network jitter
+                    if attempt < _PAGE_RETRIES - 1:
+                        time.sleep(_PAGE_BACKOFF * (2 ** attempt))
+                    else:
+                        logger.warning(
+                            "tencent page giveup %s@%s: %s", code, cursor, exc
+                        )
+
+            if page is None or page.empty:
+                break
+            chunks.append(page)
+
+            # Full page -> continue from the day after the last bar.
+            if len(page) < _PAGE_SIZE:
+                break
+            last = page.index.max()
+            next_start = (last + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            if next_start >= end_date:
+                break
+            cursor = next_start
+
+        if not chunks:
+            return None
+        df = pd.concat(chunks)
+        df = df[~df.index.duplicated(keep="last")].sort_index()
         return df
