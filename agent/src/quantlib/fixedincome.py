@@ -470,7 +470,6 @@ def key_rate_duration(
     cf_durations = time_weights * pv / price  # Sums to modified duration
 
     krd_result: dict[float, float] = {float(t): 0.0 for t in kr}
-    n_kr = len(kr)
 
     for t_cf, dur_cf in zip(cf_times, cf_durations):
         if t_cf <= kr[0]:
