@@ -570,7 +570,7 @@ def factor_ic_analysis(
         higher moments, and full IC time series.
 
     Raises:
-        ValueError: If inputs are empty, mismatch in shape, or method is unknown.
+        ValueError: If inputs are empty, share no common dates or assets, or method is unknown.
     """
     if method not in ("spearman", "pearson"):
         raise ValueError(f"method must be 'spearman' or 'pearson', got {method!r}")
