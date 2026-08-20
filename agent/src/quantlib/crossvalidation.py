@@ -270,7 +270,6 @@ def purged_kfold_splits(
         )
 
 
-
 def group_purged_kfold_splits(
     groups: Sequence[object] | pd.Series | np.ndarray,
     n_folds: int = 5,
@@ -355,6 +354,7 @@ def group_purged_kfold_splits(
             embargoed=embargoed_count,
             test_bounds=(int(test_rows.min()), int(test_rows.max())),
         )
+
 
 def purged_walk_forward_splits(
     n_samples: int,
