@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT_DAY_COUNT",
     "COMPOUNDING_CONVENTIONS",
     "DEFAULT_COMPOUNDING",
+    "DEFAULT_KEY_RATE_TENORS",
     "CurveFit",
     "year_fraction",
     "accrued_interest",
@@ -40,6 +41,7 @@ __all__ = [
     "ytm_solve",
     "macaulay_duration",
     "modified_duration",
+    "key_rate_duration",
     "convexity",
     "dv01",
     "effective_duration",
@@ -65,6 +67,19 @@ COMPOUNDING_CONVENTIONS: tuple[str, ...] = ("discrete", "continuous")
 
 #: Compounding assumed when the caller does not name one (the markdown's behaviour).
 DEFAULT_COMPOUNDING: str = "discrete"
+
+#: Standard benchmark tenors for Key Rate Duration decomposition.
+DEFAULT_KEY_RATE_TENORS: tuple[float, ...] = (
+    0.5,
+    1.0,
+    2.0,
+    3.0,
+    5.0,
+    7.0,
+    10.0,
+    20.0,
+    30.0,
+)
 
 
 def year_fraction(
@@ -400,6 +415,80 @@ def modified_duration(
         return d_mac
     return d_mac / (1.0 + ytm / freq)
 
+
+
+def key_rate_duration(
+    face: float,
+    coupon_rate: float,
+    ytm: float,
+    n_periods: int,
+    freq: int = 1,
+    key_rates: Sequence[float] = DEFAULT_KEY_RATE_TENORS,
+    compounding: str = DEFAULT_COMPOUNDING,
+) -> dict[float, float]:
+    """Decompose bond yield sensitivity into Key Rate Durations (KRD) across benchmark tenors.
+
+    Distributes cash flow duration sensitivities linearly to adjacent key rate
+    tenors using triangular interpolation kernels.
+
+    Satisfies the exact sum identity:
+        sum(krd.values()) == modified_duration(...)
+
+    Args:
+        face: Par/redemption amount.
+        coupon_rate: Annual coupon rate as a decimal.
+        ytm: Annual yield to maturity as a decimal.
+        n_periods: Number of remaining coupon periods.
+        freq: Coupon payments per year.
+        key_rates: Sequence of key rate tenors in years (strictly increasing).
+        compounding: One of :data:`COMPOUNDING_CONVENTIONS`.
+
+    Returns:
+        Dict mapping each key rate tenor (float) to its Key Rate Duration (float in years).
+
+    Raises:
+        ValueError: If key_rates is empty or not strictly increasing, or schedule/compounding invalid.
+    """
+    if not key_rates:
+        raise ValueError("key_rates must contain at least one tenor")
+    kr = np.asarray(key_rates, dtype=float)
+    if (np.diff(kr) <= 0.0).any():
+        raise ValueError(f"key_rates must be strictly increasing, got {key_rates}")
+
+    periods, amounts = bond_cashflows(face, coupon_rate, n_periods, freq)
+    pv = amounts * _discount_factors(ytm, periods, freq, compounding)
+    price = float(pv.sum())
+    if price <= 0.0:
+        raise ValueError("bond price must be positive for key rate duration")
+
+    cf_times = periods / freq
+    # Modified discount factor weight per cash flow
+    if compounding == "continuous":
+        time_weights = cf_times
+    else:
+        time_weights = cf_times / (1.0 + ytm / freq)
+
+    cf_durations = time_weights * pv / price  # Sums to modified duration
+
+    krd_result: dict[float, float] = {float(t): 0.0 for t in kr}
+    n_kr = len(kr)
+
+    for t_cf, dur_cf in zip(cf_times, cf_durations):
+        if t_cf <= kr[0]:
+            krd_result[float(kr[0])] += float(dur_cf)
+        elif t_cf >= kr[-1]:
+            krd_result[float(kr[-1])] += float(dur_cf)
+        else:
+            # Find interval kr[k] <= t_cf <= kr[k+1]
+            idx = int(np.searchsorted(kr, t_cf))
+            t_left = kr[idx - 1]
+            t_right = kr[idx]
+            w_right = (t_cf - t_left) / (t_right - t_left)
+            w_left = 1.0 - w_right
+            krd_result[float(t_left)] += float(dur_cf * w_left)
+            krd_result[float(t_right)] += float(dur_cf * w_right)
+
+    return krd_result
 
 def convexity(
     face: float,
