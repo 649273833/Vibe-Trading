@@ -20,14 +20,17 @@ from src.quantlib.credit import (
     ZONE_LABELS_ZH,
     AltmanZScore,
     altman_z_score,
+    cds_price,
     credit_spread_analysis,
     distance_to_default,
     edf_reference_band,
+    hazard_rate_to_survival_probability,
     kmv_default_point,
     kmv_distance_to_default,
     merton_asset_solve,
     merton_model,
     spread_term_structure,
+    survival_probability_to_hazard_rate,
 )
 
 # One balance sheet, reused so the three variants can be compared like for like.
@@ -496,3 +499,70 @@ def test_spread_term_structure_validates_its_inputs():
         spread_term_structure({}, {1: 0.02})
     with pytest.raises(ValueError, match="unknown input_unit"):
         spread_term_structure({"x": {1: 0.025}}, {1: 0.02}, input_unit="ratio")
+
+
+# --------------------------------------------------------------------------
+# CDS Pricing & Hazard Rate Tests
+# --------------------------------------------------------------------------
+
+
+def test_hazard_rate_and_survival_prob_roundtrip():
+    lambda_val = 0.025
+    T = 5.0
+    q = hazard_rate_to_survival_probability(lambda_val, T)
+    assert 0.0 < q < 1.0
+    recovered_lambda = survival_probability_to_hazard_rate(q, T)
+    assert recovered_lambda == pytest.approx(lambda_val, rel=1e-12)
+
+
+def test_cds_price_fair_par_spread_zero_upfront():
+    # When the fixed running coupon equals the model par spread, upfront payment is identically 0.
+    spread = 150.0
+    res_par = cds_price(
+        spread_bps=spread,
+        coupon_bps=spread,
+        recovery_rate=0.40,
+        tenor_years=5.0,
+        risk_free_rate=0.03,
+    )
+    par_bps = res_par["par_spread_bps"]
+    result = cds_price(
+        spread_bps=spread,
+        coupon_bps=par_bps,
+        recovery_rate=0.40,
+        tenor_years=5.0,
+        risk_free_rate=0.03,
+    )
+    assert result["upfront_pct"] == pytest.approx(0.0, abs=1e-12)
+    assert result["upfront_amount"] == pytest.approx(0.0, abs=1e-6)
+    assert result["par_spread_bps"] == pytest.approx(spread, rel=0.05)
+    assert result["survival_probability"] == pytest.approx(np.exp(-result["hazard_rate"] * 5.0), rel=1e-12)
+    assert result["default_probability"] == pytest.approx(1.0 - result["survival_probability"], rel=1e-12)
+
+def test_cds_price_buyer_mtm_positive_when_spread_above_coupon():
+    # Quoted spread 250 bps > 100 bps running coupon -> protection buyer has positive MTM
+    result = cds_price(
+        spread_bps=250.0,
+        coupon_bps=100.0,
+        recovery_rate=0.40,
+        tenor_years=5.0,
+        notional=10_000_000.0,
+    )
+    assert result["upfront_amount"] > 0.0
+    assert result["buyer_mtm"] > 0.0
+    assert result["protection_leg_pv"] > result["premium_leg_pv"]
+
+
+def test_cds_price_input_validation():
+    with pytest.raises(ValueError, match="spread_bps must be non-negative"):
+        cds_price(spread_bps=-10.0)
+    with pytest.raises(ValueError, match="recovery_rate"):
+        cds_price(spread_bps=100.0, recovery_rate=1.0)
+    with pytest.raises(ValueError, match="tenor_years"):
+        cds_price(spread_bps=100.0, tenor_years=0.0)
+    with pytest.raises(ValueError, match="notional"):
+        cds_price(spread_bps=100.0, notional=-1000.0)
+    with pytest.raises(ValueError, match="hazard_rate"):
+        hazard_rate_to_survival_probability(-0.01, 5.0)
+    with pytest.raises(ValueError, match="survival_prob"):
+        survival_probability_to_hazard_rate(1.5, 5.0)

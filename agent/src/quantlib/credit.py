@@ -48,6 +48,9 @@ __all__ = [
     "edf_reference_band",
     "credit_spread_analysis",
     "spread_term_structure",
+    "hazard_rate_to_survival_probability",
+    "survival_probability_to_hazard_rate",
+    "cds_price",
 ]
 
 
@@ -673,3 +676,142 @@ def spread_term_structure(
             )
         records.append(pd.Series(row, name=issuer))
     return pd.DataFrame(records)
+
+
+def hazard_rate_to_survival_probability(hazard_rate: float, tenor_years: float) -> float:
+    """Convert a constant hazard rate lambda to cumulative survival probability Q(T) = exp(-lambda * T).
+
+    Args:
+        hazard_rate: Annualised default intensity / hazard rate lambda >= 0.
+        tenor_years: Time horizon in years >= 0.
+
+    Returns:
+        Survival probability in [0.0, 1.0].
+    """
+    if hazard_rate < 0.0 or tenor_years < 0.0:
+        raise ValueError(f"hazard_rate and tenor_years must be non-negative, got {hazard_rate}, {tenor_years}")
+    return float(np.exp(-hazard_rate * tenor_years))
+
+
+def survival_probability_to_hazard_rate(survival_prob: float, tenor_years: float) -> float:
+    """Convert a survival probability Q(T) to implied constant hazard rate lambda = -ln(Q(T)) / T.
+
+    Args:
+        survival_prob: Survival probability in (0.0, 1.0].
+        tenor_years: Time horizon in years > 0.
+
+    Returns:
+        Annualised hazard rate lambda.
+    """
+    if survival_prob <= 0.0 or survival_prob > 1.0:
+        raise ValueError(f"survival_prob must be in (0.0, 1.0], got {survival_prob}")
+    if tenor_years <= 0.0:
+        raise ValueError(f"tenor_years must be strictly positive, got {tenor_years}")
+    return float(-np.log(survival_prob) / tenor_years)
+
+
+def cds_price(
+    spread_bps: float,
+    recovery_rate: float = 0.40,
+    tenor_years: float = 5.0,
+    risk_free_rate: float = 0.03,
+    coupon_bps: float = 100.0,
+    notional: float = 10_000_000.0,
+    payment_frequency: int = 4,
+) -> dict:
+    """ISDA standard model single-name Credit Default Swap (CDS) valuation engine.
+
+    Computes the implied hazard rate, survival probability curve, Risky Present Value
+    of a Basis Point (RPV01), protection leg PV, premium leg PV, fair par spread,
+    and mark-to-market (MTM) upfront cash payment.
+
+    Args:
+        spread_bps: Market quoted par CDS spread in basis points (e.g. 150.0 for 150 bps).
+        recovery_rate: Expected recovery rate on default in [0.0, 1.0) (standard senior unsecured = 0.40).
+        tenor_years: Contract maturity in years > 0 (standard benchmark = 5.0 years).
+        risk_free_rate: Continuously compounded annual risk-free discount rate.
+        coupon_bps: Fixed running coupon in basis points (standard 100 bps IG, 500 bps HY).
+        notional: Contract notional amount in currency units.
+        payment_frequency: Premium coupon payment frequency per year (standard quarterly = 4).
+
+    Returns:
+        dict with keys:
+            * ``hazard_rate`` (float): Implied constant hazard rate (default intensity).
+            * ``survival_probability`` (float): Probability of survival to maturity Q(T).
+            * ``default_probability`` (float): Cumulative probability of default 1 - Q(T).
+            * ``rpv01`` (float): Risky PV01 (present value of 1 bp coupon per dollar notional).
+            * ``protection_leg_pv`` (float): Present value of default protection per dollar notional.
+            * ``premium_leg_pv`` (float): Present value of fixed running premium per dollar notional.
+            * ``par_spread_bps`` (float): Model par spread in basis points.
+            * ``upfront_pct`` (float): Upfront payment as percentage of notional.
+            * ``upfront_amount`` (float): Net upfront cash payment (positive = buyer pays seller).
+            * ``buyer_mtm`` (float): Mark-to-market value for the protection buyer.
+
+    Raises:
+        ValueError: If spread_bps < 0, recovery_rate not in [0, 1), tenor_years <= 0, or notional <= 0.
+    """
+    if spread_bps < 0.0:
+        raise ValueError(f"spread_bps must be non-negative, got {spread_bps}")
+    if not (0.0 <= recovery_rate < 1.0):
+        raise ValueError(f"recovery_rate must be in [0.0, 1.0), got {recovery_rate}")
+    if tenor_years <= 0.0:
+        raise ValueError(f"tenor_years must be strictly positive, got {tenor_years}")
+    if notional <= 0.0:
+        raise ValueError(f"notional must be strictly positive, got {notional}")
+    if payment_frequency <= 0:
+        raise ValueError(f"payment_frequency must be positive, got {payment_frequency}")
+
+    s_dec = spread_bps / 10_000.0
+    c_dec = coupon_bps / 10_000.0
+    lgd = 1.0 - recovery_rate
+
+    # Implied hazard rate lambda ≈ s / LGD
+    lambda_hazard = float(s_dec / lgd) if lgd > 0 else 0.0
+
+    dt = 1.0 / payment_frequency
+    n_periods = int(round(tenor_years * payment_frequency))
+    t_grid = np.linspace(dt, tenor_years, n_periods)
+
+    # Survival probabilities Q(t) = exp(-lambda * t)
+    q_grid = np.exp(-lambda_hazard * t_grid)
+    q_prev = np.r_[1.0, q_grid[:-1]]
+
+    # Discount factors D(t) = exp(-r * t)
+    df_grid = np.exp(-risk_free_rate * t_grid)
+    df_mid = np.exp(-risk_free_rate * (t_grid - 0.5 * dt))
+
+    # Premium leg / RPV01: sum(dt * D(t_i) * Q(t_i)) + accrual on default
+    # Accrual on default approx: sum( 0.5 * dt * D(t_mid) * (Q(t_{i-1}) - Q(t_i)) )
+    premium_cashflow = np.sum(dt * df_grid * q_grid)
+    accrual_cashflow = np.sum(0.5 * dt * df_mid * (q_prev - q_grid))
+    rpv01 = float(premium_cashflow + accrual_cashflow)
+
+    # Protection leg: sum( LGD * D(t_mid) * (Q(t_{i-1}) - Q(t_i)) )
+    default_prob_steps = q_prev - q_grid
+    prot_leg_pv = float(lgd * np.sum(df_mid * default_prob_steps))
+
+    # Par spread in bps
+    par_spread = float((prot_leg_pv / rpv01) * 10_000.0) if rpv01 > 0 else spread_bps
+
+    # Premium leg PV for running coupon c
+    prem_leg_pv = float(c_dec * rpv01)
+
+    # Upfront percentage and amount
+    upfront_pct = float(prot_leg_pv - prem_leg_pv)
+    upfront_amt = float(upfront_pct * notional)
+
+    survival_T = float(np.exp(-lambda_hazard * tenor_years))
+    default_prob_T = float(1.0 - survival_T)
+
+    return {
+        "hazard_rate": lambda_hazard,
+        "survival_probability": survival_T,
+        "default_probability": default_prob_T,
+        "rpv01": rpv01,
+        "protection_leg_pv": prot_leg_pv,
+        "premium_leg_pv": prem_leg_pv,
+        "par_spread_bps": par_spread,
+        "upfront_pct": upfront_pct,
+        "upfront_amount": upfront_amt,
+        "buyer_mtm": upfront_amt,
+    }
