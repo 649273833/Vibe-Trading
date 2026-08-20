@@ -416,7 +416,6 @@ def modified_duration(
     return d_mac / (1.0 + ytm / freq)
 
 
-
 def key_rate_duration(
     face: float,
     coupon_rate: float,
@@ -489,6 +488,7 @@ def key_rate_duration(
             krd_result[float(t_right)] += float(dur_cf * w_right)
 
     return krd_result
+
 
 def convexity(
     face: float,
