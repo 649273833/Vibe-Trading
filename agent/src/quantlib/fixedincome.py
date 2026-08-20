@@ -448,9 +448,9 @@ def key_rate_duration(
     Raises:
         ValueError: If key_rates is empty or not strictly increasing, or schedule/compounding invalid.
     """
-    if not key_rates:
-        raise ValueError("key_rates must contain at least one tenor")
     kr = np.asarray(key_rates, dtype=float)
+    if kr.size == 0:
+        raise ValueError("key_rates must contain at least one tenor")
     if (np.diff(kr) <= 0.0).any():
         raise ValueError(f"key_rates must be strictly increasing, got {key_rates}")
 
