@@ -1,20 +1,7 @@
-"""Fixed-income primitives: day count, bond math and yield-curve fitting.
+"""Fixed-income primitives: day count conventions, bond pricing, risk metrics, and yield curve fitting.
 
-This module is the executable form of the formulas that used to live as markdown
-code blocks in ``src/skills/credit-analysis/SKILL.md``. Two things are deliberately
-different from the markdown originals:
-
-* **Day count is explicit.** The markdown priced everything in whole coupon
-  periods, which silently assumes settlement lands exactly on a coupon date and
-  that no accrued interest is owed. :func:`year_fraction` and
-  :func:`accrued_interest` make that assumption visible and adjustable.
-* **Compounding is explicit.** The markdown hard-coded discrete periodic
-  compounding at ``freq``. That is still the default (``compounding="discrete"``),
-  but continuous compounding is selectable.
-
-All rates are decimals (``0.05`` means 5%), all maturities/horizons are in years,
-and every duration/convexity figure is returned in years (or years squared),
-never in coupon periods.
+All rates are decimals, maturities/horizons are in years, and duration/convexity
+metrics are in years or years squared.
 """
 
 from __future__ import annotations
@@ -70,17 +57,8 @@ DEFAULT_COMPOUNDING: str = "discrete"
 
 #: Standard benchmark tenors for Key Rate Duration decomposition.
 DEFAULT_KEY_RATE_TENORS: tuple[float, ...] = (
-    0.5,
-    1.0,
-    2.0,
-    3.0,
-    5.0,
-    7.0,
-    10.0,
-    20.0,
-    30.0,
+    0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0, 30.0
 )
-
 
 def year_fraction(
     start: _dt.date,
@@ -117,10 +95,7 @@ def year_fraction(
     if day_count in ("30/360", "30E/360"):
         d1, d2 = start.day, end.day
         if day_count == "30/360":
-            # US bond basis: clip D1 to 30, then clip D2 only when the ADJUSTED
-            # D1 is 30. That fires whether D1 was clipped down from 31 or was
-            # already 30 -- both are the ISDA rule. Hand-checked: 2024-01-30 to
-            # 2024-03-31 gives 60/360, 2024-01-29 to 2024-03-31 gives 62/360.
+            # US bond basis: clip D1 to 30, then clip D2 when adjusted D1 is 30.
             if d1 == 31:
                 d1 = 30
             if d2 == 31 and d1 == 30:
@@ -224,16 +199,9 @@ def bond_cashflows(
             positive integer, or if ``freq`` is not positive.
     """
     if face <= 0:
-        # Guarding here rather than in each caller is what makes the guard
-        # coherent: dv01 divides a price by face, so a negative face cancels its
-        # own sign error and returns a confidently positive risk number.
         raise ValueError(f"face must be positive, got {face}")
-    if isinstance(n_periods, bool) or not isinstance(n_periods, (int, np.integer)):
-        # A float slips past `<= 0` and dies inside np.full with a numpy message
-        # that names neither the argument nor this function.
-        raise ValueError(f"n_periods must be an integer, got {n_periods!r}")
-    if n_periods <= 0:
-        raise ValueError(f"n_periods must be positive, got {n_periods}")
+    if isinstance(n_periods, bool) or not isinstance(n_periods, (int, np.integer)) or n_periods <= 0:
+        raise ValueError(f"n_periods must be a positive integer, got {n_periods!r}")
     if freq <= 0:
         raise ValueError(f"freq must be positive, got {freq}")
 
@@ -249,21 +217,7 @@ def _discount_factors(
     freq: int,
     compounding: str,
 ) -> np.ndarray:
-    """Discount factors for a set of period indices.
-
-    Args:
-        ytm: Annual yield as a decimal.
-        periods: Period indices (1-based, in units of ``1 / freq`` years).
-        freq: Coupon payments per year.
-        compounding: One of :data:`COMPOUNDING_CONVENTIONS`.
-
-    Returns:
-        Array of discount factors aligned with ``periods``.
-
-    Raises:
-        ValueError: If ``compounding`` is unknown or the discrete periodic yield
-            is at or below -100%, which makes the discount factor undefined.
-    """
+    """Compute discount factors for period indices under discrete or continuous compounding."""
     if compounding == "discrete":
         periodic = 1.0 + ytm / freq
         if periodic <= 0.0:
@@ -304,10 +258,6 @@ def bond_price(
 
     Raises:
         ValueError: If the schedule arguments or ``compounding`` are invalid.
-
-    Examples:
-        >>> round(bond_price(100, 0.05, 0.04, 5), 4)
-        104.4518
     """
     periods, amounts = bond_cashflows(face, coupon_rate, n_periods, freq)
     return float(amounts @ _discount_factors(ytm, periods, freq, compounding))
@@ -331,9 +281,7 @@ def ytm_solve(
         n_periods: Number of remaining coupon periods.
         freq: Coupon payments per year.
         compounding: One of :data:`COMPOUNDING_CONVENTIONS`.
-        bracket: ``(low, high)`` annual yields to search between. The default
-            spans -50% to +1000%, which covers every traded bond; widen it only
-            if you know the root sits outside.
+        bracket: ``(low, high)`` annual yield search interval as decimals.
 
     Returns:
         Annual yield to maturity as a decimal.
@@ -427,12 +375,8 @@ def key_rate_duration(
 ) -> dict[float, float]:
     """Decompose bond yield sensitivity into Key Rate Durations (KRD) across benchmark tenors.
 
-    Distributes cash flow duration sensitivities linearly to adjacent key rate
-    tenors using triangular interpolation kernels.
-
-    Satisfies the exact sum identity:
-        sum(krd.values()) == modified_duration(...)
-
+    Distributes cash flow sensitivities to adjacent key rates with triangular kernels.
+    Sum of key rate durations equals modified duration.
     Args:
         face: Par/redemption amount.
         coupon_rate: Annual coupon rate as a decimal.
@@ -566,10 +510,7 @@ def effective_duration(
 ) -> float:
     """Duration by symmetric repricing, valid for bonds with embedded options.
 
-    Analytic duration assumes the cash flows do not move when the yield does.
-    For a callable bond or an MBS they do, so the sensitivity has to come from
-    a pricing model that is re-run at each shifted yield.
-
+    Re-evaluates a custom pricing model at perturbed yields to compute duration.
     Args:
         reprice: Callable mapping a yield level to a price. It must contain the
             option/prepayment logic; nothing here inspects it.
@@ -593,19 +534,7 @@ def effective_duration(
 
 
 def _decay_factors(tau: np.ndarray, lam: float) -> tuple[np.ndarray, np.ndarray]:
-    """Nelson-Siegel slope and curvature loadings for one decay parameter.
-
-    Args:
-        tau: Maturities in years, non-negative.
-        lam: Decay parameter in years, strictly positive.
-
-    Returns:
-        Tuple ``(slope_loading, curvature_loading)``. At ``tau == 0`` the limits
-        1 and 0 are used rather than dividing by zero.
-
-    Raises:
-        ValueError: If ``lam`` is not strictly positive.
-    """
+    """Compute Nelson-Siegel slope and curvature loadings for decay parameter lam."""
     if lam <= 0:
         raise ValueError(f"decay parameter must be positive, got {lam}")
     x = tau / lam
@@ -615,17 +544,7 @@ def _decay_factors(tau: np.ndarray, lam: float) -> tuple[np.ndarray, np.ndarray]
 
 
 def _as_tau(tau: float | Sequence[float] | np.ndarray) -> tuple[np.ndarray, bool]:
-    """Normalise a maturity argument to a float array.
-
-    Args:
-        tau: Scalar maturity or a sequence of maturities in years.
-
-    Returns:
-        Tuple ``(array, was_scalar)``.
-
-    Raises:
-        ValueError: If any maturity is negative.
-    """
+    """Normalise scalar or sequence maturity argument to a 1-D float array."""
     arr = np.asarray(tau, dtype=float)
     was_scalar = arr.ndim == 0
     arr = np.atleast_1d(arr)
@@ -641,21 +560,7 @@ def nelson_siegel(
     beta2: float,
     lambda1: float,
 ) -> float | np.ndarray:
-    """Nelson-Siegel zero-rate curve.
-
-    Args:
-        tau: Maturity or maturities in years.
-        beta0: Level factor; the asymptotic long rate.
-        beta1: Slope factor; ``beta0 + beta1`` is the instantaneous short rate.
-        beta2: Curvature factor; peaks near ``lambda1``.
-        lambda1: Decay parameter in years, strictly positive.
-
-    Returns:
-        Zero rate(s) as decimals. A float when ``tau`` was scalar, else an array.
-
-    Raises:
-        ValueError: If ``lambda1`` is not positive or a maturity is negative.
-    """
+    """Compute Nelson-Siegel zero rates for given maturities and parameters."""
     arr, was_scalar = _as_tau(tau)
     slope, curve = _decay_factors(arr, lambda1)
     out = beta0 + beta1 * slope + beta2 * curve
@@ -671,23 +576,7 @@ def svensson(
     lambda1: float,
     lambda2: float,
 ) -> float | np.ndarray:
-    """Svensson curve: Nelson-Siegel plus a second curvature hump.
-
-    Args:
-        tau: Maturity or maturities in years.
-        beta0: Level factor.
-        beta1: Slope factor.
-        beta2: First curvature factor, decaying at ``lambda1``.
-        beta3: Second curvature factor, decaying at ``lambda2``.
-        lambda1: First decay parameter in years, strictly positive.
-        lambda2: Second decay parameter in years, strictly positive.
-
-    Returns:
-        Zero rate(s) as decimals. A float when ``tau`` was scalar, else an array.
-
-    Raises:
-        ValueError: If a decay parameter is not positive or a maturity is negative.
-    """
+    """Compute Svensson zero rates for given maturities and parameters."""
     arr, was_scalar = _as_tau(tau)
     slope, curve1 = _decay_factors(arr, lambda1)
     _, curve2 = _decay_factors(arr, lambda2)
@@ -711,11 +600,7 @@ class CurveFit:
         params: Fitted parameters. Nelson-Siegel is
             ``(beta0, beta1, beta2, lambda1)``; Svensson is
             ``(beta0, beta1, beta2, beta3, lambda1, lambda2)``.
-        rmse: Root-mean-square fitting error against the input yields, in the
-            same units as those yields (decimals). Defaults to ``nan``, not
-            zero: a hand-constructed curve has not been fitted to anything, and
-            a default of 0.0 would let it report a perfect fit it never
-            achieved. :func:`fit_yield_curve` always populates it.
+        rmse: Root-mean-square fitting error against input yields.
     """
 
     model: str
@@ -768,10 +653,7 @@ def _profiled_ssr(
 ) -> tuple[float, np.ndarray]:
     """Best achievable squared error for fixed decay parameters.
 
-    The betas enter the curve linearly, so for any decay parameters the optimal
-    betas come from ordinary least squares. Only the decay parameters need a
-    non-linear search, which is what makes the fit reliable.
-
+    Beta coefficients are solved via OLS; decay parameters are searched non-linearly.
     Args:
         lambdas: Decay parameters to condition on.
         tau: Maturities in years.
@@ -798,14 +680,8 @@ def fit_yield_curve(
 ) -> CurveFit:
     """Fit a Nelson-Siegel or Svensson curve to observed zero rates.
 
-    The betas are solved exactly by least squares at every candidate decay
-    parameter, and only the one or two decay parameters are searched -- first on
-    a log-spaced grid, then refined with bounded Nelder-Mead. This matters: a
-    single-start L-BFGS-B over all parameters at once, which is what the skill's
-    old markdown template did, cannot recover a curve it generated itself. On a
-    10-tenor noise-free Nelson-Siegel curve it stops at an RMSE of 6.4e-4
-    (6.4bp) against this function's 4.0e-14.
-
+    Beta coefficients are solved via OLS; decay parameters are searched over
+    a geometric grid followed by Nelder-Mead simplex refinement.
     Args:
         maturities: Maturities in years, strictly positive.
         yields: Zero rates as decimals, aligned with ``maturities``.
