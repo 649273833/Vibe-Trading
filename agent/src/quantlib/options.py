@@ -117,6 +117,7 @@ def normalise_barrier_type(barrier_type: str) -> str:
         f"unknown barrier type {barrier_type!r}; valid types: {BARRIER_TYPES}"
     )
 
+
 def normalise_option_type(option_type: str) -> str:
     """Fold an option-type string to ``"call"`` or ``"put"``.
 
@@ -553,9 +554,12 @@ def barrier_option_price(
     if T <= 0.0 or sigma <= 0.0:
         vanilla = bs_price(S, K, T, r, sigma, opt_type, q)
         rebate_pv = rebate * float(np.exp(-r * T))
-        # Check if breached at T=0
         is_down = "down" in b_type
-        breached = (S <= H) if is_down else (S >= H)
+        if T > 0.0 and sigma <= 0.0:
+            F = S * float(np.exp((r - q) * T))
+            breached = (min(S, F) <= H) if is_down else (max(S, F) >= H)
+        else:
+            breached = (S <= H) if is_down else (S >= H)
         if "out" in b_type:
             return rebate_pv if breached else vanilla
         else:  # "in"
