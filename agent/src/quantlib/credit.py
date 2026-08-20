@@ -1,19 +1,4 @@
-"""Credit-risk primitives: Altman Z-Score, Merton/KMV, and spread analytics.
-
-Executable form of the credit models that used to live as markdown code blocks
-in ``src/skills/credit-analysis/SKILL.md``. Differences from those originals are
-deliberate and each is called out in the relevant docstring; the two that bite
-hardest are:
-
-* **Spread input units are explicit.** The markdown's two spread helpers
-  disagreed with each other -- :func:`credit_spread_analysis` multiplied by 100
-  (yields in percent) while :func:`spread_term_structure` multiplied by 10000
-  (yields in decimals). Both now take ``input_unit``, defaulting to whatever the
-  markdown silently assumed, so neither changes behaviour but neither can be
-  misread.
-* **Altman's X4 denominator is total liabilities**, not "total debt". The skill's
-  own variable table says 总负债账面值; the markdown's parameter name said
-  ``total_debt``. The name here follows the model.
+"""Credit-risk primitives: Altman Z-Score, Merton/KMV, CDS pricing, and spread analytics.
 
 All rates and ratios are decimals unless a name ends in ``_bp``.
 """
@@ -81,9 +66,7 @@ ALTMAN_MODELS: Mapping[str, AltmanModelSpec] = {
     # Altman (1968), listed manufacturers.
     "original": AltmanModelSpec((1.2, 1.4, 3.3, 0.6, 1.0), 2.99, 1.81, True, "market"),
     # Z' -- privately held firms; X4 switches to book equity.
-    "prime": AltmanModelSpec(
-        (0.717, 0.847, 3.107, 0.420, 0.998), 2.90, 1.23, True, "book"
-    ),
+    "prime": AltmanModelSpec((0.717, 0.847, 3.107, 0.420, 0.998), 2.90, 1.23, True, "book"),
     # Z'' -- non-manufacturers / emerging markets; X5 dropped entirely.
     "double_prime": AltmanModelSpec((6.56, 3.26, 6.72, 1.05, 0.0), 2.60, 1.10, False, "book"),
 }
@@ -264,12 +247,7 @@ def _merton_d1_d2(
     return d1, d1 - vol_t
 
 
-#: Step tolerance handed to the Merton root finder. ``fsolve``'s ``xtol`` bounds
-#: the *step*, and because the unknowns are solved in log space that step is a
-#: relative move in ``sigma_V``. At the SciPy default (~1.5e-8) a low-volatility,
-#: high-leverage issuer -- exactly the case Merton is used for -- halts while the
-#: scaled residual is still ~1e-7, so convergence is judged on the residual below
-#: and the step tolerance is pinned near machine precision instead.
+#: Step tolerance handed to the Merton root finder (pinned near machine precision in log space).
 MERTON_SOLVER_STEP_TOL: float = 1e-13
 
 #: Extra solves started from the previous answer when the residual still misses.
@@ -743,7 +721,7 @@ def cds_price(
             * ``protection_leg_pv`` (float): Present value of default protection per dollar notional.
             * ``premium_leg_pv`` (float): Present value of fixed running premium per dollar notional.
             * ``par_spread_bps`` (float): Model par spread in basis points.
-            * ``upfront_pct`` (float): Upfront payment as percentage of notional.
+            * ``upfront_pct`` (float): Upfront payment as decimal fraction of notional.
             * ``upfront_amount`` (float): Net upfront cash payment (positive = buyer pays seller).
             * ``buyer_mtm`` (float): Mark-to-market value for the protection buyer.
 
