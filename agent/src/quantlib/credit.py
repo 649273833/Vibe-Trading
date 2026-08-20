@@ -729,7 +729,7 @@ def vasicek_credit_var(
             * ``wcdr`` (float): Worst-case conditional default rate at confidence.
             * ``worst_case_loss`` (float): Total portfolio loss at confidence (WCL).
             * ``unexpected_loss`` (float): Economic capital / Credit VaR (WCL - EL).
-            * ``capital_ratio`` (float): Capital required as percentage of EAD.
+            * ``capital_ratio`` (float): Capital required as decimal fraction of EAD.
 
     Raises:
         ValueError: If parameters violate domain constraints.
@@ -785,6 +785,10 @@ def credit_spread_dv01(
 
     Returns:
         Dollar loss for a 1 bp increase in credit spread (positive float).
+
+    Raises:
+        ValueError: If price, face, or par_amount is not positive, or if
+            spread_duration is negative.
     """
     if face <= 0.0 or price <= 0.0 or par_amount <= 0.0 or spread_duration < 0.0:
         raise ValueError("price, face, par_amount must be positive and spread_duration non-negative")
