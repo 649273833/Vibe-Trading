@@ -231,7 +231,6 @@ def compute_half_life(spread: pd.Series) -> float:
     return float(-np.log(2) / reversion)
 
 
-
 def fit_ornstein_uhlenbeck(series: pd.Series, dt: float = 1.0) -> dict:
     """Fit an Ornstein-Uhlenbeck (OU) mean-reverting process by exact discrete MLE.
 
@@ -327,6 +326,7 @@ def fit_ornstein_uhlenbeck(series: pd.Series, dt: float = 1.0) -> dict:
         "residual_std": sigma_eps,
         "is_mean_reverting": is_reverting,
     }
+
 
 def find_hedge_ratio(y: pd.Series, x: pd.Series) -> dict:
     """Fit the pair-trading hedge ratio ``y = α + β·x + ε``.
