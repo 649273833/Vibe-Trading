@@ -561,7 +561,7 @@ def factor_ic_analysis(
 
     Args:
         factor_panel: DataFrame of factor scores (index = dates, columns = assets).
-        forward_returns: DataFrame of forward returns (same shape and alignment).
+        forward_returns: DataFrame of forward returns (same shape and alignment; should be pre-shifted by caller).
         method: Correlation method, ``'spearman'`` (Rank IC) or ``'pearson'`` (Linear IC).
         min_cross_section: Minimum number of valid assets on a date to compute IC.
 
