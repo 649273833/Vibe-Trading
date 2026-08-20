@@ -251,8 +251,6 @@ def historical_cvar(
     return float(-tail.mean() * np.sqrt(horizon))
 
 
-
-
 def drawdown_series(equity: pd.Series | np.ndarray | Sequence[float]) -> pd.Series:
     """Compute continuous percentage drawdown from running peak as a positive loss fraction.
 
@@ -298,6 +296,9 @@ def ulcer_index(equity: pd.Series | np.ndarray | Sequence[float]) -> float:
 
     Returns:
         Ulcer Index as a positive decimal fraction.
+
+    Raises:
+        ValueError: If ``equity`` is not 1-D, has no finite observations, or contains values <= 0.
     """
     dd = drawdown_series(equity).to_numpy()
     return float(np.sqrt(np.mean(dd**2)))
@@ -314,6 +315,9 @@ def pain_index(equity: pd.Series | np.ndarray | Sequence[float]) -> float:
 
     Returns:
         Pain Index as a positive decimal fraction.
+
+    Raises:
+        ValueError: If ``equity`` is not 1-D, has no finite observations, or contains values <= 0.
     """
     dd = drawdown_series(equity).to_numpy()
     return float(np.mean(dd))
@@ -415,7 +419,7 @@ def drawdown_distribution_analysis(
         max_dur = int(max(e["duration"] for e in episodes))
         avg_depth = float(np.mean([e["max_depth"] for e in episodes]))
         completed_durations = [e["duration"] for e in episodes if e["recovered"]]
-        avg_dur = float(np.mean(completed_durations)) if completed_durations else float(max_dur)
+        avg_dur = float(np.mean(completed_durations)) if completed_durations else 0.0
     else:
         max_dd = 0.0
         max_dur = 0
@@ -432,6 +436,8 @@ def drawdown_distribution_analysis(
         "episode_count": len(episodes),
         "episodes": episodes,
     }
+
+
 def max_drawdown_analysis(equity: pd.Series | np.ndarray | Sequence[float]) -> dict:
     """Locate the worst peak-to-trough decline of an equity curve and its recovery.
 
