@@ -419,8 +419,11 @@ def event_study(
         car_se = float(np.sqrt(np.sum(daily_se**2)))
         standardised = car / car_se if car_se > 0 else float("nan")
 
-        est_residuals = asset_estimation.to_numpy(dtype=float) - (
-            fit.alpha + fit.beta * market_estimation.to_numpy(dtype=float)
+        asset_est_arr = asset_estimation.to_numpy(dtype=float)
+        market_est_arr = market_estimation.to_numpy(dtype=float)
+        keep_est = np.isfinite(asset_est_arr) & np.isfinite(market_est_arr)
+        est_residuals = asset_est_arr[keep_est] - (
+            fit.alpha + fit.beta * market_est_arr[keep_est]
         )
 
         outcomes.append(
@@ -523,7 +526,12 @@ def event_study(
         rank_dev_est_list.append(ranks_est)
         rank_dev_evt_list.append(ranks_evt)
 
-    if n_events > 1 and all(len(r) == len(rank_dev_est_list[0]) for r in rank_dev_est_list):
+    if (
+        n_events > 1
+        and rank_dev_est_list
+        and len(rank_dev_est_list[0]) > 0
+        and all(len(r) == len(rank_dev_est_list[0]) for r in rank_dev_est_list)
+    ):
         est_rank_matrix = np.vstack(rank_dev_est_list)  # (n_events, T_est)
         mean_est_ranks = est_rank_matrix.mean(axis=0)  # mean rank dev per estimation day
         s_k = float(np.sqrt(np.mean(mean_est_ranks**2)))

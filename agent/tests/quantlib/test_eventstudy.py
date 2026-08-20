@@ -414,3 +414,14 @@ def test_corrado_rank_and_cowan_sign_single_event_safe_nan():
     assert np.isnan(result.cowan_sign_z)
     assert np.isnan(result.cowan_sign_p_value)
     assert 0.0 <= result.positive_car_fraction <= 1.0
+
+
+def test_corrado_rank_and_cowan_sign_tolerate_nan_in_estimation_period():
+    returns, market = _panel(seed=803)
+    event_day = returns.index[250]
+    # Insert scattered NaNs in the pre-event estimation window
+    returns.iloc[50, 0] = np.nan
+    market.iloc[60] = np.nan
+    events = [(s, event_day) for s in returns.columns]
+    result = event_study(returns, market, events, event_window=(0, 2))
+    assert np.isfinite(result.positive_car_fraction)
