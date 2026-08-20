@@ -719,7 +719,7 @@ def cds_price(
             * ``hazard_rate`` (float): Implied constant hazard rate (default intensity).
             * ``survival_probability`` (float): Probability of survival to maturity Q(T).
             * ``default_probability`` (float): Cumulative probability of default 1 - Q(T).
-            * ``rpv01`` (float): Risky PV01 (present value of 1 bp coupon per dollar notional).
+            * ``rpv01`` (float): Risky annuity (present value of unit running spread per dollar notional).
             * ``protection_leg_pv`` (float): Present value of default protection per dollar notional.
             * ``premium_leg_pv`` (float): Present value of fixed running premium per dollar notional.
             * ``par_spread_bps`` (float): Model par spread in basis points.
