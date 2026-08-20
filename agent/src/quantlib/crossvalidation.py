@@ -335,7 +335,8 @@ def group_purged_kfold_splits(
 
         test_rows_list = [group_to_rows[g] for g in unique_groups[start_g:stop_g]]
         test_rows = np.concatenate(test_rows_list) if test_rows_list else np.array([], dtype=int)
-
+        if test_rows.size == 0:
+            continue
         train_rows_list = []
         for g in unique_groups:
             if g not in test_groups and g not in embargo_groups_set:
