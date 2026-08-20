@@ -620,7 +620,7 @@ def factor_risk_decomposition(
             f"No matching assets between weights ({sorted(w_series.index)}) and exposures ({sorted(exposures.index)})"
         )
 
-    unmatched_weight = float(w_series.drop(index=assets, errors="ignore").sum())
+    unmatched_weight = float(w_series.drop(index=assets, errors="ignore").abs().sum())
     w = w_series.loc[assets]
     X = exposures.loc[assets]
 
