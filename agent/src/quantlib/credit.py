@@ -746,9 +746,11 @@ def cds_price(
     # Implied hazard rate lambda ≈ s / LGD
     lambda_hazard = float(s_dec / lgd) if lgd > 0 else 0.0
 
-    dt = 1.0 / payment_frequency
-    n_periods = int(round(tenor_years * payment_frequency))
-    t_grid = np.linspace(dt, tenor_years, n_periods)
+    n_periods = max(1, int(round(tenor_years * payment_frequency)))
+    t_grid = np.linspace(tenor_years / n_periods, tenor_years, n_periods)
+    t_prev = np.r_[0.0, t_grid[:-1]]
+    dts = t_grid - t_prev
+    t_mid = 0.5 * (t_prev + t_grid)
 
     # Survival probabilities Q(t) = exp(-lambda * t)
     q_grid = np.exp(-lambda_hazard * t_grid)
@@ -756,12 +758,11 @@ def cds_price(
 
     # Discount factors D(t) = exp(-r * t)
     df_grid = np.exp(-risk_free_rate * t_grid)
-    df_mid = np.exp(-risk_free_rate * (t_grid - 0.5 * dt))
+    df_mid = np.exp(-risk_free_rate * t_mid)
 
-    # Premium leg / RPV01: sum(dt * D(t_i) * Q(t_i)) + accrual on default
-    # Accrual on default approx: sum( 0.5 * dt * D(t_mid) * (Q(t_{i-1}) - Q(t_i)) )
-    premium_cashflow = np.sum(dt * df_grid * q_grid)
-    accrual_cashflow = np.sum(0.5 * dt * df_mid * (q_prev - q_grid))
+    # Premium leg / RPV01: sum(dt_i * D(t_i) * Q(t_i)) + accrual on default
+    premium_cashflow = np.sum(dts * df_grid * q_grid)
+    accrual_cashflow = np.sum(0.5 * dts * df_mid * (q_prev - q_grid))
     rpv01 = float(premium_cashflow + accrual_cashflow)
 
     # Protection leg: sum( LGD * D(t_mid) * (Q(t_{i-1}) - Q(t_i)) )
