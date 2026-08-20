@@ -562,3 +562,13 @@ def test_factor_risk_decomposition_input_validation():
             pd.DataFrame([[1.0], [1.0]], index=["A", "B"], columns=["F1"]),
             pd.DataFrame([[-0.04]], index=["F1"], columns=["F1"]),
         )
+
+
+def test_factor_risk_decomposition_reports_unmatched_weight():
+    weights = pd.Series([0.6, 0.4], index=["A", "UNCOVERED"])
+    exposures = pd.DataFrame([[1.0]], index=["A"], columns=["market"])
+    factor_cov = pd.DataFrame([[0.04]], index=["market"], columns=["market"])
+
+    decomp = factor_risk_decomposition(weights, exposures, factor_cov)
+    assert decomp.unmatched_weight == pytest.approx(0.4)
+    assert decomp.total_volatility == pytest.approx(0.6 * 0.20)

@@ -183,6 +183,7 @@ class FactorRiskDecomposition:
         asset_pcr: Percentage contribution to risk (PCR) per asset (sums to 1.0 when total_volatility > 0, otherwise zero).
         specific_risk_contributions: Specific risk contribution per asset.
         specific_pcr: Percentage contribution from specific risk per asset.
+        unmatched_weight: Portfolio weight in assets lacking factor exposure data.
     """
 
     total_variance: float
@@ -202,6 +203,7 @@ class FactorRiskDecomposition:
     asset_pcr: pd.Series
     specific_risk_contributions: pd.Series
     specific_pcr: pd.Series
+    unmatched_weight: float = 0.0
 
 def standardise_exposures(
     values: pd.Series,
@@ -618,6 +620,7 @@ def factor_risk_decomposition(
             f"No matching assets between weights ({sorted(w_series.index)}) and exposures ({sorted(exposures.index)})"
         )
 
+    unmatched_weight = float(w_series.drop(index=assets, errors="ignore").sum())
     w = w_series.loc[assets]
     X = exposures.loc[assets]
 
@@ -707,4 +710,5 @@ def factor_risk_decomposition(
         asset_pcr=asset_pcr,
         specific_risk_contributions=spec_rc,
         specific_pcr=spec_pcr,
+        unmatched_weight=unmatched_weight,
     )
