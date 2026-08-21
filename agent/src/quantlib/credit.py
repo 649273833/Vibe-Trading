@@ -702,11 +702,18 @@ def cds_price(
     notional: float = 10_000_000.0,
     payment_frequency: int = 4,
 ) -> dict:
-    """ISDA standard model single-name Credit Default Swap (CDS) valuation engine.
+    """Flat-hazard single-name Credit Default Swap (CDS) valuation engine.
 
     Computes the implied hazard rate, survival probability curve, Risky Present Value
     of a Basis Point (RPV01), protection leg PV, premium leg PV, fair par spread,
     and mark-to-market (MTM) upfront cash payment.
+
+    The hazard rate comes from the credit triangle (``lambda = s / (1 - R)``) rather
+    than being bootstrapped by root-finding the way the ISDA Standard Model does, so
+    ``par_spread_bps`` -- recomputed from the discretised legs -- lands near, not
+    exactly on, the quoted ``spread_bps`` (~0.4% apart for a 5y investment-grade
+    name). Value the contract against ``par_spread_bps``; read ``hazard_rate`` as the
+    triangle approximation it is.
 
     Args:
         spread_bps: Market quoted par CDS spread in basis points (e.g. 150.0 for 150 bps).

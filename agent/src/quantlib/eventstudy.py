@@ -59,6 +59,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from scipy.stats import norm, rankdata, t as student_t
+
 __all__ = [
     "DEFAULT_ESTIMATION_GAP",
     "DEFAULT_ESTIMATION_WINDOW",
@@ -178,6 +179,7 @@ class EventStudyResult:
         cowan_sign_p_value: Two-sided p-value of ``cowan_sign_z``.
         positive_car_fraction: Fraction of events with positive cumulative abnormal return.
     """
+
     event_window: tuple[int, int]
     events: tuple[EventOutcome, ...]
     dropped: tuple[tuple[str, object, str], ...]
