@@ -62,6 +62,7 @@ __all__ = [
     "MIN_CROSS_SECTION",
     "STYLE_FACTOR_DEFINITIONS",
     "FactorReturnFit",
+    "FactorRiskDecomposition",
     "StyleDrift",
     "standardise_exposures",
     "build_style_exposures",
@@ -69,6 +70,7 @@ __all__ = [
     "portfolio_style_exposure",
     "style_drift",
     "factor_return_attribution",
+    "factor_risk_decomposition",
 ]
 
 #: Fraction trimmed from each tail before standardising.
@@ -157,6 +159,51 @@ class StyleDrift:
     total_change: pd.Series
     max_abs_change: pd.Series
 
+
+
+@dataclass(frozen=True)
+class FactorRiskDecomposition:
+    """Portfolio risk decomposition into factor and asset-specific components.
+
+    Attributes:
+        total_variance: Total portfolio variance.
+        total_volatility: Total portfolio volatility (standard deviation).
+        factor_variance: Portfolio variance explained by common factors.
+        factor_volatility: Portfolio volatility from common factors.
+        specific_variance: Portfolio variance from asset-specific (idiosyncratic) risk.
+        specific_volatility: Portfolio volatility from asset-specific risk.
+        factor_variance_fraction: Fraction of total variance explained by factors.
+        specific_variance_fraction: Fraction of total variance from idiosyncratic risk.
+        portfolio_exposures: Portfolio exposures across factors.
+        factor_marginal_contributions: Marginal contribution to risk (MCR) per factor.
+        factor_risk_contributions: Absolute risk contribution per factor (sums to factor risk).
+        factor_pcr: Percentage contribution to risk (PCR) per factor.
+        asset_marginal_contributions: Marginal contribution to risk (MCR) per asset.
+        asset_risk_contributions: Absolute risk contribution per asset (sums to total volatility).
+        asset_pcr: Percentage contribution to risk (PCR) per asset (sums to 1.0 when total_volatility > 0, otherwise zero).
+        specific_risk_contributions: Specific risk contribution per asset.
+        specific_pcr: Percentage contribution from specific risk per asset.
+        unmatched_weight: Portfolio weight in assets lacking factor exposure data.
+    """
+
+    total_variance: float
+    total_volatility: float
+    factor_variance: float
+    factor_volatility: float
+    specific_variance: float
+    specific_volatility: float
+    factor_variance_fraction: float
+    specific_variance_fraction: float
+    portfolio_exposures: pd.Series
+    factor_marginal_contributions: pd.Series
+    factor_risk_contributions: pd.Series
+    factor_pcr: pd.Series
+    asset_marginal_contributions: pd.Series
+    asset_risk_contributions: pd.Series
+    asset_pcr: pd.Series
+    specific_risk_contributions: pd.Series
+    specific_pcr: pd.Series
+    unmatched_weight: float = 0.0
 
 def standardise_exposures(
     values: pd.Series,
@@ -513,3 +560,155 @@ def factor_return_attribution(
     contributions["specific"] = portfolio_return - explained
     contributions["total"] = portfolio_return
     return contributions
+
+
+def factor_risk_decomposition(
+    portfolio_weights: pd.Series | Mapping[str, float],
+    exposures: pd.DataFrame,
+    factor_cov: pd.DataFrame,
+    specific_variances: pd.Series | Mapping[str, float] | None = None,
+) -> FactorRiskDecomposition:
+    """Decompose portfolio risk into systematic factor and idiosyncratic components.
+
+    Implements the Euler homogeneous risk decomposition for multi-factor models
+    (Barra/Axioma standard framework):
+
+        Total Variance = w^T X Sigma_F X^T w + w^T D w
+
+    where:
+      * ``w`` is the portfolio weight vector (N x 1)
+      * ``X`` is the asset factor exposure matrix (N x K)
+      * ``Sigma_F`` is the factor covariance matrix (K x K)
+      * ``D`` is the diagonal matrix of specific variances (N x N)
+
+    Args:
+        portfolio_weights: Asset weights in the portfolio.
+        exposures: Asset factor exposures (rows = assets, columns = factors).
+        factor_cov: Covariance matrix of factor returns (K x K).
+        specific_variances: Asset-specific (idiosyncratic) return variances.
+            Defaults to zero if omitted.
+
+    Returns:
+        :class:`FactorRiskDecomposition` containing total/factor/specific
+        variances, volatilities, marginal contributions to risk (MCR), and
+        percentage contributions to risk (PCR) per factor and per asset.
+
+    Raises:
+        ValueError: If weights or matrices are empty, contain non-finite values,
+            or share no common assets or factors.
+    """
+    w_series = pd.Series(portfolio_weights, dtype=float)
+    if w_series.empty:
+        raise ValueError("portfolio_weights cannot be empty")
+    if not np.isfinite(w_series.values).all():
+        raise ValueError("portfolio_weights contains non-finite values")
+
+    if not isinstance(exposures, pd.DataFrame) or exposures.empty:
+        raise ValueError("exposures must be a non-empty DataFrame")
+    if not np.isfinite(exposures.values).all():
+        raise ValueError("exposures contains non-finite values")
+
+    if not isinstance(factor_cov, pd.DataFrame) or factor_cov.empty:
+        raise ValueError("factor_cov must be a non-empty DataFrame")
+    if not np.isfinite(factor_cov.values).all():
+        raise ValueError("factor_cov contains non-finite values")
+
+    # Align assets
+    assets = w_series.index.intersection(exposures.index)
+    if assets.empty:
+        raise ValueError(
+            f"No matching assets between weights ({sorted(w_series.index)}) and exposures ({sorted(exposures.index)})"
+        )
+
+    unmatched_weight = float(w_series.drop(index=assets, errors="ignore").abs().sum())
+    w = w_series.loc[assets]
+    X = exposures.loc[assets]
+
+    # Align factors
+    factors = X.columns.intersection(factor_cov.index).intersection(factor_cov.columns)
+    if factors.empty:
+        raise ValueError(
+            f"No matching factors between exposures ({sorted(X.columns)}) and factor_cov ({sorted(factor_cov.index)})"
+        )
+
+    X = X[factors]
+    F = factor_cov.loc[factors, factors]
+    F_mat = F.to_numpy(dtype=float)
+    if not np.allclose(F_mat, F_mat.T, atol=1e-8):
+        raise ValueError("factor_cov matrix must be symmetric")
+    eigvals = np.linalg.eigvalsh(F_mat)
+    if np.min(eigvals) < -1e-8:
+        raise ValueError("factor_cov matrix must be positive semi-definite")
+
+    # Align specific variances
+    if specific_variances is not None:
+        spec_var_s = pd.Series(specific_variances, dtype=float)
+        if not np.isfinite(spec_var_s.values).all():
+            raise ValueError("specific_variances contains non-finite values")
+        d = spec_var_s.reindex(assets, fill_value=0.0).clip(lower=0.0)
+    else:
+        d = pd.Series(0.0, index=assets, dtype=float)
+
+    # Portfolio factor exposure: x_p = X^T w (K x 1)
+    x_p = X.T.dot(w)
+
+    # Factor variance: x_p^T F x_p
+    F_x_p = F.dot(x_p)
+    factor_var = float(np.maximum(0.0, x_p.dot(F_x_p)))
+    factor_vol = float(np.sqrt(factor_var))
+
+    # Specific variance: sum(w_i^2 * d_i)
+    spec_var = float(np.maximum(0.0, (w**2 * d).sum()))
+    spec_vol = float(np.sqrt(spec_var))
+
+    total_var = float(np.maximum(0.0, factor_var + spec_var))
+    total_vol = float(np.sqrt(total_var))
+
+    var_denom = total_var if total_var > 0 else 1.0
+    factor_var_frac = factor_var / var_denom if total_var > 0 else 0.0
+    spec_var_frac = spec_var / var_denom if total_var > 0 else 0.0
+
+    if total_vol > 0:
+        # Factor MCR = (F x_p) / total_vol
+        factor_mcr = F_x_p / total_vol
+        factor_rc = x_p * factor_mcr
+        factor_pcr = factor_rc / total_vol
+
+        # Specific risk contribution per asset = (w_i^2 * d_i) / total_vol
+        spec_rc = (w**2 * d) / total_vol
+        spec_pcr = spec_rc / total_vol
+
+        # Asset MCR = (X (F x_p) + d * w) / total_vol
+        asset_mcr = (X.dot(F_x_p) + d * w) / total_vol
+        asset_rc = w * asset_mcr
+        asset_pcr = asset_rc / total_vol
+    else:
+        factor_mcr = pd.Series(0.0, index=factors, dtype=float)
+        factor_rc = pd.Series(0.0, index=factors, dtype=float)
+        factor_pcr = pd.Series(0.0, index=factors, dtype=float)
+        spec_rc = pd.Series(0.0, index=assets, dtype=float)
+        spec_pcr = pd.Series(0.0, index=assets, dtype=float)
+        asset_mcr = pd.Series(0.0, index=assets, dtype=float)
+        asset_rc = pd.Series(0.0, index=assets, dtype=float)
+        asset_pcr = pd.Series(0.0, index=assets, dtype=float)
+
+    return FactorRiskDecomposition(
+        total_variance=total_var,
+        total_volatility=total_vol,
+        factor_variance=factor_var,
+        factor_volatility=factor_vol,
+        specific_variance=spec_var,
+        specific_volatility=spec_vol,
+        factor_variance_fraction=factor_var_frac,
+        specific_variance_fraction=spec_var_frac,
+        portfolio_exposures=x_p,
+        factor_marginal_contributions=factor_mcr,
+        factor_risk_contributions=factor_rc,
+        factor_pcr=factor_pcr,
+        asset_marginal_contributions=asset_mcr,
+        asset_risk_contributions=asset_rc,
+        asset_pcr=asset_pcr,
+        specific_risk_contributions=spec_rc,
+        specific_pcr=spec_pcr,
+        unmatched_weight=unmatched_weight,
+    )
