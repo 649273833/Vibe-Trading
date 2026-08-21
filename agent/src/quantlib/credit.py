@@ -36,6 +36,9 @@ __all__ = [
     "hazard_rate_to_survival_probability",
     "survival_probability_to_hazard_rate",
     "cds_price",
+    "expected_loss",
+    "vasicek_credit_var",
+    "credit_spread_dv01",
 ]
 
 
@@ -796,3 +799,118 @@ def cds_price(
         "upfront_amount": upfront_amt,
         "buyer_mtm": upfront_amt,
     }
+def expected_loss(ead: float, pd: float, lgd: float) -> float:
+    """Compute regulatory Expected Loss (EL = EAD * PD * LGD).
+
+    Args:
+        ead: Exposure at Default in currency units >= 0.
+        pd: Probability of Default in [0.0, 1.0].
+        lgd: Loss Given Default in [0.0, 1.0].
+
+    Returns:
+        Expected loss amount in currency units.
+
+    Raises:
+        ValueError: If ead < 0, pd not in [0, 1], or lgd not in [0, 1].
+    """
+    if ead < 0.0:
+        raise ValueError(f"ead must be non-negative, got {ead}")
+    if not (0.0 <= pd <= 1.0):
+        raise ValueError(f"pd must be in [0.0, 1.0], got {pd}")
+    if not (0.0 <= lgd <= 1.0):
+        raise ValueError(f"lgd must be in [0.0, 1.0], got {lgd}")
+    return float(ead * pd * lgd)
+
+
+def vasicek_credit_var(
+    ead: float,
+    pd: float,
+    lgd: float,
+    asset_correlation: float,
+    confidence: float = 0.999,
+) -> dict:
+    """Vasicek single-factor asymptotic credit risk portfolio model (Basel II/III capital framework).
+
+    Under the Asymptotic Single Risk Factor (ASRF) model, conditional default
+    probability at confidence level alpha is:
+        WCDR(alpha) = Phi( (Phi^{-1}(PD) + sqrt(rho) * Phi^{-1}(alpha)) / sqrt(1 - rho) )
+
+    where rho is the pairwise asset return correlation.
+
+    Args:
+        ead: Exposure at Default in currency units (positive).
+        pd: Probability of Default in (0.0, 1.0).
+        lgd: Loss Given Default fraction in [0.0, 1.0].
+        asset_correlation: Pairwise systematic asset correlation rho in [0.0, 1.0).
+        confidence: VaR confidence level in (0.0, 1.0) (Basel standard = 0.999).
+
+    Returns:
+        dict with keys:
+            * ``expected_loss`` (float): Base expected loss (EL).
+            * ``wcdr`` (float): Worst-case conditional default rate at confidence.
+            * ``worst_case_loss`` (float): Total portfolio loss at confidence (WCL).
+            * ``unexpected_loss`` (float): Economic capital / Credit VaR (WCL - EL).
+            * ``capital_ratio`` (float): Capital required as decimal fraction of EAD.
+
+    Raises:
+        ValueError: If parameters violate domain constraints.
+    """
+    if ead <= 0.0:
+        raise ValueError(f"ead must be strictly positive, got {ead}")
+    if not (0.0 < pd < 1.0):
+        raise ValueError(f"pd must be in (0.0, 1.0), got {pd}")
+    if not (0.0 <= lgd <= 1.0):
+        raise ValueError(f"lgd must be in [0.0, 1.0], got {lgd}")
+    if not (0.0 <= asset_correlation < 1.0):
+        raise ValueError(f"asset_correlation must be in [0.0, 1.0), got {asset_correlation}")
+    if not (0.0 < confidence < 1.0):
+        raise ValueError(f"confidence must be in (0.0, 1.0), got {confidence}")
+
+    rho = asset_correlation
+    inv_pd = float(norm.ppf(pd))
+    inv_conf = float(norm.ppf(confidence))
+
+    numerator = inv_pd + np.sqrt(rho) * inv_conf
+    denominator = np.sqrt(1.0 - rho)
+    wcdr = float(norm.cdf(numerator / denominator))
+
+    el = expected_loss(ead, pd, lgd)
+    wcl = float(ead * lgd * wcdr)
+    ul = float(max(0.0, wcl - el))
+    capital_ratio = float(ul / ead) if ead > 0 else 0.0
+
+    return {
+        "expected_loss": el,
+        "wcdr": wcdr,
+        "worst_case_loss": wcl,
+        "unexpected_loss": ul,
+        "capital_ratio": capital_ratio,
+    }
+
+
+def credit_spread_dv01(
+    spread_duration: float,
+    price: float = 100.0,
+    face: float = 100.0,
+    par_amount: float = 1_000_000.0,
+) -> float:
+    """Calculate Credit Spread DV01 (CS01 / Spread DV01) - dollar value of a 1 bp widening in credit spread.
+
+    CS01 = Spread Duration * (Price / Face) * 0.0001 * Par Position
+
+    Args:
+        spread_duration: Modified/spread duration in years.
+        price: Current clean market price of the credit instrument.
+        face: Quoted par base (standard 100.0).
+        par_amount: Total par notional held in position.
+
+    Returns:
+        Dollar loss for a 1 bp increase in credit spread (positive float).
+
+    Raises:
+        ValueError: If price, face, or par_amount is not positive, or if
+            spread_duration is negative.
+    """
+    if face <= 0.0 or price <= 0.0 or par_amount <= 0.0 or spread_duration < 0.0:
+        raise ValueError("price, face, par_amount must be positive and spread_duration non-negative")
+    return float(spread_duration * (price / face) * 1e-4 * par_amount)

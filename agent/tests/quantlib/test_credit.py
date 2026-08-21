@@ -22,15 +22,18 @@ from src.quantlib.credit import (
     altman_z_score,
     cds_price,
     credit_spread_analysis,
+    credit_spread_dv01,
     distance_to_default,
     edf_reference_band,
     hazard_rate_to_survival_probability,
+    expected_loss,
     kmv_default_point,
     kmv_distance_to_default,
     merton_asset_solve,
     merton_model,
     spread_term_structure,
     survival_probability_to_hazard_rate,
+    vasicek_credit_var,
 )
 
 # One balance sheet, reused so the three variants can be compared like for like.
@@ -566,3 +569,45 @@ def test_cds_price_input_validation():
         hazard_rate_to_survival_probability(-0.01, 5.0)
     with pytest.raises(ValueError, match="survival_prob"):
         survival_probability_to_hazard_rate(1.5, 5.0)
+# Vasicek Credit Risk & Expected Loss Tests
+# --------------------------------------------------------------------------
+
+
+def test_expected_loss_exact_multiplication():
+    # EAD = $10,000,000, PD = 2%, LGD = 45% -> EL = 10,000,000 * 0.02 * 0.45 = $90,000
+    assert expected_loss(10_000_000.0, 0.02, 0.45) == pytest.approx(90_000.0)
+
+
+def test_vasicek_credit_var_monotonic_with_correlation():
+    ead = 1_000_000.0
+    pd_val = 0.01
+    lgd = 0.40
+
+    res_low_rho = vasicek_credit_var(ead, pd_val, lgd, asset_correlation=0.10, confidence=0.999)
+    res_high_rho = vasicek_credit_var(ead, pd_val, lgd, asset_correlation=0.30, confidence=0.999)
+
+    assert res_low_rho["expected_loss"] == pytest.approx(res_high_rho["expected_loss"])
+    # Higher correlation leads to higher tail risk (WCDR and unexpected loss)
+    assert res_high_rho["wcdr"] > res_low_rho["wcdr"]
+    assert res_high_rho["unexpected_loss"] > res_low_rho["unexpected_loss"]
+    assert res_high_rho["capital_ratio"] > res_low_rho["capital_ratio"]
+
+
+def test_credit_spread_dv01_exact():
+    # 5.0 year spread duration on $1,000,000 par at par price 100:
+    # CS01 = 5.0 * (100/100) * 1e-4 * 1,000,000 = $500
+    cs01 = credit_spread_dv01(spread_duration=5.0, price=100.0, face=100.0, par_amount=1_000_000.0)
+    assert cs01 == pytest.approx(500.0)
+
+
+def test_vasicek_input_validation():
+    with pytest.raises(ValueError, match="ead must be strictly positive"):
+        vasicek_credit_var(-100.0, 0.01, 0.4, 0.1)
+    with pytest.raises(ValueError, match="pd must be in"):
+        vasicek_credit_var(1000.0, 1.5, 0.4, 0.1)
+    with pytest.raises(ValueError, match="asset_correlation"):
+        vasicek_credit_var(1000.0, 0.01, 0.4, 1.0)
+    with pytest.raises(ValueError, match="confidence"):
+        vasicek_credit_var(1000.0, 0.01, 0.4, 0.1, confidence=1.5)
+    with pytest.raises(ValueError, match="spread_duration non-negative"):
+        credit_spread_dv01(spread_duration=-1.0)
