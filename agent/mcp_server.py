@@ -1981,7 +1981,12 @@ def get_sector_info(code: str | None = None, mode: str = "membership", limit: in
 
 
 @mcp.tool
-def get_research_reports(code: str, limit: int = 20) -> str:
+def get_research_reports(
+    code: str,
+    limit: int = 20,
+    beginTime: str | None = None,
+    endTime: str | None = None,
+) -> str:
     """Fetch mainland A-share sell-side research coverage and consensus forecasts.
 
     Returns recent broker research reports (title, brokerage, analyst, publish
@@ -1992,9 +1997,18 @@ def get_research_reports(code: str, limit: int = 20) -> str:
     Args:
         code: A-share symbol in <code>.<exchange> form (SH/SZ/BJ).
         limit: Maximum number of most-recent research reports to return.
+        beginTime: Earliest report publish date (inclusive), 'YYYYMMDD'.
+            Optional; defaults to the start of a trailing two-year window.
+        endTime: Latest report publish date (inclusive), 'YYYYMMDD'.
+            Optional; defaults to today.
     """
+    params: dict[str, Any] = {"code": code, "limit": limit}
+    if beginTime:
+        params["beginTime"] = beginTime
+    if endTime:
+        params["endTime"] = endTime
     registry = _get_registry()
-    return registry.execute("get_research_reports", {"code": code, "limit": limit})
+    return registry.execute("get_research_reports", params)
 
 
 @mcp.tool
