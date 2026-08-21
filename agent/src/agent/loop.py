@@ -1885,8 +1885,29 @@ class AgentLoop:
                 react_trace.append({"type": "tool_skipped", "tool": tc.name})
                 continue
 
+            if self._grounding is not None:
+                authorization = self._grounding.authorize_tool_call(
+                    tc.name,
+                    tc.arguments,
+                    batch_authorized_symbols=batch_authorized_symbols,
+                    call_id=tc.id,
+                    batch_identity_status=batch_identity_status,
+                )
+                if not authorization.allowed:
+                    execution_plan.append(
+                        (
+                            tc,
+                            authorization.error_payload(
+                                tc.name,
+                                self._grounding.identity_summary(),
+                            ),
+                        )
+                    )
+                    continue
+
             # Deterministic tools (e.g. financial_rigor calc) return the same
-            # result for the same args. After auto-compact cleared earlier
+            # result for the same args. Checked AFTER authorization above so a
+            # cached repeat can never bypass the identity gate. After auto-compact cleared earlier
             # tool outputs, the model used to re-run identical expressions
             # 5-9x each (2026-08-20 INTC run) to re-verify numbers it could
             # no longer see. Serve an identical prior call from cache instead.
@@ -1912,26 +1933,6 @@ class AgentLoop:
                             "call_id": tc.id,
                             "cached": True,
                         },
-                    )
-                    continue
-
-            if self._grounding is not None:
-                authorization = self._grounding.authorize_tool_call(
-                    tc.name,
-                    tc.arguments,
-                    batch_authorized_symbols=batch_authorized_symbols,
-                    call_id=tc.id,
-                    batch_identity_status=batch_identity_status,
-                )
-                if not authorization.allowed:
-                    execution_plan.append(
-                        (
-                            tc,
-                            authorization.error_payload(
-                                tc.name,
-                                self._grounding.identity_summary(),
-                            ),
-                        )
                     )
                     continue
 

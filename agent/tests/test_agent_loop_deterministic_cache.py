@@ -178,3 +178,49 @@ def test_failed_deterministic_call_is_not_cached(agent_factory) -> None:
     assert len(tool.calls) == 2
     assert len(messages) == 2
     assert not any(r["type"] == "tool_result_cached" for r in records)
+
+
+def test_cache_hit_still_passes_the_identity_gate(agent_factory) -> None:
+    """A cached repeat must not be a way around grounding authorization.
+
+    ``financial_rigor`` carries no symbol arguments, so the gate allows it
+    today either way. Any later tool marked deterministic that does carry
+    one would otherwise skip identity checks from its second call onward.
+    """
+    from src.agent.grounding import ToolAuthorization
+
+    tool = _CountingTool(deterministic=True)
+    agent, run_dir, _ = agent_factory(tool)
+
+    seen: list[str] = []
+    ingested: list[str] = []
+
+    class _Grounding:
+        authorized_symbols: set[str] = set()
+        identity_status = "locked"
+
+        def authorize_tool_call(self, tool_name, arguments, **kwargs):
+            seen.append(kwargs["call_id"])
+            if len(seen) == 1:
+                return ToolAuthorization(allowed=True)
+            return ToolAuthorization(
+                allowed=False,
+                error_code="identity_required",
+                message="blocked",
+            )
+
+        def identity_summary(self):
+            return {}
+
+        def ingest_tool_result(self, **kwargs):
+            ingested.append(kwargs["call_id"])
+
+    agent._grounding = _Grounding()
+    messages, records = _drive(agent, tool.name, run_dir, [{"a": 1}, {"a": 1}])
+
+    # Both calls reached the gate; the blocked repeat was not served cached.
+    assert seen == ["call_1", "call_2"]
+    assert not any(r["type"] == "tool_result_cached" for r in records)
+    assert json.loads(messages[1]["content"])["error_code"] == "identity_required"
+    # The blocked result is ingested too, so the ledger keeps the refusal.
+    assert ingested == ["call_1", "call_2"]
