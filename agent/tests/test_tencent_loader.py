@@ -229,3 +229,25 @@ def test_a_short_page_ends_the_walk(monkeypatch) -> None:
 
     assert calls == ["2026-01-01"]
     assert len(df) == 2
+
+
+def test_a_bar_on_the_end_date_itself_is_not_dropped(monkeypatch) -> None:
+    """When the next start lands exactly on end_date, that day still counts."""
+    loader = tencent_loader.DataLoader()
+    first = _full_page("2020-01-01")
+    boundary = first.index.max() + pd.Timedelta(days=1)
+    end_date = boundary.strftime("%Y-%m-%d")
+    requested: list[str] = []
+
+    def fake_page(code, start, end):  # noqa: ANN001
+        requested.append(start)
+        if len(requested) == 1:
+            return first
+        return _daily_page([end_date])
+
+    monkeypatch.setattr(loader, "_request_page", fake_page)
+    df = loader._fetch_one("600519.SH", "2020-01-01", end_date)
+
+    assert requested == ["2020-01-01", end_date]
+    assert len(df) == tencent_loader._PAGE_SIZE + 1
+    assert df.index.max() == boundary
