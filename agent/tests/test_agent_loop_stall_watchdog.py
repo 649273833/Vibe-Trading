@@ -154,21 +154,26 @@ def test_watchdog_of_a_finished_run_does_not_fail_the_next_one(
     trace = TraceWriter(run_dir)
 
     original_wait = first_run_done.wait
+    polls = {"n": 0}
 
     def _wait(timeout: float | None = None) -> bool:
-        # Run 1 finishes and run 2 installs a fresh event mid-poll. Watching
-        # ``self._run_done`` instead of the captured local would now see an
-        # unset event and fail run 2 on run 1's idle clock.
-        first_run_done.set()
-        agent._run_done = _FastEvent()
-        agent._last_activity_wall = time.time() - 10_000
+        # Poll 1: run 2 has started and installed its own event, but run 1's
+        # event is not set yet -- the window in which watching
+        # ``self._run_done`` instead of the captured local would hand run 1's
+        # idle clock to run 2 and fail it.
+        polls["n"] += 1
+        if polls["n"] == 1:
+            agent._run_done = _FastEvent()
+        else:
+            first_run_done.set()
         return original_wait(timeout)
 
     first_run_done.wait = _wait  # type: ignore[method-assign]
     agent._stall_watchdog(trace, run_dir, RunStateStore(), stall_timeout=1.0)
     trace.close()
 
-    assert captured == []
+    # One warning is fine; ending a run that is no longer this thread's is not.
+    assert [name for name, _ in captured] == ["stall_warning"]
     assert agent._stall_reason is None
     assert not agent._cancel_event.is_set()
     assert not (run_dir / "state.json").exists()
