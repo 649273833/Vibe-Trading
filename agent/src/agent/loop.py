@@ -373,18 +373,25 @@ def _verification_ledger(messages: list) -> str:
         command = payload.get("command")
         if command == "calc" and payload.get("result_exact") is not None:
             expr = payload.get("expr", "?")
-            lines.append(f"calc {expr} = {payload.get("result_exact")}")
+            result_exact = payload.get("result_exact")
+            lines.append(f"calc {expr} = {result_exact}")
         elif command == "verify_market_cap" and payload.get("verdict") is not None:
-            lines.append(f"market_cap verdict={payload.get("verdict")} dev={payload.get("deviation_pct")}%")
+            verdict = payload.get("verdict")
+            deviation_pct = payload.get("deviation_pct")
+            lines.append(f"market_cap verdict={verdict} dev={deviation_pct}%")
         elif command == "verify_valuation" and payload.get("metrics"):
             metrics = payload["metrics"]
             if isinstance(metrics, dict) and metrics:
                 summary = ", ".join(f"{k}={v}" for k, v in list(metrics.items())[:8])
                 lines.append(f"valuation {summary}")
         elif command == "cross_validate" and payload.get("all_consistent") is not None:
-            lines.append(f"cross_validate field={payload.get("field", "?")} consistent={payload.get("all_consistent")}")
+            field_name = payload.get("field", "?")
+            all_consistent = payload.get("all_consistent")
+            lines.append(f"cross_validate field={field_name} consistent={all_consistent}")
         elif command == "benford" and payload.get("reliable") is not None:
-            lines.append(f"benford reliable={payload.get("reliable")} conformity={payload.get("conformity", "?")}")
+            reliable = payload.get("reliable")
+            conformity = payload.get("conformity", "?")
+            lines.append(f"benford reliable={reliable} conformity={conformity}")
     # Deduplicate while preserving order; cap the ledger size.
     seen: set[str] = set()
     unique: list[str] = []
