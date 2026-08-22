@@ -104,3 +104,27 @@ def test_native_adapter_without_marker_keeps_legacy_cleanup() -> None:
     _wrapper(adapter).close()
 
     assert client.close_calls == 1
+
+
+def test_close_keeps_langchain_cached_transport_open_for_a_sibling_adapter() -> None:
+    """Two default-transport adapters share LangChain's cached httpx clients.
+
+    Closing the wrapper around one of them must leave the other usable: the
+    cached client is a process resource, not this instance's. Before the
+    ownership marker, ``close()`` closed ``root_client`` and every later
+    adapter on the same base URL failed with "client has been closed".
+    """
+    from src.providers.llm import ChatOpenAIWithReasoning
+
+    base_url = "https://lifecycle-regression.invalid/v1"
+    first = ChatOpenAIWithReasoning(model="m", api_key="sk-test", base_url=base_url)
+    second = ChatOpenAIWithReasoning(model="m", api_key="sk-test", base_url=base_url)
+
+    # Premise: the default transports really are shared between instances.
+    assert first.root_client._client is second.root_client._client
+    assert first.root_async_client._client is second.root_async_client._client
+
+    _wrapper(first).close()
+
+    assert second.root_client._client.is_closed is False
+    assert second.root_async_client._client.is_closed is False
