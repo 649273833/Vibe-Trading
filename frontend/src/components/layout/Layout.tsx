@@ -24,7 +24,7 @@ export function Layout() {
     { to: "/runtime", icon: Activity, label: t('layout.runtime') },
     { to: "/scheduled", icon: CalendarClock, label: t('layout.scheduled') },
     { to: "/reports", icon: FileText, label: t('layout.reports') },
-    { to: "/portfolio", icon: WalletCards, label: t('layout.portfolio', { defaultValue: 'Portfolio' }) },
+    { to: "/portfolio", icon: WalletCards, label: t('layout.portfolio') },
     { to: "/alpha-zoo", icon: Layers, label: t('layout.alphaZoo') },
     { to: "/options", icon: CandlestickChart, label: t('layout.optionsLab') },
     { to: "/settings", icon: Settings, label: t('layout.settings') },

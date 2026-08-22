@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Portfolio } from "@/pages/Portfolio";
 import { api } from "@/lib/api";
+import i18n from "@/i18n";
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -61,6 +62,28 @@ const snapshot = {
     priced: true, updated_at: "2026-08-09T00:00:00Z",
   }],
   warnings: [],
+};
+
+// A source the backend could not read: status "error", no totals at all, and a
+// last_success_at that is history only. It contributes nothing to the totals,
+// which is why `complete` is false while the totals stay at the readable 1000.
+const FAILED_LAST_SUCCESS = "2026-08-08T09:30:00Z";
+const snapshotWithFailedSource = {
+  ...snapshot,
+  complete: false,
+  accounts: [
+    ...snapshot.accounts,
+    {
+      source_id: "binance-2",
+      broker: "binance",
+      label: "Binance backup",
+      status: "error" as const,
+      error_code: "ConnectionError",
+      error: "Read timed out after 30s",
+      last_success_at: FAILED_LAST_SUCCESS,
+    },
+  ],
+  warnings: ["Binance backup could not be read and is excluded from the totals."],
 };
 
 const portfolioConfiguration = {
@@ -126,7 +149,7 @@ describe("Portfolio page", () => {
     expect(await screen.findByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("$1,000.00")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Refresh all|刷新全部账户/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.page.refreshAll") }));
     await waitFor(() => expect(mocked.refreshPortfolio).toHaveBeenCalledTimes(1));
   });
 
@@ -144,10 +167,10 @@ describe("Portfolio page", () => {
 
     render(<Portfolio />);
     await screen.findByText("AAPL");
-    fireEvent.click(screen.getByRole("button", { name: /Refresh all|刷新全部账户/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.page.refreshAll") }));
 
     await waitFor(() => expect(mocked.getPortfolioRefreshStatus).toHaveBeenCalled(), { timeout: 2_000 });
-    expect(screen.getByRole("heading", { name: /Portfolio|持仓总览/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: i18n.t("portfolio.page.title") })).toBeInTheDocument();
 
     finishRefresh({ status: "ok", snapshot });
     await waitFor(() => expect(mocked.getPortfolioHistory).toHaveBeenCalledTimes(2));
@@ -157,11 +180,11 @@ describe("Portfolio page", () => {
     render(<Portfolio />);
     await screen.findByText("AAPL");
 
-    fireEvent.click(screen.getByRole("button", { name: /Manage accounts|管理账户/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.page.manageAccounts") }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    const labels = screen.getAllByRole("textbox", { name: /Account label|账户名称/ });
+    const labels = screen.getAllByRole("textbox", { name: i18n.t("portfolio.editor.accountLabel") });
     fireEvent.change(labels[0], { target: { value: "Main IBKR" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save and refresh|保存并刷新/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.editor.save") }));
 
     await waitFor(() => expect(mocked.updatePortfolioSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -174,17 +197,36 @@ describe("Portfolio page", () => {
     render(<Portfolio />);
     await screen.findByText("AAPL");
 
-    fireEvent.click(screen.getByRole("button", { name: /Manage accounts|管理账户/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Open connection center|打开连接中心/ }));
-    fireEvent.change(await screen.findByLabelText(/Read-only profile|只读连接模板/), {
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.page.manageAccounts") }));
+    fireEvent.click(await screen.findByRole("button", { name: i18n.t("portfolio.editor.openConnections") }));
+    fireEvent.change(await screen.findByLabelText(i18n.t("portfolio.connections.profile")), {
       target: { value: "sample-live-readonly" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Create connection|创建本地连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.connections.create") }));
 
     await waitFor(() => expect(mocked.createConnection).toHaveBeenCalledWith({
       id: "sample-live",
       profile_id: "sample-live-readonly",
       label: "Sample Live · Local Read-Only",
     }));
+  });
+
+  it("reports an unreadable account as an error and keeps it out of the total", async () => {
+    mocked.getPortfolio.mockResolvedValue({ status: "ok", snapshot: snapshotWithFailedSource });
+    render(<Portfolio />);
+    await screen.findByText("AAPL");
+
+    expect(screen.getByText(i18n.t("portfolio.accounts.failed"))).toBeInTheDocument();
+    expect(screen.getByText("Read timed out after 30s")).toBeInTheDocument();
+    expect(screen.getByText(
+      i18n.t("portfolio.accounts.lastSuccess", {
+        time: new Date(FAILED_LAST_SUCCESS).toLocaleString(i18n.language),
+      }),
+    )).toBeInTheDocument();
+
+    // The headline total stays at the readable value and says so out loud.
+    expect(screen.getByText("$1,000.00")).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("portfolio.metrics.excluded", { count: 1 }))).toBeInTheDocument();
+    expect(screen.getByText(snapshotWithFailedSource.warnings[0])).toBeInTheDocument();
   });
 });

@@ -80,22 +80,27 @@ export interface PortfolioPosition {
   unrealized_pnl_usd?: number | null;
   priced: boolean;
   updated_at: string;
-  stale?: boolean;
   pricing_basis?: string;
   price_error?: string;
 }
 
+/**
+ * One portfolio source as of the last refresh.
+ *
+ * A source that could not be read has `status === "error"`, no totals, and
+ * contributes nothing to the snapshot totals; `last_success_at` (when present)
+ * is the timestamp of the last read that did succeed, and is only ever shown
+ * as history — never as a current valuation.
+ */
 export interface PortfolioAccount {
   source_id?: string;
   profile_id?: string;
   label?: string;
   broker: string;
-  status: "ok" | "stale" | "error";
-  data_state?: "fresh" | "cached";
+  status: "ok" | "error";
   last_success_at?: string;
-  total_usd?: number;
-  total_cny?: number;
-  cash_or_unallocated_usd?: number;
+  total_usd?: number | null;
+  total_cny?: number | null;
   priced_value_usd?: number;
   cash_usd?: number;
   unpriced_or_other_usd?: number;
@@ -115,6 +120,7 @@ export interface PortfolioAccount {
 export interface PortfolioSnapshot {
   snapshot_id: string;
   created_at: string;
+  /** False whenever any enabled source did not reach `status === "ok"`. */
   complete: boolean;
   display_currency?: "USD" | "CNY";
   totals: { usd: number; cny: number };
@@ -134,6 +140,7 @@ export interface PortfolioSnapshot {
     brokers?: string[];
     unrealized_pnl_usd?: number;
   }>;
+  /** Backend-authored English notes; rendered verbatim, not translated. */
   warnings: string[];
 }
 
