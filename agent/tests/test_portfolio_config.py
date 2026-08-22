@@ -4,8 +4,14 @@ import json
 
 import pytest
 
-from src.portfolio.config import PortfolioSettingsStore, parse_settings, source_catalog
+from src.portfolio.config import (
+    PortfolioSettingsStore,
+    eligible_profiles,
+    parse_settings,
+    source_catalog,
+)
 from src.trading.connections import ConnectionStore
+from src.trading.profiles import profile_by_id
 
 
 def test_portfolio_settings_round_trip_without_credentials(tmp_path):
@@ -59,3 +65,36 @@ def test_portfolio_settings_reject_trade_profiles():
 def test_new_install_starts_with_no_selected_sources(tmp_path):
     store = PortfolioSettingsStore(tmp_path / "portfolio.json")
     assert store.load().sources == ()
+
+
+def test_a_discovery_only_profile_cannot_back_a_portfolio_source():
+    """Tool discovery is not a holdings read, so such a profile is not eligible.
+
+    ``ibkr-live-official-mcp-readonly`` is read-only, but it declares only
+    ``mcp.read.discovery``: it can list the remote server's tools and nothing
+    else. Accepting it would create a source that fails on every refresh.
+    """
+    profile = profile_by_id("ibkr-live-official-mcp-readonly")
+    assert profile.readonly is True
+    assert profile.capabilities == ("mcp.read.discovery",)
+    assert profile not in eligible_profiles()
+    assert all(
+        {"account.read", "positions.read"}.issubset(item.capabilities)
+        and item.readonly
+        for item in eligible_profiles()
+    )
+
+    with pytest.raises(ValueError, match="not eligible for read-only"):
+        parse_settings(
+            {
+                "display_currency": "USD",
+                "sources": [
+                    {
+                        "id": "discovery-only",
+                        "profile_id": "ibkr-live-official-mcp-readonly",
+                        "label": "Discovery only",
+                    }
+                ],
+            },
+            ConnectionStore(),
+        )

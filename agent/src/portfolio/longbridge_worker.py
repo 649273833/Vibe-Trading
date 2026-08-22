@@ -15,6 +15,12 @@ MARKER = "VIBE_PORTFOLIO_JSON="
 
 
 def main() -> None:
+    """Print the read-only Longbridge payload and exit without native teardown.
+
+    The payload is emitted on stdout behind :data:`MARKER` as JSON. On failure
+    only the exception type is reported, so a connector error can never leak
+    credentials or account identifiers into the parent process's logs.
+    """
     try:
         from src.trading.connectors.longbridge.sdk import (
             build_config,

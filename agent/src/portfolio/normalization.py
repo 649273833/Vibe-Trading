@@ -1,4 +1,19 @@
-"""Connector-neutral normalization and valuation helpers."""
+"""Normalization and valuation helpers for connector payloads.
+
+The generic path is the default: any connector whose account and position rows
+use the common field names is handled without a line of code here. Two
+connectors ship payload shapes the generic reader cannot express and therefore
+have dedicated branches:
+
+* ``ibkr`` — the account is a tag/value ``summary`` list, and positions carry
+  ``position``/``avg_cost`` with an IB ``sec_type``.
+* ``longbridge`` — the account is a per-currency ``balances`` list, and
+  positions are market-suffixed symbols with a ``symbol_name``.
+
+Inside the generic path, ``binance`` and ``okx`` additionally classify holdings
+as crypto/stablecoin and quote against USDT. Everything else falls through
+unchanged, so adding a connector needs no edit to this module.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +52,17 @@ def _now() -> str:
 
 
 def normalize_position(broker: str, row: dict[str, Any]) -> dict[str, Any]:
-    """Convert a connector position row to the portfolio wire shape."""
+    """Convert a connector position row to the portfolio wire shape.
+
+    Args:
+        broker: The connector key, used only to select a dedicated payload
+            shape; unknown connectors take the generic path.
+        row: One raw position row as the connector reported it.
+
+    Returns:
+        A position dict in the portfolio wire shape, unpriced fields left as
+        ``None`` rather than guessed.
+    """
     if broker == "ibkr":
         symbol = str(row.get("symbol") or row.get("local_symbol") or "").upper()
         sec_type = str(row.get("sec_type") or "STK").upper()
@@ -143,7 +168,18 @@ def normalize_position(broker: str, row: dict[str, Any]) -> dict[str, Any]:
 def value_position(
     row: dict[str, Any], *, usd_hkd: Decimal, usd_cny: Decimal
 ) -> dict[str, Any]:
-    """Calculate USD/CNY market value and unrealized P/L."""
+    """Calculate USD/CNY market value and unrealized P/L.
+
+    Args:
+        row: A normalized position row; it is updated in place.
+        usd_hkd: USD/HKD rate used to convert HKD-priced rows.
+        usd_cny: USD/CNY rate used to convert CNY-priced rows.
+
+    Returns:
+        The same row, with ``priced``, ``market_value_usd``,
+        ``market_value_cny`` and ``unrealized_pnl_usd`` filled in and the
+        connector-only fields dropped.
+    """
     price = _decimal(row.get("market_price"))
     quantity = _decimal(row.get("quantity"))
     currency = str(row.get("price_currency") or row.get("currency") or "USD").upper()
@@ -195,7 +231,19 @@ def account_total_usd(
     usd_cny: Decimal,
     fallback: Decimal = Decimal("0"),
 ) -> Decimal:
-    """Extract a connector-reported net liquidation value."""
+    """Extract a connector-reported net liquidation value.
+
+    Args:
+        broker: The connector key selecting the account payload shape.
+        account: The raw account payload.
+        usd_hkd: USD/HKD rate for HKD-denominated balances.
+        usd_cny: USD/CNY rate for CNY-denominated balances.
+        fallback: Value returned when the connector reports no total, so a
+            missing figure never silently becomes zero.
+
+    Returns:
+        The account's total value in USD.
+    """
     if broker == "longbridge":
         total = Decimal("0")
         for row in account.get("balances", []):
@@ -243,7 +291,18 @@ def account_total_usd(
 def account_cash_usd(
     broker: str, account: dict[str, Any], usd_hkd: Decimal, usd_cny: Decimal
 ) -> Decimal:
-    """Return broker-reported cash without guessing from missing quotes."""
+    """Return broker-reported cash without guessing from missing quotes.
+
+    Args:
+        broker: The connector key selecting the account payload shape.
+        account: The raw account payload.
+        usd_hkd: USD/HKD rate for HKD-denominated balances.
+        usd_cny: USD/CNY rate for CNY-denominated balances.
+
+    Returns:
+        Cash in USD, never negative and never inferred from an unpriced
+        position.
+    """
     rows = account.get("balances", []) if broker == "longbridge" else []
     if rows:
         return max(
@@ -304,7 +363,15 @@ def account_cash_usd(
 
 
 def auth_metadata(profile: TradingProfile) -> dict[str, Any]:
-    """Return public profile metadata without inferring broker-side key permissions."""
+    """Return public profile metadata without inferring broker-side key permissions.
+
+    Args:
+        profile: The connector profile backing a portfolio source.
+
+    Returns:
+        The authentication method, renewal model, read-only flag and the
+        profile's own notes.
+    """
     method, renewal = _TRANSPORT_AUTH.get(
         profile.transport,
         (profile.transport.replace("_", " ").title(), "provider_managed"),

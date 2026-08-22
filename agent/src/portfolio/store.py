@@ -11,7 +11,16 @@ from src.config.paths import get_runtime_root
 
 
 class PortfolioStore:
+    """SQLite-backed history of immutable portfolio snapshots plus an FX cache."""
+
     def __init__(self, path: Path | None = None) -> None:
+        """Open (and create when missing) the snapshot database.
+
+        Args:
+            path: Database file path. Defaults to
+                ``portfolio/portfolio.sqlite3`` under the runtime root
+                (``~/.vibe-trading``).
+        """
         self.path = path or (get_runtime_root() / "portfolio" / "portfolio.sqlite3")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
@@ -44,6 +53,12 @@ class PortfolioStore:
                 """)
 
     def save_snapshot(self, payload: dict[str, Any]) -> None:
+        """Append one immutable snapshot.
+
+        Args:
+            payload: The full snapshot envelope produced by
+                :meth:`src.portfolio.service.PortfolioService.refresh`.
+        """
         totals = payload["totals"]
         with self._connect() as db:
             db.execute(
@@ -63,6 +78,15 @@ class PortfolioStore:
             )
 
     def latest(self, *, complete_only: bool = False) -> dict[str, Any] | None:
+        """Return the most recent stored snapshot.
+
+        Args:
+            complete_only: Restrict the lookup to snapshots in which every
+                enabled source refreshed successfully.
+
+        Returns:
+            The snapshot envelope, or ``None`` when nothing matches.
+        """
         where = "WHERE complete = 1" if complete_only else ""
         with self._connect() as db:
             row = db.execute(
@@ -73,6 +97,18 @@ class PortfolioStore:
     def history(
         self, limit: int = 180, *, complete_only: bool = True
     ) -> list[dict[str, Any]]:
+        """Return snapshot totals over time, oldest first.
+
+        Args:
+            limit: Maximum number of snapshots to read, clamped to 1..2000.
+            complete_only: Restrict the series to snapshots in which every
+                enabled source refreshed successfully. Charting a mix of
+                complete and partial snapshots would draw a value drop that
+                never happened.
+
+        Returns:
+            One row per snapshot with id, timestamp, completeness and totals.
+        """
         where = "WHERE complete = 1" if complete_only else ""
         with self._connect() as db:
             rows = db.execute(
@@ -87,11 +123,20 @@ class PortfolioStore:
         return [dict(row) for row in reversed(rows)]
 
     def latest_successful_source(self, source_id: str) -> dict[str, Any] | None:
-        """Return the newest genuinely fresh payload for one configured source.
+        """Return the newest successfully read payload for one configured source.
 
-        Cached/stale accounts are intentionally skipped so a sequence of failed
-        refreshes always points back to the original successful observation and
-        preserves its real ``last_success_at`` timestamp.
+        Only accounts with status ``ok`` qualify, so a run of failed refreshes
+        keeps pointing back at the original successful observation and its real
+        ``last_success_at`` timestamp. The payload is used to report *when* a
+        failed source was last healthy; it is never added back into a snapshot's
+        totals.
+
+        Args:
+            source_id: The configured source id (the local connection id).
+
+        Returns:
+            A dict with ``created_at``, ``account`` and ``positions`` for the
+            newest successful observation, or ``None`` if there is none.
         """
         with self._connect() as db:
             rows = db.execute("""
@@ -123,11 +168,15 @@ class PortfolioStore:
             }
         return None
 
-    def latest_successful_broker(self, broker: str) -> dict[str, Any] | None:
-        """Compatibility alias for snapshots written before configurable sources."""
-        return self.latest_successful_source(broker)
-
     def save_fx(self, base: str, quote: str, rate: str, fetched_at: str) -> None:
+        """Cache one FX rate so a later outage still has a usable number.
+
+        Args:
+            base: Base currency code, e.g. ``USD``.
+            quote: Quote currency code, e.g. ``CNY``.
+            rate: The rate, stored as text to avoid binary float drift.
+            fetched_at: ISO-8601 timestamp of the successful fetch.
+        """
         with self._connect() as db:
             db.execute(
                 """
@@ -140,6 +189,15 @@ class PortfolioStore:
             )
 
     def load_fx(self, base: str, quote: str) -> tuple[str, str] | None:
+        """Read the last cached rate for one currency pair.
+
+        Args:
+            base: Base currency code, e.g. ``USD``.
+            quote: Quote currency code, e.g. ``CNY``.
+
+        Returns:
+            ``(rate, fetched_at)`` or ``None`` when the pair was never cached.
+        """
         with self._connect() as db:
             row = db.execute(
                 "SELECT rate, fetched_at FROM portfolio_fx_cache WHERE base = ? AND quote = ?",

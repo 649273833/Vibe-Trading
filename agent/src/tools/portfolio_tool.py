@@ -10,19 +10,32 @@ from src.portfolio.service import PortfolioService
 
 
 class PortfolioSummaryTool(BaseTool):
+    """Expose the latest local portfolio snapshot as sanitized analysis context."""
+
     name = "portfolio_summary"
     description = (
-        "Read the latest sanitized IBKR, Longbridge and Binance portfolio snapshot. "
-        "Returns deterministic totals, account allocation, combined holdings, weights, "
-        "unrealized P/L and data-quality warnings. It never returns credentials, account "
-        "numbers, order IDs, personal names, or local paths. Use it for portfolio analysis; "
-        "use the Web Portfolio refresh button before requesting current data."
+        "Read the latest sanitized snapshot of the user's locally configured "
+        "read-only brokerage accounts. Returns deterministic totals, account "
+        "allocation, combined holdings, weights, unrealized P/L, data-quality "
+        "warnings, and risk_xray_args (symbols + weights) that can be passed "
+        "straight to the portfolio_risk_xray tool. A source that failed to "
+        "refresh is reported as an error and excluded from the totals, so a "
+        "snapshot with complete=false is missing accounts. It never returns "
+        "credentials, account numbers, order IDs, personal names, or local "
+        "paths. Use the Web Portfolio refresh button before requesting current "
+        "data."
     )
     parameters = {"type": "object", "properties": {}, "required": []}
     repeatable = True
     is_readonly = True
 
     def execute(self, **_: Any) -> str:
+        """Return the sanitized portfolio context as a JSON envelope.
+
+        Returns:
+            A JSON string with ``status`` ``ok`` and the context, or ``empty``
+            with a hint when no usable snapshot exists.
+        """
         context = PortfolioService().analysis_context()
         if context is None:
             return json.dumps(

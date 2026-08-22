@@ -33,13 +33,26 @@ class PortfolioSettingsRequest(BaseModel):
     sources: list[PortfolioSourceRequest] = Field(default_factory=list, max_length=50)
 
 
-def _set_refresh_progress(broker: str, status: str, error: str | None) -> None:
+def _set_refresh_progress(source_id: str, status: str, error: str | None) -> None:
+    """Record one source's live refresh state for the polling endpoint.
+
+    Args:
+        source_id: The configured source being refreshed.
+        status: ``pending``, ``refreshing``, ``ok`` or ``error``.
+        error: Short failure text, or ``None``.
+    """
     with _REFRESH_LOCK:
-        _REFRESH_STATE["current"] = broker if status == "refreshing" else None
-        _REFRESH_STATE["sources"][broker] = {"status": status, "error": error}
+        _REFRESH_STATE["current"] = source_id if status == "refreshing" else None
+        _REFRESH_STATE["sources"][source_id] = {"status": status, "error": error}
 
 
 def register_portfolio_routes(app: FastAPI) -> None:
+    """Register the authenticated, read-only portfolio endpoints.
+
+    Args:
+        app: The FastAPI application to mount the routes on.
+    """
+
     def service(*, progress: bool = False) -> PortfolioService:
         return PortfolioService(
             progress_callback=_set_refresh_progress if progress else None
