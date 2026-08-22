@@ -285,7 +285,7 @@ Está diseñado para investigación, simulación y backtesting, y, cuando tú lo
 | **Hacer una pregunta de trading** | Investigación de mercado con herramientas, datos, documentos y contexto de sesión reutilizable. |
 | **Backtestear una idea de estrategia** | Código de estrategia, métricas, contexto de benchmark, artefactos de validación y run cards. |
 | **Revisar tus propias operaciones** | Análisis del diario del broker, diagnóstico de comportamiento, extracción de reglas y comparaciones de Shadow Account. |
-| **Leer documentos y gráficos** | Analiza PDF / DOCX / XLSX / PPTX / imágenes con OCR conectable (`read_document`), y lee capturas de gráficos de forma semántica con un modelo de visión (`analyze_image`). |
+| **Leer documentos y gráficos** | Analiza PDF / DOCX / XLSX / PPTX / imágenes con OCR conectable (`read_document`), y lee capturas de gráficos de forma semántica con un modelo de visión (`analyze_image`). El chat web acepta hasta cinco archivos a la vez mediante el selector, arrastrar y soltar o pegar desde el portapapeles. |
 | **Leer informes institucionales y libros de fondos** | Libros de gestores SEC 13F con diferencias de posiciones trimestre a trimestre, componentes de ETF en distintos mercados, probabilidad implícita de contratos de eventos y extracción de factores de arXiv / OpenAlex, todo de solo lectura, sobre fuentes públicas gratuitas. |
 | **Mejorar la investigación repetida** | La memoria persistente y las skills editables convierten rutinas útiles en flujos de trabajo reutilizables. |
 | **Ejecutar equipos de analistas** | Revisiones de investigación multiagente para flujos de trabajo de inversión, cuantitativo, cripto, macro y riesgo. |
@@ -1135,7 +1135,7 @@ vibe-trading serve --port 8899
 | `POST` | `/sessions` | Crear sesión |
 | `POST` | `/sessions/{id}/messages` | Enviar mensaje |
 | `GET` | `/sessions/{id}/events` | Flujo de eventos SSE |
-| `POST` | `/upload` | Subir PDF/archivo |
+| `POST` | `/upload` | Subir un documento, archivo de datos o imagen |
 | `GET` | `/swarm/presets` | Listar presets de swarm |
 | `POST` | `/swarm/runs` | Iniciar un run de swarm |
 | `GET` | `/swarm/runs/{id}/events` | Flujo SSE del swarm |
