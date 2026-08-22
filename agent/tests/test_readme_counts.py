@@ -32,8 +32,11 @@ code count moves, which is what this file is for.
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -261,33 +264,42 @@ def test_repo_tree_states_the_real_mcp_count(name: str) -> None:
 _CREDENTIAL_GATES = ("FRED_API_KEY", "VIBE_TRADING_IWENCAI_KEY", "QVERIS_API_KEY", "VIBE_TW_STOCK_DB")
 
 
-def _keyless_agent_tool_count(monkeypatch: pytest.MonkeyPatch) -> int:
+@functools.lru_cache(maxsize=1)
+def _keyless_agent_tool_count() -> int:
     """Return the registry size a fresh, credential-free install ships.
 
-    Shell tools stay off (as they are for ``serve``), and every credential-gated
-    tool is hidden by clearing its gate, so the number does not depend on which
-    API keys happen to be configured on the machine running the suite.
-
-    Args:
-        monkeypatch: pytest fixture used to clear the credential gates.
+    Measured in a child interpreter, not in-process: ``_discover_subclasses``
+    walks ``BaseTool.__subclasses__()`` and caches the result, so a stub tool
+    class defined by any earlier test in the session would be counted too
+    (the full suite measured 107 where a clean process measures 106). Shell
+    tools stay off (as they are for ``serve``), and every credential-gated
+    tool is hidden by clearing its gate, so the number does not depend on
+    which API keys happen to be configured on the machine running the suite.
 
     Returns:
         The number of locally registered agent tools.
     """
-    from src.config.accessor import reset_env_config
-    from src.tools import build_registry
-
+    env = dict(os.environ)
     for name in _CREDENTIAL_GATES:
-        monkeypatch.delenv(name, raising=False)
-    reset_env_config()
-    try:
-        return len(build_registry().tool_names)
-    finally:
-        reset_env_config()
+        env.pop(name, None)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from src.tools import build_registry; print(len(build_registry().tool_names))",
+        ],
+        cwd=AGENT_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=300,
+    )
+    return int(proc.stdout.strip().splitlines()[-1])
 
 
 @pytest.mark.parametrize("name", READMES)
-def test_repo_tree_states_the_real_agent_tool_count(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_repo_tree_states_the_real_agent_tool_count(name: str) -> None:
     """The repository-tree comment on src/tools/ must state the real registry size.
 
     This line sat at 97 while the registry shipped 105 — an eight-tool silent
@@ -296,7 +308,7 @@ def test_repo_tree_states_the_real_agent_tool_count(name: str, monkeypatch: pyte
     tree = [line for line in _read(name).splitlines() if re.search(r"│\s+│\s+├── tools/\s+#", line)]
 
     assert len(tree) == 1, f"{name}: expected one src/tools/ tree line, found {len(tree)}"
-    assert str(_keyless_agent_tool_count(monkeypatch)) in _numbers(tree[0])
+    assert str(_keyless_agent_tool_count()) in _numbers(tree[0])
 
 
 @pytest.mark.parametrize("name", READMES)
