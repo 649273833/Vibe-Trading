@@ -52,7 +52,7 @@
 
 > ⚠️ **보안 경고:** X 계정 `VibeTrading_HKU`, Virtuals 프로젝트 `101845`, 토큰 컨트랙트 `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4`는 모두 Vibe-Trading 공식과 무관합니다. Vibe-Trading은 어떠한 토큰이나 밈코인도 발행하거나 공식적으로 지지한 적이 없습니다. 해당 토큰을 구매하거나 지갑을 연결하거나 어떠한 서명도 하지 마세요. [자세히 보기](SECURITY.md#official-channels--impersonation).
 
-- **2026-08-22** 🧮 **팩터 수익률이 더 이상 결측 구간에서 가격을 지어내지 않습니다**: Alpha Zoo 팩터 13개가 맨 `pct_change()`로 수익률 시계열을 계산해 결측 종가를 먼저 앞으로 채운 뒤 차분했기 때문에, 상장폐지·공유되지 않는 휴장일·벤더 장애가 유한한 "0% 수익률"이 되어 랭킹에서 정보로 취급됐습니다. 이제 결측은 `NaN`으로 남아 zoo의 나머지가 이미 따르던 정책과 같아졌습니다([#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)). **수정:** 같은 http/sse 서버의 서로 무관한 MCP 클라이언트가 하나의 폴백 연구 목표 세션을 공유해 한 클라이언트의 `start_research_goal`이 다른 클라이언트의 것을 덮어쓸 수 있었습니다—이제 FastMCP의 연결별 session id로 구분합니다([#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)). 메모리 GC와 압축이 오래된 FTS 행과 고아 relation 사이드카를 남겼습니다([#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)). `cancel_run()`이 스트리밍 중인 swarm worker에 닿지 않아 취소로 보고된 뒤에도 도구 호출을 계속했습니다—이제 스트림을 중단하고 그 턴의 도구 호출을 건너뛰며 실패가 아닌 *취소됨* 태스크로 기록됩니다([#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)). MCP `get_research_reports`가 입구에서 `beginTime`/`endTime`을 버렸습니다([#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)). `get_options_chain`이 다른 주기의 만기에 `ok: true`와 다른 날짜의 계약을 돌려줬습니다—명시한 만기는 반환된 체인과 대조해 검증합니다([#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)). 기여해 주신 [@Shizoqua](https://github.com/Shizoqua), [@cgycorey](https://github.com/cgycorey)에게 감사드립니다.
+- **2026-08-22** 🧮 **팩터 수익률이 더 이상 결측 구간에서 가격을 지어내지 않습니다**: Alpha Zoo 팩터 13개가 맨 `pct_change()`로 수익률 시계열을 계산해 결측 종가를 먼저 앞으로 채운 뒤 차분했기 때문에, 상장폐지·공유되지 않는 휴장일·벤더 장애가 유한한 "0% 수익률"이 되어 랭킹에서 정보로 취급됐습니다. 이제 결측은 `NaN`으로 남아 zoo의 나머지가 이미 따르던 정책과 같아졌습니다([#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)). **수정:** 같은 http/sse 서버의 서로 무관한 MCP 클라이언트가 하나의 폴백 연구 목표 세션을 공유해 한 클라이언트의 `start_research_goal`이 다른 클라이언트의 것을 덮어쓸 수 있었습니다—이제 FastMCP의 연결별 session id로 구분합니다([#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)). 메모리 GC와 압축이 오래된 FTS 행과 고아 relation 사이드카를 남겼습니다([#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)). `cancel_run()`이 스트리밍 중인 swarm worker에 닿지 않아 취소로 보고된 뒤에도 도구 호출을 계속했습니다—이제 스트림을 중단하고 그 턴의 도구 호출을 건너뛰며 실패가 아닌 *취소됨* 태스크로 기록됩니다([#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)). MCP `get_research_reports`가 입구에서 `beginTime`/`endTime`을 버렸습니다([#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)). `get_options_chain`이 다른 주기의 만기에 `ok: true`와 다른 날짜의 계약을 돌려줬습니다—명시한 만기는 반환된 체인과 대조해 검증합니다([#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)). **신규:** 읽기 전용 **포트폴리오** 페이지가 읽기 전용 브로커 연결의 보유 종목을 한데 모읍니다 — 소스별 출처, 불변 스냅샷, 실패한 소스는 이어 쓰지 않고 제외, CSV 내보내기, 그리고 `portfolio_risk_xray`로 바로 넘길 수 있는 `portfolio_summary` 도구([#1072](https://github.com/HKUDS/Vibe-Trading/pull/1072)). 기여해 주신 [@Shizoqua](https://github.com/Shizoqua), [@cgycorey](https://github.com/cgycorey), [@goatyyc](https://github.com/goatyyc)에게 감사드립니다.
 - **2026-08-21** ⏱️ **영원히 멈춰 있던 실행**: `bash` 타임아웃이 shell만 종료하고 파이프 핸들을 쥔 손자 프로세스는 살아남아, 실행은 20분 넘게 "실행 중"이었습니다. 이제 전용 프로세스 그룹에서 시작해 트리 전체를 종료하고, 정체 감시자가 진전 없는 실행을 끝내며, 압축도 모델 자신의 검증 기록을 버리지 않습니다([#1169](https://github.com/HKUDS/Vibe-Trading/pull/1169)). **수정:** Tencent의 다년 히스토리가 500봉에서 조용히 잘렸습니다([#1154](https://github.com/HKUDS/Vibe-Trading/pull/1154)). **신규:** swarm 실행은 실패한 하위 그래프만 재생합니다([#1158](https://github.com/HKUDS/Vibe-Trading/pull/1158), [#1157](https://github.com/HKUDS/Vibe-Trading/issues/1157) 종료). Market Watch는 각 모니터의 최신 판정을 목록에 표시합니다([#1156](https://github.com/HKUDS/Vibe-Trading/pull/1156), [#943](https://github.com/HKUDS/Vibe-Trading/issues/943) 종료). `quantlib`는 테스트된 286개 함수에 도달했습니다([#1159](https://github.com/HKUDS/Vibe-Trading/pull/1159)–[#1168](https://github.com/HKUDS/Vibe-Trading/pull/1168)). 기여해 주신 [@wiliao](https://github.com/wiliao), [@cgycorey](https://github.com/cgycorey), [@he-yufeng](https://github.com/he-yufeng), [@BigFishEmily](https://github.com/BigFishEmily), [@santhreal](https://github.com/santhreal), [@SiMinus](https://github.com/SiMinus), [@alinv0](https://github.com/alinv0)에게 감사드립니다.
 - **2026-08-20** 🚀 **v0.1.14 릴리스**（[릴리스 노트](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.14), `pip install -U vibe-trading-ai`): 0.1.13 이후 272개 커밋, 74개 병합 PR. **주인공은 끝난 백테스트가 CSV 더미가 아니라 읽을 수 있는 결과물이 되었다는 점입니다.** Run Detail에 탭 네 개가 추가됐습니다 — **팩터 리서치**(평균선이 있는 일별 IC 시계열, IC 통계, 분위 그룹 자산곡선, 그리고 지금까지 어디에도 없던 IC 상관행렬), **포지션 구조**(날짜 슬라이더가 달린 비중 파이/트리맵, 업종별 순익스포저 막대, 비중 변화 영역 차트 — 파이는 **총액** 구성이고 막대는 **순액**이라, 같은 업종의 롱/숏 쌍은 막대에서 0으로 상쇄되지만 파이에서는 두 다리가 모두 보입니다), **티어시트**(월별 수익률 히트맵, 연간 막대, 자산곡선 위에 표시한 상위 5개 낙폭), 그리고 KPI·벤치마크 대비 자산추이·롤링 샤프·전체 체결 원장을 담은 대화형 **리서치 대시보드**. 네 가지 모두 실행이 이미 기록하는 artifact를 읽을 뿐, 새 데이터 파이프라인은 없습니다. 새 **Options Lab** 페이지는 만기 손익도, 현물×IV 시나리오 행렬, 포트폴리오 그릭스, 실시간 옵션 체인을 MCP 도구와 동일한, 테스트로 고정된 엔진으로 계산합니다. **설치:** Intel Mac에서 다시 `pip install vibe-trading-ai`가 됩니다 — `smartmoneyconcepts`가 `llvmlite`를 끌어오는데, 후자는 0.46부터 macOS x86_64 wheel을 내지 않아 Intel 설치가 매번 CMake가 필요한 소스 빌드로 바뀌었습니다. 이제 선택형 `[smc]` extra로 옮겼고 낡은 `<3.14` 상한도 없앴습니다([#1035](https://github.com/HKUDS/Vibe-Trading/discussions/1035)). **신규:** Alpha Zoo와 SDM 저장소를 아우르는 **근거 게이트 전략 탐색**(적재 경로, 읽는 시점에 계산되는 신선도 `fresh`/`aging`/`stale`, 오래된 행은 기본 추천에서 fail-closed로 제외), 리스가 걸린 outbox로 **스스로 전달하는** 예약 리서치와 Market Watch 목록용으로 저장되는 판정, 읽기 전용 **Futu** 엔드포인트 7종, 백테스트 시장으로서의 **베트남(HOSE)**, 오프라인 **USD-M 계좌 대사**, **Novita AI**·**GitHub Copilot** 프로바이더, 호스팅형 **MetaTrader 5** 데이터 소스, **스페인어**·**독일어** 로케일, 그리고 74개로 늘어난 MCP 도구. **정확성:** 테스트 스위트가 샌드박스를 벗어나 실제 설정 루트에 쓰는 일이 없어졌습니다 — 이전에는 전체 실행 때마다 해시 체인 실계좌 감사 원장에 가짜 `order_rejected`가 덧붙었습니다. `build_registry()`는 빠진 도구 목록을 조용히 반환하지 않습니다. `xirr`는 장기 할인 언더플로를 견디고, DCF는 비유한 입력에 음수 주가 대신 거부로 응답합니다. `.VN` 종목이 A주 규칙으로 체결되지 않으며, 백테스트 아카이브가 두 실행의 산출물을 섞지 않습니다. 또한 일련의 grounding 수정으로 날짜, 순서 목록, 요율 수식 속 항등 상수, 호가로 오독된 주문 라인에서 비롯된 오거부가 정리됐습니다. @Shizoqua, @shadowinlife, @pengpengyi92, @cgycorey, @ofeksh-tr, @lorenzozanee, @AndyLongest, @zzz607, @wiliao, @jay79-boop, @Robin1987China, @Echoandelementwebsites, @zhiwuyazhe-fjr, @x-lambda, @sykuang, @straun-repo, @nstavros, @ngoanpv, @miguelangelo78, @lukiod, @jax-novita, @honginp, @he-yufeng, @fixXxerTech, @er-s-an, @daviddaco1, @birdxs, @QCYTSN, @549236606-oss, @1psconstructor 님께 감사드립니다.
 <details>
@@ -333,6 +333,29 @@ Shadow Account는 일반적인 전략 템플릿이 아니라 사용자의 실제
 vibe-trading --upload trades_export.csv
 vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
 ```
+
+---
+
+## 💼 로컬 멀티 브로커 포트폴리오
+
+Web UI에 선택한 브로커 연결의 보유 종목을 한데 모아 보여주는 읽기 전용 **포트폴리오** 페이지가 추가됐습니다. 소스는 `account.read`와 `positions.read`를 선언한 읽기 전용 profile의 연결 인스턴스이며, [상세 기능](#-상세-기능)의 **브로커 커넥터**에서 설정합니다. IBKR 공식 MCP profile은 아직 소스로 사용할 수 없습니다.
+
+| 동작 | 제공되는 것 |
+|------|-------------|
+| **소스별 출처** | 모든 보유 종목이 어느 연결에서 왔는지 표시하고, USD로 평가한 뒤 CNY 환산도 함께 보여줍니다. |
+| **실패한 소스 제외** | 오류가 난 소스는 오류로 보고되고 합계에서 제외됩니다 — 직전 값을 이어 쓰지 않으며, 스냅샷은 incomplete로 표시됩니다. |
+| **불변 스냅샷** | 각 새로고침은 `~/.vibe-trading/portfolio/portfolio.sqlite3`에 저장되고, 자격증명이 없는 설정은 `~/.vibe-trading/portfolio.json`과 `connections.json`에 남습니다. |
+| **내보내기 & 분석** | CSV 내보내기와 함께, 민감정보를 제거한 `portfolio_summary` 에이전트 도구를 제공합니다. 그 `risk_xray_args`는 `portfolio_risk_xray`에 그대로 넘길 수 있습니다. 같은 스냅샷을 터미널에서는 `vibe-trading portfolio show`로 볼 수 있습니다(`refresh` / `sources`도 제공). |
+
+직접 설치하는 읽기 전용 커넥터는 체크아웃 밖 `~/.vibe-trading/connectors/<name>/`에 있습니다. `connector.json` manifest와 `check_status` / `get_account_snapshot` / `get_positions`를 구현한 `adapter.py`만 있으면 됩니다. 쓰기 capability를 선언한 manifest는 거부됩니다.
+
+```bash
+vibe-trading connector init my-broker --destination /tmp
+vibe-trading connector validate /tmp/my-broker
+vibe-trading connector install /tmp/my-broker
+```
+
+자격증명은 `pip install "vibe-trading-ai[keyring]"`를 통해 OS 키링(macOS Keychain, Windows Credential Manager, Linux Secret Service)에 저장되며 설정 파일에는 들어가지 않습니다. 이 경로의 어떤 것도 주문을 내거나 취소할 수 없습니다.
 
 ---
 
@@ -1585,7 +1608,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # Cross-session persistent memory
 │   │   │   └── persistent.py       #   file-based memory (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 97 auto-discovered agent tools
+│   │   ├── tools/                  # 106 auto-discovered agent tools
 │   │   │   ├── backtest_tool.py    #   run backtests
 │   │   │   ├── remember_tool.py    #   cross-session memory (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)

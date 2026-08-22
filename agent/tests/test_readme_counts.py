@@ -255,6 +255,50 @@ def test_repo_tree_states_the_real_mcp_count(name: str) -> None:
     assert str(len(_mcp_tool_names())) in _numbers(tree[0])
 
 
+# Environment variables that make a credential-gated tool register. The
+# repository-tree line has always carried the keyless registry size (the count a
+# fresh install sees), so those gates are closed while measuring it.
+_CREDENTIAL_GATES = ("FRED_API_KEY", "VIBE_TRADING_IWENCAI_KEY", "QVERIS_API_KEY", "VIBE_TW_STOCK_DB")
+
+
+def _keyless_agent_tool_count(monkeypatch: pytest.MonkeyPatch) -> int:
+    """Return the registry size a fresh, credential-free install ships.
+
+    Shell tools stay off (as they are for ``serve``), and every credential-gated
+    tool is hidden by clearing its gate, so the number does not depend on which
+    API keys happen to be configured on the machine running the suite.
+
+    Args:
+        monkeypatch: pytest fixture used to clear the credential gates.
+
+    Returns:
+        The number of locally registered agent tools.
+    """
+    from src.config.accessor import reset_env_config
+    from src.tools import build_registry
+
+    for name in _CREDENTIAL_GATES:
+        monkeypatch.delenv(name, raising=False)
+    reset_env_config()
+    try:
+        return len(build_registry().tool_names)
+    finally:
+        reset_env_config()
+
+
+@pytest.mark.parametrize("name", READMES)
+def test_repo_tree_states_the_real_agent_tool_count(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The repository-tree comment on src/tools/ must state the real registry size.
+
+    This line sat at 97 while the registry shipped 105 — an eight-tool silent
+    drift that no test could see, because nothing measured it.
+    """
+    tree = [line for line in _read(name).splitlines() if re.search(r"│\s+│\s+├── tools/\s+#", line)]
+
+    assert len(tree) == 1, f"{name}: expected one src/tools/ tree line, found {len(tree)}"
+    assert str(_keyless_agent_tool_count(monkeypatch)) in _numbers(tree[0])
+
+
 @pytest.mark.parametrize("name", READMES)
 def test_feature_badges_state_the_real_counts(name: str) -> None:
     """Each <sub> badge must carry the count the code ships."""

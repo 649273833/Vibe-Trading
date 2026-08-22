@@ -52,7 +52,7 @@
 
 > ⚠️ **セキュリティ警告：** Xアカウント `VibeTrading_HKU`、Virtualsプロジェクト `101845`、およびトークンコントラクト `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` は、いずれもVibe-Trading公式のものではありません。Vibe-Tradingはこれまで、いかなるトークンやミームコインも発行・公認していません。購入、ウォレットの接続、署名は行わないでください。[詳細](SECURITY.md#official-channels--impersonation)
 
-- **2026-08-22** 🧮 **ファクターのリターンがギャップをまたいで価格を捏造しなくなりました**：Alpha Zoo の 13 ファクターが素の `pct_change()` でリターン系列を計算していたため、欠損終値を前方補完してから差分を取り、上場廃止・共有されない休場日・ベンダー障害が有限の「0% リターン」となってランキングに情報として扱われていました。ギャップは `NaN` のまま保たれ、zoo の他の部分が既に従っていた方針に揃いました（[#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)）。**修正：** 同一の http/sse サーバー上の無関係な MCP クライアントが単一のフォールバック研究ゴールセッションを共有し、あるクライアントの `start_research_goal` が別のクライアントのものを置き換え得ました——FastMCP の接続ごとの session id で区別します（[#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)）。メモリの GC と圧縮が古い FTS 行と孤立した relation サイドカーを残していました（[#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)）。`cancel_run()` がストリーミング中の swarm worker に届かず、キャンセル報告後もツール呼び出しを続けていました——ストリームを中断し、そのターンのツール呼び出しをスキップし、失敗ではなく*キャンセル済み*タスクとして記録します（[#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)）。MCP `get_research_reports` が `beginTime`/`endTime` を入口で落としていました（[#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)）。`get_options_chain` が別サイクルの満期に `ok: true` と他の日付の契約を返していました——明示した満期は返却されたチェーンと照合されます（[#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)）。貢献に感謝します：[@Shizoqua](https://github.com/Shizoqua)、[@cgycorey](https://github.com/cgycorey)。
+- **2026-08-22** 🧮 **ファクターのリターンがギャップをまたいで価格を捏造しなくなりました**：Alpha Zoo の 13 ファクターが素の `pct_change()` でリターン系列を計算していたため、欠損終値を前方補完してから差分を取り、上場廃止・共有されない休場日・ベンダー障害が有限の「0% リターン」となってランキングに情報として扱われていました。ギャップは `NaN` のまま保たれ、zoo の他の部分が既に従っていた方針に揃いました（[#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)）。**修正：** 同一の http/sse サーバー上の無関係な MCP クライアントが単一のフォールバック研究ゴールセッションを共有し、あるクライアントの `start_research_goal` が別のクライアントのものを置き換え得ました——FastMCP の接続ごとの session id で区別します（[#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)）。メモリの GC と圧縮が古い FTS 行と孤立した relation サイドカーを残していました（[#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)）。`cancel_run()` がストリーミング中の swarm worker に届かず、キャンセル報告後もツール呼び出しを続けていました——ストリームを中断し、そのターンのツール呼び出しをスキップし、失敗ではなく*キャンセル済み*タスクとして記録します（[#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)）。MCP `get_research_reports` が `beginTime`/`endTime` を入口で落としていました（[#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)）。`get_options_chain` が別サイクルの満期に `ok: true` と他の日付の契約を返していました——明示した満期は返却されたチェーンと照合されます（[#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)）。**新機能：** 読み取り専用の **Portfolio** ページが、読み取り専用のブローカー接続を横断して保有をまとめます——ソースごとの出所、不変スナップショット、失敗したソースは引き継がずに除外、CSV エクスポート、そして `portfolio_risk_xray` にそのまま渡せる `portfolio_summary` ツール（[#1072](https://github.com/HKUDS/Vibe-Trading/pull/1072)）。貢献に感謝します：[@Shizoqua](https://github.com/Shizoqua)、[@cgycorey](https://github.com/cgycorey)、[@goatyyc](https://github.com/goatyyc)。
 - **2026-08-21** ⏱️ **永久に固まる実行**：`bash` のタイムアウトは shell だけを kill し、パイプハンドルを持つ孫プロセスが生き残るため、実行は 20 分以上「実行中」のままでした。現在は専用プロセスグループで起動してツリー全体を kill し、新しいストール監視が前進のない実行を終了させ、圧縮もモデル自身の検証記録を捨てなくなりました（[#1169](https://github.com/HKUDS/Vibe-Trading/pull/1169)）。**修正：** 複数年の Tencent 履歴が 500 本で暗黙に切り詰められていました（[#1154](https://github.com/HKUDS/Vibe-Trading/pull/1154)）。**新機能：** swarm 実行は失敗サブグラフのみを再生（[#1158](https://github.com/HKUDS/Vibe-Trading/pull/1158)、[#1157](https://github.com/HKUDS/Vibe-Trading/issues/1157) をクローズ）。Market Watch は各モニターの最新判定を一覧内に表示（[#1156](https://github.com/HKUDS/Vibe-Trading/pull/1156)、[#943](https://github.com/HKUDS/Vibe-Trading/issues/943) をクローズ）。`quantlib` はテスト済み 286 関数に到達（[#1159](https://github.com/HKUDS/Vibe-Trading/pull/1159)–[#1168](https://github.com/HKUDS/Vibe-Trading/pull/1168)）。貢献に感謝します：[@wiliao](https://github.com/wiliao)、[@cgycorey](https://github.com/cgycorey)、[@he-yufeng](https://github.com/he-yufeng)、[@BigFishEmily](https://github.com/BigFishEmily)、[@santhreal](https://github.com/santhreal)、[@SiMinus](https://github.com/SiMinus)、[@alinv0](https://github.com/alinv0)。
 - **2026-08-20** 🚀 **v0.1.14 リリース**（[リリースノート](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.14)、`pip install -U vibe-trading-ai`）：0.1.13 以降 272 コミット・74 件のマージ済み PR。**主役は、終わったバックテストが CSV の山ではなく「読めるもの」になったことです。** Run Detail に 4 つのタブが増えました——**ファクター研究**（平均線付きの日次 IC 系列、IC 統計、分位ポートフォリオの資産曲線、そしてこれまでどこにも無かった IC 相関行列）、**ポジション構成**（日付スライダー付きのウェイト円/ツリーマップ、業種別ネットエクスポージャー、ウェイト推移の面グラフ。円は**グロス**構成、バーは**ネット**なので、同一業種のロング／ショートはバーでは相殺されて 0 になり、円では両脚とも見えたままです）、**ティアシート**（月次リターンのヒートマップ、年次バー、上位 5 ドローダウンを資産曲線に重ねて表示）、そして KPI・ベンチマーク対比の資産推移・ローリングシャープ・全約定台帳を備えた対話型**リサーチダッシュボード**。4 つとも実行が既に書き出している artifact を読むだけで、新しいデータパイプラインはありません。新しい **Options Lab** ページでは満期損益図、原資産×IV のシナリオ行列、ポートフォリオのグリークス、ライブのオプションチェーンを、MCP ツールと同じテストで固定されたエンジンで計算します。**インストール：** Intel Mac で再び `pip install vibe-trading-ai` が通ります——`smartmoneyconcepts` が `llvmlite` を引き込み、後者は 0.46 以降 macOS x86_64 wheel を出していないため、Intel でのインストールは毎回 CMake を要するソースビルドになっていました。これをオプトインの `[smc]` extra に移し、古い `<3.14` 上限も外しました（[#1035](https://github.com/HKUDS/Vibe-Trading/discussions/1035)）。**新機能：** Alpha Zoo と SDM ストアをまたぐ**エビデンス・ゲート付きストラテジー探索**（投入経路、読み取り時に算出する鮮度 `fresh`/`aging`/`stale`、陳腐化した行は既定の推奨から fail-closed で除外）、リース付き outbox で**自分から配信する**スケジュール調査と Market Watch 一覧向けに永続化される判定、7 つの読み取り専用 **Futu** エンドポイント、バックテスト市場としての**ベトナム（HOSE）**、オフラインの **USD-M 口座照合**、**Novita AI** と **GitHub Copilot** のプロバイダ、ホスト型 **MetaTrader 5** データソース、**スペイン語**と**ドイツ語**のロケール、そして MCP ツールは 74 個に。**正確性：** テストスイートがサンドボックスを抜け出して実際の設定ルートに書き込むことがなくなりました——以前はフル実行のたびにハッシュ連鎖の実口座監査台帳へ偽の `order_rejected` が追記されていました。`build_registry()` は欠けたツール表を黙って返しません。`xirr` は長期ホライズンの割引アンダーフローに耐え、DCF は非有限入力を負の株価で返さず拒否します。`.VN` 銘柄が A 株ルールで約定されることもなくなり、バックテストのアーカイブが 2 つの実行の成果物を混ぜることもなくなりました。さらに grounding の一連の修正で、日付・順序付きリスト・レート式中の恒等定数・見積りと誤読された注文行という誤拒否の一群が解消しました。@Shizoqua、@shadowinlife、@pengpengyi92、@cgycorey、@ofeksh-tr、@lorenzozanee、@AndyLongest、@zzz607、@wiliao、@jay79-boop、@Robin1987China、@Echoandelementwebsites、@zhiwuyazhe-fjr、@x-lambda、@sykuang、@straun-repo、@nstavros、@ngoanpv、@miguelangelo78、@lukiod、@jax-novita、@honginp、@he-yufeng、@fixXxerTech、@er-s-an、@daviddaco1、@birdxs、@QCYTSN、@549236606-oss、@1psconstructor の皆さんに感謝します。
 <details>
@@ -333,6 +333,29 @@ Shadow Account は、汎用的な戦略テンプレートではなく、あな�
 vibe-trading --upload trades_export.csv
 vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
 ```
+
+---
+
+## 💼 ローカル・マルチブローカー Portfolio
+
+Web UI に、選んだブローカー接続の保有を横断してまとめる読み取り専用の **Portfolio** ページが加わりました。データソースは `account.read` と `positions.read` を宣言する読み取り専用 profile の接続インスタンスで、[詳細な機能](#-詳細な機能) の **ブローカー connectors** で設定します。IBKR の公式 MCP profile はまだデータソースとして使えません。
+
+| 挙動 | 得られるもの |
+|------|--------------|
+| **ソースごとの出所** | すべての保有がどの接続由来かを示し、USD で評価して CNY 換算も表示します。 |
+| **失敗したソースは除外** | エラーになったソースはエラーとして報告され、合計から除外されます（前回値の引き継ぎはしません）。スナップショットは incomplete として記録されます。 |
+| **不変スナップショット** | 各 refresh は `~/.vibe-trading/portfolio/portfolio.sqlite3` に保存され、認証情報を含まない設定は `~/.vibe-trading/portfolio.json` と `connections.json` に置かれます。 |
+| **エクスポートと分析** | CSV エクスポートに加え、サニタイズ済みの `portfolio_summary` エージェントツールを提供します。その `risk_xray_args` はそのまま `portfolio_risk_xray` に渡せます。同じスナップショットは `vibe-trading portfolio show` でターミナルにも表示できます（`refresh` / `sources` も同様）。 |
+
+自分でインストールする読み取り専用 connector は checkout の外、`~/.vibe-trading/connectors/<name>/` に置かれます。`connector.json` manifest と、`check_status` / `get_account_snapshot` / `get_positions` を実装する `adapter.py` だけです。書き込み系の capability を宣言した manifest は拒否されます。
+
+```bash
+vibe-trading connector init my-broker --destination /tmp
+vibe-trading connector validate /tmp/my-broker
+vibe-trading connector install /tmp/my-broker
+```
+
+認証情報は `pip install "vibe-trading-ai[keyring]"` により OS の keyring（macOS Keychain、Windows Credential Manager、Linux Secret Service）へ保存され、設定ファイルには入りません。この経路からは注文の発注も取消もできません。
 
 ---
 
@@ -1588,7 +1611,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # クロスセッション永続メモリ
 │   │   │   └── persistent.py       #   ファイルベースメモリ (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 97 個の自動検出エージェントツール
+│   │   ├── tools/                  # 106 個の自動検出エージェントツール
 │   │   │   ├── backtest_tool.py    #   バックテスト実行
 │   │   │   ├── remember_tool.py    #   クロスセッションメモリ (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)

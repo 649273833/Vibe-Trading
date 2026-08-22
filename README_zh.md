@@ -52,7 +52,7 @@
 
 > ⚠️ **安全警告：** X 账号 `VibeTrading_HKU`、Virtuals 项目 `101845` 及代币合约 `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` 均非 Vibe-Trading 官方。我们从未发行或背书任何代币或 meme 币。请勿购买、连接钱包或签名。[详细说明](SECURITY.md#official-channels--impersonation)。
 
-- **2026-08-22** 🧮 **因子收益不再跨缺口编造价格**：13 个 Alpha Zoo 因子用裸 `pct_change()` 计算收益序列，它会先前向填充缺失的收盘价再作差——退市、未共享的假日、数据商中断都变成一个有限的「0% 收益」，排序把它当成了信息。现在缺口保持 `NaN`，与 zoo 其余部分早已遵循的策略一致（[#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)）。**修复：** 同一 http/sse 服务器上互不相关的 MCP 客户端共用一个兜底研究目标会话，一个客户端的 `start_research_goal` 会顶掉另一个的——现在按 FastMCP 的每连接 session id 区分（[#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)）；记忆垃圾回收与压缩遗留过期的 FTS 行和孤儿关系 sidecar（[#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)）；`cancel_run()` 到不了正在流式输出的 swarm worker，运行已报告取消后它仍在派发工具调用——现在会打断流、跳过该轮的工具调用，并记为*已取消*而非失败的任务（[#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)）；MCP `get_research_reports` 在入口丢掉了 `beginTime`/`endTime`（[#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)）；`get_options_chain` 对错周期的到期日返回 `ok: true` 外加另一日期的合约——显式到期日现在会对照返回的链校验（[#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)）。感谢 [@Shizoqua](https://github.com/Shizoqua)、[@cgycorey](https://github.com/cgycorey)！
+- **2026-08-22** 🧮 **因子收益不再跨缺口编造价格**：13 个 Alpha Zoo 因子用裸 `pct_change()` 计算收益序列，它会先前向填充缺失的收盘价再作差——退市、未共享的假日、数据商中断都变成一个有限的「0% 收益」，排序把它当成了信息。现在缺口保持 `NaN`，与 zoo 其余部分早已遵循的策略一致（[#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)）。**修复：** 同一 http/sse 服务器上互不相关的 MCP 客户端共用一个兜底研究目标会话，一个客户端的 `start_research_goal` 会顶掉另一个的——现在按 FastMCP 的每连接 session id 区分（[#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)）；记忆垃圾回收与压缩遗留过期的 FTS 行和孤儿关系 sidecar（[#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)）；`cancel_run()` 到不了正在流式输出的 swarm worker，运行已报告取消后它仍在派发工具调用——现在会打断流、跳过该轮的工具调用，并记为*已取消*而非失败的任务（[#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)）；MCP `get_research_reports` 在入口丢掉了 `beginTime`/`endTime`（[#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)）；`get_options_chain` 对错周期的到期日返回 `ok: true` 外加另一日期的合约——显式到期日现在会对照返回的链校验（[#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)）。**新增：** 只读的 **持仓** 页面把你的只读券商连接汇总到一起——逐源出处、不可变快照、失败的源被排除而不是沿用旧值、CSV 导出，以及一个可以直接喂给 `portfolio_risk_xray` 的 `portfolio_summary` 工具（[#1072](https://github.com/HKUDS/Vibe-Trading/pull/1072)）。感谢 [@Shizoqua](https://github.com/Shizoqua)、[@cgycorey](https://github.com/cgycorey)、[@goatyyc](https://github.com/goatyyc)！
 - **2026-08-21** ⏱️ **永远卡住的运行**：`bash` 超时只杀掉 shell，握着管道句柄的孙进程还活着，运行便「运行中」挂了 20 分钟以上。现在命令在独立进程组启动、超时杀掉整棵进程树，新增的停滞看门狗会终结毫无前进的运行，压缩也不再丢弃模型自己的验证记录（[#1169](https://github.com/HKUDS/Vibe-Trading/pull/1169)）。**修复：** 跨年的腾讯历史在 500 根 K 线处被静默截断（[#1154](https://github.com/HKUDS/Vibe-Trading/pull/1154)）。**新增：** swarm 运行只重放失败子图（[#1158](https://github.com/HKUDS/Vibe-Trading/pull/1158)，关闭 [#1157](https://github.com/HKUDS/Vibe-Trading/issues/1157)）；Market Watch 在列表内显示每个监控的最新结论（[#1156](https://github.com/HKUDS/Vibe-Trading/pull/1156)，关闭 [#943](https://github.com/HKUDS/Vibe-Trading/issues/943)）；`quantlib` 达到 286 个经测试函数（[#1159](https://github.com/HKUDS/Vibe-Trading/pull/1159)–[#1168](https://github.com/HKUDS/Vibe-Trading/pull/1168)）。感谢 [@wiliao](https://github.com/wiliao)、[@cgycorey](https://github.com/cgycorey)、[@he-yufeng](https://github.com/he-yufeng)、[@BigFishEmily](https://github.com/BigFishEmily)、[@santhreal](https://github.com/santhreal)、[@SiMinus](https://github.com/SiMinus)、[@alinv0](https://github.com/alinv0)！
 - **2026-08-20** 🚀 **v0.1.14 发布**（[Release notes](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.14)，`pip install -U vibe-trading-ai`）：自 0.1.13 以来 272 个 commit、74 个已合并 PR。**主角是：跑完的回测终于是可以读的东西，而不是一堆 CSV。** Run Detail 新增四个页签——**因子研究**（IC 序列与其均值线、IC 统计、分组净值，以及一个此前根本不存在的 IC 两两相关矩阵）、**持仓结构**（带日期滑块的权重饼图/树图、行业净敞口柱、权重演化面积图；饼图是**总额**构成而柱图是**净额**，所以同一行业里的多空对冲在柱图上抵为零、在饼图上两条腿都还看得见）、**Tearsheet**（月度收益热力图、年度柱状图、前 5 大回撤并标注在净值曲线上），以及一个带 KPI、基准相对净值、滚动 Sharpe 和完整成交流水的交互式**研究看板**。四者读的都是运行本就写出的 artifact——没有新增数据管线。新的 **Options Lab** 页面提供到期损益图、现价×IV 情景矩阵、组合希腊字母和实时期权链，算的是 MCP 工具同一套被测试钉死的引擎。**安装：** Intel Mac 又能 `pip install vibe-trading-ai` 了——`smartmoneyconcepts` 会拖进 `llvmlite`，而后者从 0.46 起不再提供 macOS x86_64 wheel，于是每一次 Intel 安装都变成需要 CMake 的源码构建；现在它改为可选的 `[smc]` extra，过期的 `<3.14` 上限也一并去掉（[#1035](https://github.com/HKUDS/Vibe-Trading/discussions/1035)）。**新增：** 跨 Alpha Zoo 与 SDM 库的**证据闸门策略发现**，带证据填充路径、读取时计算的新鲜度（`fresh`/`aging`/`stale`）以及陈旧行 fail-closed 退出默认推荐；排期研究现在会**自己投递**——经带租约的 outbox 送出，并把每个监控的判定持久化供 Market Watch 列表使用；七个只读 **Futu** 端点；**越南（HOSE）**成为回测市场；离线 **USD-M 账户对账**；**Novita AI** 与 **GitHub Copilot** 两个模型提供方；托管的 **MetaTrader 5** 数据源；**西班牙语**与**德语**界面；MCP 工具增至 74 个。**正确性：** 测试套件不再逃出沙箱写进你真实的配置根目录——此前跑一次全量会往那本哈希链式的实盘审计账本里追加伪造的 `order_rejected` 记录；`build_registry()` 不再静默返回一份残缺的工具表；`xirr` 扛得住长周期折现下溢，DCF 遇到非有限输入直接拒绝而不是返回一个负的每股价值；`.VN` 代码不再按 A 股规则撮合；回测归档不再把两次运行的产物混进同一个包；另有一轮 grounding 修复，终结了日期、有序列表、费率公式里的恒等常数以及被误读成报价的下单指令这几类误拒。感谢 @Shizoqua、@shadowinlife、@pengpengyi92、@cgycorey、@ofeksh-tr、@lorenzozanee、@AndyLongest、@zzz607、@wiliao、@jay79-boop、@Robin1987China、@Echoandelementwebsites、@zhiwuyazhe-fjr、@x-lambda、@sykuang、@straun-repo、@nstavros、@ngoanpv、@miguelangelo78、@lukiod、@jax-novita、@honginp、@he-yufeng、@fixXxerTech、@er-s-an、@daviddaco1、@birdxs、@QCYTSN、@549236606-oss 和 @1psconstructor。
 <details>
@@ -337,47 +337,24 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 
 ## 💼 本地多账户持仓
 
-Web UI 提供可编辑的只读 **持仓** 页面。点击“管理账户”，即可从仓库已有的只读连接 Profile 中添加、停用、重命名和排序账户，设置是否计入现金，并选择 USD 或 CNY 作为主要显示货币。新安装默认不选择任何账户。
+Web UI 新增只读的 **持仓** 页面，把你选中的券商连接的持仓汇总到一起。数据源是声明了 `account.read` 与 `positions.read` 的只读 profile 的连接实例——在 [Detailed Capabilities](#-detailed-capabilities) 的 **Broker Connectors** 中配置。IBKR 官方 MCP profile 暂时还不能作为数据源。
 
-手动刷新会依次读取所有已启用账户，统一换算 USD/CNY，并把不可变快照保存到 `~/.vibe-trading/portfolio/portfolio.sqlite3`。账户选择等不含密钥的偏好保存在权限为仅当前用户可读写的 `~/.vibe-trading/portfolio.json`。单个账户失败时会继续使用该账户最后一次成功数据；不完整快照不会进入历史曲线。
+| 行为 | 你得到什么 |
+|------|------------|
+| **逐源出处** | 每一笔持仓都标明来自哪个连接，以 USD 计价并给出 CNY 换算。 |
+| **失败的源被排除** | 读取失败的源会作为错误报告并排除在合计之外——绝不沿用上一次的数据——快照本身标记为不完整。 |
+| **不可变快照** | 每次刷新都写入 `~/.vibe-trading/portfolio/portfolio.sqlite3`；不含凭证的设置保存在 `~/.vibe-trading/portfolio.json` 与 `connections.json`。 |
+| **导出与分析** | 支持 CSV 导出，并提供脱敏的 `portfolio_summary` agent 工具，其 `risk_xray_args` 可直接传给 `portfolio_risk_xray`。终端里 `vibe-trading portfolio show` 打印同一份快照（另有 `refresh` / `sources`）。 |
 
-持仓设置只接受同时声明账户读取、持仓读取和只读能力的连接 Profile，拒绝交易型 Profile。券商密钥仍保留在各连接器自己的凭证存储中，不会进入持仓配置。持仓接口不能下单、撤单、转账或提现；发送给模型的分析上下文也不包含账号、密钥、订单 ID、个人姓名或本机路径。
-
-### 本地连接实例与 Codex 接入流程
-
-持仓数据源现在是“本地连接实例”，而不是写死的券商名称：
-
-- 仓库里的 `TradingProfile` 是不含凭证、可复用的连接模板；
-- `~/.vibe-trading/connections.json` 记录这台电脑上的账户连接；
-- `portfolio.json` 只引用本地 `connection_id`。
-
-开发者自己的连接器安装在 Git 仓库外的
-`~/.vibe-trading/connectors/<connector>/`。其中 `connector.json` 必须声明
-`readonly: true`、`account.read` 和 `positions.read`；如果出现下单、撤单、
-转账、提现或其他写能力，框架会拒绝加载。连接器只需实现三个统一函数：
-
-```python
-check_status(credentials=..., config=...)
-get_account_snapshot(credentials=..., config=...)
-get_positions(credentials=..., config=...)
-```
-
-清单文件只声明需要哪些凭证字段，不保存值。在网页“连接中心”输入的值通过
-操作系统凭证库保存（macOS 钥匙串、Windows Credential Manager 或 Linux Secret
-Service），Web API 不会返回凭证明文。
-
-Codex 可以用仓库提供的模板快速开始：
+你自己安装的只读连接器留在仓库之外的 `~/.vibe-trading/connectors/<name>/`：一个 `connector.json` manifest，加一个实现 `check_status` / `get_account_snapshot` / `get_positions` 的 `adapter.py`。声明了任何写能力的 manifest 会被拒绝。
 
 ```bash
 vibe-trading connector init my-broker --destination /tmp
-# 让 Codex 根据券商官方只读 API 文档实现 /tmp/my-broker/adapter.py
 vibe-trading connector validate /tmp/my-broker
 vibe-trading connector install /tmp/my-broker
 ```
 
-重启本地服务后，打开“持仓 → 管理账户 → 连接中心”，从新安装的 Profile 创建
-本机账户连接、保存凭证、测试连接，再加入持仓汇总。私人插件和密钥始终只留在
-本机；如果某个连接器适合社区，也可以单独提交一份不含任何凭证的公共实现。
+它们的凭证通过 `pip install "vibe-trading-ai[keyring]"` 存入操作系统钥匙串（macOS Keychain、Windows Credential Manager、Linux Secret Service），不会写进配置文件。这条路径上的任何东西都不能下单或撤单。
 
 ---
 
@@ -1412,7 +1389,7 @@ Vibe-Trading 可以以只读模式直连 Interactive Brokers 的官方远程 MCP
   "mcpServers": {
     "ibkr": {
       "type": "streamableHttp",
-      "url": "https://api.ibkr.com/v1/api/mcp-public",
+      "url": "https://api.ibkr.com/v1/api/mcp",
       "auth": {
         "type": "oauth",
         "scopes": ["mcp.read"],
@@ -1613,7 +1590,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # 跨 session 持久记忆
 │   │   │   └── persistent.py       #   基于文件的记忆（~/.vibe-trading/memory/）
 │   │   │
-│   │   ├── tools/                  # 97 个自动发现的 agent 工具
+│   │   ├── tools/                  # 106 个自动发现的 agent 工具
 │   │   │   ├── backtest_tool.py    #   运行回测
 │   │   │   ├── remember_tool.py    #   跨 session 记忆（save/recall/forget）
 │   │   │   ├── skill_writer_tool.py #  skill CRUD（save/patch/delete/file）

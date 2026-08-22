@@ -52,7 +52,7 @@
 
 > ⚠️ **Security warning:** The X account `VibeTrading_HKU`, Virtuals project `101845`, and token contract `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` are not official Vibe-Trading assets. We have never launched or endorsed any token or memecoin. Do not buy, connect a wallet, or sign anything. [Details](SECURITY.md#official-channels--impersonation).
 
-- **2026-08-22** 🧮 **Factor returns stopped inventing prices across gaps**: Thirteen Alpha Zoo factors computed their return series with a bare `pct_change()`, which forward-fills a missing close before differencing — a delisting, an unshared holiday or a vendor outage became a finite "0% return" that ranking treated as information. The gap now stays `NaN`, the policy the rest of the zoo already followed ([#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)). **Fixed:** independent MCP clients on one http/sse server shared a single fallback research-goal session, so one client's `start_research_goal` could replace another's — goals now key off FastMCP's per-connection session id ([#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)); memory garbage collection and compression left stale FTS rows and orphaned relation sidecars behind ([#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)); `cancel_run()` never reached a swarm worker already streaming, which kept dispatching tool calls after the run was reported cancelled — the stop now interrupts the stream, skips that turn's tool calls, and lands as a *cancelled* task rather than a failed one ([#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)); MCP `get_research_reports` dropped `beginTime`/`endTime` on the way in ([#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)); and `get_options_chain` answered a wrong-cycle expiration with `ok: true` and another date's contracts — an explicit expiration is now validated against the returned chain ([#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)). Thanks [@Shizoqua](https://github.com/Shizoqua) and [@cgycorey](https://github.com/cgycorey)!
+- **2026-08-22** 🧮 **Factor returns stopped inventing prices across gaps**: Thirteen Alpha Zoo factors computed their return series with a bare `pct_change()`, which forward-fills a missing close before differencing — a delisting, an unshared holiday or a vendor outage became a finite "0% return" that ranking treated as information. The gap now stays `NaN`, the policy the rest of the zoo already followed ([#1172](https://github.com/HKUDS/Vibe-Trading/pull/1172)). **Fixed:** independent MCP clients on one http/sse server shared a single fallback research-goal session, so one client's `start_research_goal` could replace another's — goals now key off FastMCP's per-connection session id ([#1173](https://github.com/HKUDS/Vibe-Trading/pull/1173)); memory garbage collection and compression left stale FTS rows and orphaned relation sidecars behind ([#1174](https://github.com/HKUDS/Vibe-Trading/pull/1174)); `cancel_run()` never reached a swarm worker already streaming, which kept dispatching tool calls after the run was reported cancelled — the stop now interrupts the stream, skips that turn's tool calls, and lands as a *cancelled* task rather than a failed one ([#1175](https://github.com/HKUDS/Vibe-Trading/pull/1175)); MCP `get_research_reports` dropped `beginTime`/`endTime` on the way in ([#1176](https://github.com/HKUDS/Vibe-Trading/pull/1176)); and `get_options_chain` answered a wrong-cycle expiration with `ok: true` and another date's contracts — an explicit expiration is now validated against the returned chain ([#1177](https://github.com/HKUDS/Vibe-Trading/pull/1177)). **New:** a read-only **Portfolio** page aggregates holdings across your read-only broker connections — per-source provenance, immutable snapshots, failed sources excluded rather than carried forward, CSV export, and a `portfolio_summary` tool that feeds `portfolio_risk_xray` ([#1072](https://github.com/HKUDS/Vibe-Trading/pull/1072)). Thanks [@Shizoqua](https://github.com/Shizoqua), [@cgycorey](https://github.com/cgycorey) and [@goatyyc](https://github.com/goatyyc)!
 - **2026-08-21** ⏱️ **Runs that hung forever**: A `bash` timeout killed the shell but not the grandchildren holding its pipe handles, so a run sat "running" for 20+ minutes. Commands now spawn in their own process group, a timeout kills the whole tree, a stall watchdog ends a run making no forward progress, and compaction stopped discarding the model's own verification records ([#1169](https://github.com/HKUDS/Vibe-Trading/pull/1169)). **Fixed:** multi-year Tencent history silently truncated at 500 bars ([#1154](https://github.com/HKUDS/Vibe-Trading/pull/1154)). **New:** swarm runs replay only their failed subgraph ([#1158](https://github.com/HKUDS/Vibe-Trading/pull/1158), closes [#1157](https://github.com/HKUDS/Vibe-Trading/issues/1157)); Market Watch shows each monitor's latest verdict inline ([#1156](https://github.com/HKUDS/Vibe-Trading/pull/1156), closes [#943](https://github.com/HKUDS/Vibe-Trading/issues/943)); `quantlib` reaches 286 tested functions ([#1159](https://github.com/HKUDS/Vibe-Trading/pull/1159)–[#1168](https://github.com/HKUDS/Vibe-Trading/pull/1168)). Thanks [@wiliao](https://github.com/wiliao), [@cgycorey](https://github.com/cgycorey), [@he-yufeng](https://github.com/he-yufeng), [@BigFishEmily](https://github.com/BigFishEmily), [@santhreal](https://github.com/santhreal), [@SiMinus](https://github.com/SiMinus), and [@alinv0](https://github.com/alinv0)!
 - **2026-08-20** 🚀 **v0.1.14 released** ([Release notes](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.14), `pip install -U vibe-trading-ai`): 272 commits and 74 merged pull requests since 0.1.13. **The headline is that a finished backtest is now something you can read rather than a folder of CSVs.** Run Detail grows four tabs — **Factor Research** (IC series with its mean line, IC statistics, quantile-group equity, and a pairwise IC correlation matrix that existed nowhere before), **Positions** (weight pie/treemap on a date slider, sector net-exposure bars, weight-evolution area — the pie is gross composition and the bars are net, so a long/short pair in one sector nets to zero on the bars while both legs stay visible on the pie), **Tearsheet** (monthly-returns heatmap, annual bars, top-5 drawdowns annotated onto the equity curve), and an interactive **research dashboard** with KPIs, benchmark-relative equity, rolling Sharpe and the full trade ledger. All four read artifacts a run already writes — no new pipeline. A new **Options Lab** page adds an expiry payoff diagram, a spot×IV scenario matrix, portfolio Greeks and a live options chain, computed through the same test-pinned engine the MCP tools use. **Install:** Intel Macs can `pip install vibe-trading-ai` again — `smartmoneyconcepts` pulled in `llvmlite`, which ships no macOS x86_64 wheel from 0.46 on, so every Intel install became a CMake source build; it is now the opt-in `[smc]` extra and the stale `<3.14` cap is gone ([#1035](https://github.com/HKUDS/Vibe-Trading/discussions/1035)). **New:** evidence-gated **Strategy Discovery** across the Alpha Zoo and the SDM store, with a population path, read-time freshness (`fresh`/`aging`/`stale`) and stale rows failing closed out of recommendations; scheduled research that **delivers itself** through a leased outbox and persists each monitor's verdict for the Market Watch list; seven read-only **Futu** endpoints; **Vietnam (HOSE)** as a backtest market; offline **USD-M account reconciliation**; **Novita AI** and **GitHub Copilot** providers; a hosted **MetaTrader 5** data source; **Spanish** and **German** locales; and MCP grows to 74 tools. **Correctness:** the test suite stopped escaping into your real config root, where a full run had been appending synthetic `order_rejected` records to the live hash-chained audit ledger; `build_registry()` no longer returns a short tool list in silence; `xirr` survives long-horizon discount underflow and DCF refuses non-finite inputs instead of returning a negative share price; `.VN` symbols stopped executing under China A-share rules; the backtest archive stopped mixing two runs' artifacts; and a broad grounding pass ended a class of false refusals on dates, ordered lists, identity constants in rate formulas, and order lines read as quotes. Thanks @Shizoqua, @shadowinlife, @pengpengyi92, @cgycorey, @ofeksh-tr, @lorenzozanee, @AndyLongest, @zzz607, @wiliao, @jay79-boop, @Robin1987China, @Echoandelementwebsites, @zhiwuyazhe-fjr, @x-lambda, @sykuang, @straun-repo, @nstavros, @ngoanpv, @miguelangelo78, @lukiod, @jax-novita, @honginp, @he-yufeng, @fixXxerTech, @er-s-an, @daviddaco1, @birdxs, @QCYTSN, @549236606-oss and @1psconstructor.
 <details>
@@ -333,130 +333,28 @@ vibe-trading --upload trades_export.csv
 vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
 ```
 
+---
+
 ## 💼 Local Multi-Broker Portfolio
 
-The Web UI includes an editable, read-only **Portfolio** page. Choose any
-built-in connector profile that declares `account.read`, `positions.read`, and
-`readonly=True`; OAuth read-discovery profiles are supported too. A new
-installation starts with no selected account. **Manage accounts** lets you add,
-disable, rename, and reorder sources, include or exclude cash, and choose USD or
-CNY as the primary display currency.
+The Web UI adds a read-only **Portfolio** page that aggregates holdings across the broker connections you pick. Sources are connection instances of read-only profiles declaring `account.read` and `positions.read` — set them up under **Broker Connectors** in [Detailed Capabilities](#-detailed-capabilities). The IBKR official-MCP profile is not eligible as a source yet.
 
-A manual refresh:
+| Behavior | What you get |
+|----------|--------------|
+| **Per-source provenance** | Every holding names the connection it came from, valued in USD with a CNY conversion. |
+| **Failed sources excluded** | A source that errors is reported as an error and left out of the totals — never carried forward — and the snapshot is marked incomplete. |
+| **Immutable snapshots** | Each refresh is stored in `~/.vibe-trading/portfolio/portfolio.sqlite3`; credential-free settings live in `~/.vibe-trading/portfolio.json` and `connections.json`. |
+| **Export & analysis** | CSV export, plus a sanitized `portfolio_summary` agent tool whose `risk_xray_args` pass straight into `portfolio_risk_xray`. The same snapshot prints in the terminal with `vibe-trading portfolio show` (`refresh` / `sources` alongside). |
 
-- reads each enabled source through the connector registry;
-- values holdings in USD and displays a CNY conversion;
-- stores immutable snapshots in `~/.vibe-trading/portfolio/portfolio.sqlite3`;
-- stores credential-free source preferences in owner-only
-  `~/.vibe-trading/portfolio.json`;
-- isolates source failures, carries forward the last successful source data,
-  and excludes partial snapshots from the history chart;
-- detects the same instrument held across multiple sources;
-- exports the latest holdings as CSV; and
-- exposes a sanitized `portfolio_summary` tool to the built-in Agent.
-
-The Agent context excludes account numbers, credential material, order IDs,
-personal names, and local paths. Portfolio arithmetic is deterministic; the LLM
-only interprets the sanitized result. No portfolio endpoint or tool can place,
-cancel, transfer, or withdraw. The settings API rejects profiles that expose
-write capabilities; credentials stay in their connector-specific stores and
-never enter `portfolio.json`.
-
-### Local connector instances and Codex workflow
-
-Portfolio sources are **connection instances**, not hard-coded broker names:
-
-- a `TradingProfile` in the repository is a reusable, credential-free template;
-- a connection in `~/.vibe-trading/connections.json` is an account instance on
-  one computer; and
-- `portfolio.json` references only the local `connection_id`.
-
-User-installed connectors live outside the Git checkout under
-`~/.vibe-trading/connectors/<connector>/`. Their `connector.json` manifest must
-declare `readonly: true` plus `account.read` and `positions.read`; manifests
-with order, transfer, cancellation, withdrawal, or other write capabilities
-are rejected. Each adapter implements only:
-
-```python
-check_status(credentials=..., config=...)
-get_account_snapshot(credentials=..., config=...)
-get_positions(credentials=..., config=...)
-```
-
-The manifest declares credential field names, but never values. Values entered
-in the local Connection Center are stored through the operating-system secret
-vault (macOS Keychain, Windows Credential Manager, or Linux Secret Service) and
-are never returned by the Web API.
-
-Codex can start a connector from the bundled local-only template:
+Read-only connectors you install yourself stay outside the checkout, in `~/.vibe-trading/connectors/<name>/`: a `connector.json` manifest plus an `adapter.py` implementing `check_status` / `get_account_snapshot` / `get_positions`. A manifest declaring any write capability is rejected.
 
 ```bash
 vibe-trading connector init my-broker --destination /tmp
-# Ask Codex to implement /tmp/my-broker/adapter.py from the official read API docs.
 vibe-trading connector validate /tmp/my-broker
 vibe-trading connector install /tmp/my-broker
 ```
 
-Restart the local server, open **Portfolio → Manage accounts → Connection
-center**, create an account connection from the installed profile, save its
-credentials, test it, and then add that connection to the portfolio. Private
-plugins and credentials remain local; a public, credential-free connector can
-still be contributed separately when useful to the community.
-
-Install the two optional broker SDKs (CCXT for Binance is in the base package):
-
-```bash
-pip install "vibe-trading-ai[ibkr,longbridge]"
-```
-
-Configure IBKR against a running TWS or IB Gateway session with read-only API
-access enabled:
-
-```bash
-vibe-trading connector configure ibkr-live-local-readonly --yes
-vibe-trading connector check ibkr-live-local-readonly
-```
-
-Set the Longbridge credentials in `agent/.env` (or an owner-only
-`~/.vibe-trading/longbridge.json`) and use an API application intended for
-read access:
-
-```dotenv
-LONGBRIDGE_APP_KEY=...
-LONGBRIDGE_APP_SECRET=...
-LONGBRIDGE_ACCESS_TOKEN=...
-```
-
-Store a Binance key with **read-only permission only** in
-`~/.vibe-trading/binance.json` and make the file owner-readable only:
-
-```json
-{
-  "api_key": "...",
-  "api_secret": "...",
-  "profile": "live-readonly",
-  "readonly": true
-}
-```
-
-```bash
-chmod 600 ~/.vibe-trading/binance.json
-vibe-trading connector check binance-live-sdk-readonly
-vibe-trading connector check longbridge-live-sdk-readonly
-```
-
-Build the frontend and start the local server, then open `/portfolio` and press
-**Refresh all**:
-
-```bash
-cd frontend && npm ci && npm run build && cd ..
-vibe-trading serve --port 8899
-```
-
-Historical changes begin with the first successful refresh. Until deposits and
-withdrawals are imported, the history is an asset-value series and must not be
-treated as investment return. Crypto values use USDT as a USD valuation proxy;
-the snapshot records this limitation rather than treating it as an exact FX rate.
+Their credentials go to the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) with `pip install "vibe-trading-ai[keyring]"`, never into the config files. Nothing on this path can place or cancel an order.
 
 ---
 
@@ -1597,7 +1495,7 @@ endpoint in read-only mode. Add this to `~/.vibe-trading/agent.json`:
   "mcpServers": {
     "ibkr": {
       "type": "streamableHttp",
-      "url": "https://api.ibkr.com/v1/api/mcp-public",
+      "url": "https://api.ibkr.com/v1/api/mcp",
       "auth": {
         "type": "oauth",
         "scopes": ["mcp.read"],
@@ -1814,7 +1712,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # Cross-session persistent memory
 │   │   │   └── persistent.py       #   file-based memory (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 97 auto-discovered agent tools
+│   │   ├── tools/                  # 106 auto-discovered agent tools
 │   │   │   ├── backtest_tool.py    #   run backtests
 │   │   │   ├── remember_tool.py    #   cross-session memory (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)
