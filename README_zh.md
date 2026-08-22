@@ -285,7 +285,7 @@ Vibe-Trading 是一个开源研究工作台，用于把金融问题转化为可�
 | **提出交易问题** | 结合工具、数据、文档和可复用 session 上下文的市场研究。 |
 | **回测策略想法** | 策略代码、指标、benchmark 上下文、验证 artifacts 和 run cards。 |
 | **复盘自己的交易** | 券商日志解析、行为诊断、规则提取和 Shadow Account 对比。 |
-| **读取文档与图表** | 用可插拔 OCR 解析 PDF / DOCX / XLSX / PPTX / 图片（`read_document`），并用视觉模型语义化读取图表截图（`analyze_image`）。 |
+| **读取文档与图表** | 用可插拔 OCR 解析 PDF / DOCX / XLSX / PPTX / 图片（`read_document`），并用视觉模型语义化读取图表截图（`analyze_image`）。 Web 聊天可通过文件选择、拖放或剪贴板粘贴一次附加最多五个文件。 |
 | **读取机构持仓与基金底仓** | SEC 13F 持仓（含季度环比变动）、跨市场 ETF 成分穿透、事件合约隐含概率、arXiv / OpenAlex 因子提取 —— 全部只读，基于免费公开数据源。 |
 | **改进重复研究** | 持久记忆和可编辑 skills 将有用流程变成可复用工作流。 |
 | **运行分析师团队** | 面向投资、量化、加密、宏观和风控工作流的多智能体研究评审。 |
@@ -1071,7 +1071,7 @@ vibe-trading serve --port 8899
 | `POST` | `/sessions` | 创建 session |
 | `POST` | `/sessions/{id}/messages` | 发送消息 |
 | `GET` | `/sessions/{id}/events` | SSE event stream |
-| `POST` | `/upload` | 上传 PDF/file |
+| `POST` | `/upload` | 上传文档、数据文件或图片 |
 | `GET` | `/swarm/presets` | 列出 swarm presets |
 | `POST` | `/swarm/runs` | 启动 swarm run |
 | `GET` | `/swarm/runs/{id}/events` | Swarm SSE stream |

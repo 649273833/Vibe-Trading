@@ -286,7 +286,7 @@ Vibe-Trading は、金融に関する問いを実行可能な分析へ変換す�
 | **トレーディングの問いを投げる** | ツール、データ、ドキュメント、再利用可能なセッション文脈を使った市場リサーチ。 |
 | **戦略アイデアをバックテストする** | 戦略コード、指標、ベンチマーク文脈、検証 artifacts、run cards。 |
 | **自分の取引をレビューする** | ブローカー取引日誌の解析、行動診断、ルール抽出、Shadow Account 比較。 |
-| **ドキュメントとチャートを読む** | PDF / DOCX / XLSX / PPTX / 画像を pluggable OCR（`read_document`）で解析し、チャートのスクリーンショットを vision モデル（`analyze_image`）で意味的に読み取る。 |
+| **ドキュメントとチャートを読む** | PDF / DOCX / XLSX / PPTX / 画像を pluggable OCR（`read_document`）で解析し、チャートのスクリーンショットを vision モデル（`analyze_image`）で意味的に読み取る。 Web チャットではファイル選択・ドラッグ＆ドロップ・クリップボード貼り付けで一度に最大 5 ファイルを添付できます。 |
 | **機関投資家の届出とファンドの中身を読む** | SEC 13F 保有（四半期比の増減付き）、市場をまたぐ ETF 構成銘柄、イベント契約の含意確率、arXiv / OpenAlex からの factor 抽出 —— すべて読み取り専用、無料の公開データ。 |
 | **反復リサーチを改善する** | 永続メモリと編集可能な skills により、有用な手順を再利用可能なワークフローへ変換。 |
 | **アナリストチームを走らせる** | 投資、クオンツ、暗号資産、マクロ、リスクのワークフロー向けマルチエージェント・リサーチレビュー。 |
@@ -1082,7 +1082,7 @@ vibe-trading serve --port 8899
 | `POST` | `/sessions` | session を作成 |
 | `POST` | `/sessions/{id}/messages` | message を送信 |
 | `GET` | `/sessions/{id}/events` | SSE event stream |
-| `POST` | `/upload` | PDF/file をアップロード |
+| `POST` | `/upload` | ドキュメント・データファイル・画像をアップロード |
 | `GET` | `/swarm/presets` | swarm presets を一覧表示 |
 | `POST` | `/swarm/runs` | swarm run を開始 |
 | `GET` | `/swarm/runs/{id}/events` | Swarm SSE stream |
