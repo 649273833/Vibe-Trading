@@ -117,9 +117,12 @@ class OptionsChainTool(BaseTool):
                 )
             options = result.get("options") or []
             if not isinstance(options, list) or not options:
+                # The date IS listed (checked above), so this is Yahoo
+                # returning no chain block for it — not an unlisted ticker.
                 return _error(
-                    "no option chain found for the requested expiration — "
-                    "the ticker may have no listed options"
+                    f"no option chain returned for expiration "
+                    f"{normalized_expiration} although Yahoo lists that date; "
+                    f"retry, or pick another expiration from: {dates[:8]}"
                 )
             block = options[0]
             if not isinstance(block, dict):
