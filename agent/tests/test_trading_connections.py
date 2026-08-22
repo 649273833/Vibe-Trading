@@ -50,14 +50,14 @@ def test_remote_call_requires_cached_oauth(monkeypatch: pytest.MonkeyPatch) -> N
     assert "connector authorize robinhood-live-mcp" in result["error"]
 
 
-def test_ibkr_official_profile_maps_verified_reads_without_write_tools() -> None:
-    """IBKR official MCP maps only the read tools verified by the adapter."""
+def test_ibkr_official_profile_does_not_advertise_unknown_generic_reads() -> None:
+    """IBKR official MCP stays honest until stable remote tool names are known."""
     profile = profiles.profile_by_id("ibkr-live-official-mcp-readonly")
 
     assert profile.capabilities == ("mcp.read.discovery",)
-    assert service._remote_tool_name("ibkr", "account") == "get_account_summary"
-    assert service._remote_tool_name("ibkr", "positions") == "get_account_positions"
-    assert service._remote_tool_name("ibkr", "place_order") is None
+    result = service.get_account(profile.id)
+    assert result["status"] == "error"
+    assert "does not support" in result["error"]
 
 
 def test_connector_profile_id_for_broker_prefers_live_remote_mcp() -> None:

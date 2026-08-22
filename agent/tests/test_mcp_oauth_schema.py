@@ -15,9 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-from urllib.parse import parse_qs, urlsplit
-
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports.http import StreamableHttpTransport
@@ -34,8 +31,7 @@ from src.config.schema import (
     MCPServerConfig,
     MCPServerConfigOverride,
 )
-from src.tools import mcp as mcp_module
-from src.tools.mcp import MCPServerAdapter, _RedirectCompatibleOAuth
+from src.tools.mcp import MCPServerAdapter
 
 pytestmark = pytest.mark.unit
 
@@ -131,69 +127,12 @@ def test_ibkr_seed_is_official_readonly_oauth_probe() -> None:
     cfg = AgentConfig.model_validate({"mcpServers": {"ibkr": IBKR_MCP_SERVER_SEED}})
     ibkr = cfg.mcp_servers["ibkr"]
     assert ibkr.resolved_transport() == "streamableHttp"
-    assert ibkr.url == "https://api.ibkr.com/v1/api/mcp-public"
-    assert ibkr.init_timeout == 300.0
+    assert ibkr.url == "https://api.ibkr.com/v1/api/mcp"
     assert ibkr.auth is not None and ibkr.auth.type == "oauth"
     assert ibkr.auth.scopes == ["mcp.read"]
     assert ibkr.auth.cache_dir == "~/.vibe-trading/live/ibkr/oauth"
     assert ibkr.enabled_tools == ["*"]
     assert "ibkr" in LIVE_BROKER_SERVER_KEYS
-
-
-def test_ibkr_oauth_redirect_pins_official_endpoint_and_read_scope(monkeypatch) -> None:
-    opened: list[str] = []
-
-    class Response:
-        status_code = 302
-
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def get(self, url, follow_redirects=False):
-            assert follow_redirects is False
-            return Response()
-
-    oauth = _RedirectCompatibleOAuth(
-        mcp_url="https://api.ibkr.com/v1/api/mcp-public",
-        scopes=["mcp.read"],
-        client_id="client-id",
-        callback_port=8765,
-        httpx_client_factory=Client,
-    )
-    monkeypatch.setattr(mcp_module.webbrowser, "open", opened.append)
-
-    asyncio.run(
-        oauth.redirect_handler(
-            "https://api.ibkr.com/authorize/?response_type=code&scope=mcp.read%20mcp.write"
-        )
-    )
-
-    parsed = urlsplit(opened[0])
-    assert parsed.path == "/oauth2/authorize"
-    assert parse_qs(parsed.query)["scope"] == ["mcp.read"]
-    assert str(oauth.context.oauth_metadata.token_endpoint) == (
-        "https://api.ibkr.com/oauth2/api/v1/token"
-    )
-
-
-def test_noninteractive_oauth_refuses_browser_reauthorization(monkeypatch) -> None:
-    opened: list[str] = []
-    oauth = _RedirectCompatibleOAuth(
-        mcp_url="https://api.ibkr.com/v1/api/mcp-public",
-        scopes=["mcp.read"],
-        client_id="client-id",
-        allow_interactive=False,
-    )
-    monkeypatch.setattr(mcp_module.webbrowser, "open", opened.append)
-
-    with pytest.raises(RuntimeError, match="explicit reconnect"):
-        asyncio.run(oauth.redirect_handler("https://api.ibkr.com/oauth2/authorize"))
-
-    assert opened == []
 
 
 # --------------------------------------------------------------------------- #

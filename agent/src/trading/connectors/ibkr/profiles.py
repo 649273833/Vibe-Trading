@@ -37,8 +37,8 @@ IBKR_PROFILES: tuple[TradingProfile, ...] = (
         readonly=True,
         config={"server": "ibkr"},
         notes=(
-            "Uses IBKR's official public MCP endpoint with OAuth mcp.read scope only. "
-            "No TWS or IB Gateway process is required."
+            "Requires IBKR official MCP OAuth approval. Generic account/position tools "
+            "stay disabled until IBKR publishes stable read tool names."
         ),
     ),
 )

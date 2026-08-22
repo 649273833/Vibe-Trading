@@ -1230,7 +1230,23 @@ def _call_remote(
     *,
     interactive_oauth: bool = True,
 ) -> dict[str, Any]:
-    """Call a known read operation on a remote MCP connector profile."""
+    """Call a known read operation on a remote MCP connector profile.
+
+    Args:
+        profile: Connector profile whose ``transport`` is a remote MCP server.
+        operation: Logical read operation ("account", "positions", "orders",
+            "quote"); mapped to a connector-specific remote tool name.
+        arguments: Logical arguments for the operation, before the
+            connector-specific wire mapping is applied.
+        interactive_oauth: When False, an expired or missing OAuth grant raises
+            instead of opening a browser on the host. Callers that run without a
+            user in front of them (API handlers, schedulers, portfolio refresh)
+            pass False.
+
+    Returns:
+        The remote tool envelope with profile metadata attached, or an error /
+        ``not_authorized`` envelope when the profile cannot be called.
+    """
     from src.config.loader import load_agent_config
     from src.live.registry import has_cached_oauth_token
     from src.tools.mcp import MCPServerAdapter
@@ -1286,16 +1302,14 @@ def _call_remote(
             ),
         }
 
+    # The interactive default is left implicit so the common path keeps the
+    # two-positional-argument construction that adapter substitutes rely on.
     adapter = (
         MCPServerAdapter(server_name, server)
         if interactive_oauth
         else MCPServerAdapter(server_name, server, interactive_oauth=False)
     )
     call_result = adapter.call_tool(remote_name, _remote_arguments(profile.connector, operation, arguments))
-    if profile.connector == "ibkr":
-        from src.trading.connectors.ibkr.mcp import normalize_result
-
-        call_result = normalize_result(operation, call_result)
     account_number = arguments.get("account_number")
     if account_number:
         call_result = dict(call_result)
@@ -1309,10 +1323,6 @@ def _remote_tool_name(connector: str, operation: str) -> str | None:
         from src.trading.connectors.robinhood.mcp import remote_tool_name
 
         return remote_tool_name(operation)
-    if connector == "ibkr":
-        from src.trading.connectors.ibkr.mcp import remote_tool_name
-
-        return remote_tool_name(operation)
     return None
 
 
@@ -1320,10 +1330,6 @@ def _remote_arguments(connector: str, operation: str, arguments: dict[str, Any])
     """Normalize generic arguments for a remote MCP operation."""
     if connector == "robinhood":
         from src.trading.connectors.robinhood.mcp import remote_arguments
-
-        return remote_arguments(operation, arguments)
-    if connector == "ibkr":
-        from src.trading.connectors.ibkr.mcp import remote_arguments
 
         return remote_arguments(operation, arguments)
     return {}
