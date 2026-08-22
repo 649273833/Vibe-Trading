@@ -246,3 +246,69 @@ def test_worker_prompt_prioritizes_get_market_data_for_ohlcv():
 
     assert "Market Data Tool Policy" in prompt
     assert "call `get_market_data` before writing raw provider scripts" in prompt
+
+
+def test_market_data_tool_rejects_empty_codes():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=[], start_date="2026-01-01", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "codes must be a non-empty list of strings"}
+
+
+def test_market_data_tool_rejects_blank_code():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=[""], start_date="2026-01-01", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "every code must be a non-empty string"}
+
+
+def test_market_data_tool_rejects_non_list_codes():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes="AAPL.US", start_date="2026-01-01", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "codes must be a non-empty list of strings"}
+
+
+def test_market_data_tool_rejects_missing_start_date():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "start_date must be a non-empty YYYY-MM-DD string"}
+
+
+def test_market_data_tool_rejects_malformed_dates():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="banana", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "start_date and end_date must be valid YYYY-MM-DD dates"}
+
+
+def test_market_data_tool_rejects_inverted_date_range():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-08-21", end_date="2026-08-01"))
+    assert out == {"ok": False, "error": "start_date (2026-08-21) must not be after end_date (2026-08-01)"}
+
+
+def test_market_data_tool_rejects_whitespace_only_code():
+    from src.tools.market_data_tool import MarketDataTool
+
+    # Validation strips codes before the emptiness check, so a whitespace-only
+    # code is caught after stripping.
+    out = json.loads(MarketDataTool().execute(codes=["   "], start_date="2026-01-01", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "every code must be a non-empty string"}
+
+
+def test_market_data_tool_rejects_compact_date_form():
+    """fromisoformat accepts YYYYMMDD on 3.11+; loaders do not. Reject it."""
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="20260101", end_date="2026-02-01"))
+    assert out == {"ok": False, "error": "start_date and end_date must be valid YYYY-MM-DD dates"}
+
+
+def test_market_data_tool_rejects_unknown_source():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", source="bogus"))
+    assert out == {"ok": False, "error": "source must be one of ['auto', 'longbridge', 'yfinance', 'yahoo', 'okx', 'ccxt', 'tushare', 'baostock', 'tencent', 'akshare', 'mootdx', 'eastmoney', 'sina', 'stooq', 'finnhub', 'alphavantage', 'tiingo', 'fmp', 'mt5', 'pykrx']"}

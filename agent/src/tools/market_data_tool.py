@@ -2,10 +2,37 @@
 
 from __future__ import annotations
 
+import json
+import re
+from datetime import date
+
 from typing import Any
 
 from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
+
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _error(message: str) -> str:
+    return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
+
+
+def _valid_iso_date(value: str) -> bool:
+    """True only for strict ``YYYY-MM-DD`` calendar dates.
+
+    ``date.fromisoformat`` alone is not enough: on Python 3.11+ it also
+    accepts the compact ``YYYYMMDD`` form, which loaders downstream reject
+    or mis-parse. Enforce the exact shape first, then the calendar.
+    """
+    if not _ISO_DATE_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 class MarketDataTool(BaseTool):
@@ -95,11 +122,48 @@ class MarketDataTool(BaseTool):
     repeatable = True
 
     def execute(self, **kwargs: Any) -> str:
+        """Validate inputs, then fetch and return strict JSON.
+
+        Args:
+            **kwargs: ``codes``, ``start_date``, ``end_date``, optional
+                ``source``, ``interval``, ``max_rows``.
+
+        Returns:
+            Strict JSON envelope with per-symbol OHLCV panels plus
+            ``_provenance``, or an error envelope on invalid inputs.
+        """
+        codes = kwargs.get("codes")
+        if not isinstance(codes, list) or not codes:
+            return _error("codes must be a non-empty list of strings")
+        if any(not isinstance(code, str) or not code.strip() for code in codes):
+            return _error("every code must be a non-empty string")
+        codes = [code.strip() for code in codes]
+
+        start_date = kwargs.get("start_date")
+        end_date = kwargs.get("end_date")
+        if not isinstance(start_date, str) or not start_date.strip():
+            return _error("start_date must be a non-empty YYYY-MM-DD string")
+        if not isinstance(end_date, str) or not end_date.strip():
+            return _error("end_date must be a non-empty YYYY-MM-DD string")
+        start_date = start_date.strip()
+        end_date = end_date.strip()
+        if not _valid_iso_date(start_date) or not _valid_iso_date(end_date):
+            return _error("start_date and end_date must be valid YYYY-MM-DD dates")
+        if start_date > end_date:
+            return _error(
+                f"start_date ({start_date}) must not be after end_date ({end_date})"
+            )
+
+        source = kwargs.get("source", "auto")
+        source_enum = self.parameters["properties"]["source"]["enum"]
+        if source not in source_enum:
+            return _error(f"source must be one of {list(source_enum)}")
+
         return fetch_market_data_json(
-            codes=kwargs["codes"],
-            start_date=kwargs["start_date"],
-            end_date=kwargs["end_date"],
-            source=kwargs.get("source", "auto"),
+            codes=codes,
+            start_date=start_date,
+            end_date=end_date,
+            source=source,
             interval=kwargs.get("interval", "1D"),
             max_rows=kwargs.get("max_rows", DEFAULT_MAX_ROWS),
             include_provenance=True,
