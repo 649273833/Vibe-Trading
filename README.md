@@ -333,6 +333,131 @@ vibe-trading --upload trades_export.csv
 vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
 ```
 
+## 💼 Local Multi-Broker Portfolio
+
+The Web UI includes an editable, read-only **Portfolio** page. Choose any
+built-in connector profile that declares `account.read`, `positions.read`, and
+`readonly=True`; OAuth read-discovery profiles are supported too. A new
+installation starts with no selected account. **Manage accounts** lets you add,
+disable, rename, and reorder sources, include or exclude cash, and choose USD or
+CNY as the primary display currency.
+
+A manual refresh:
+
+- reads each enabled source through the connector registry;
+- values holdings in USD and displays a CNY conversion;
+- stores immutable snapshots in `~/.vibe-trading/portfolio/portfolio.sqlite3`;
+- stores credential-free source preferences in owner-only
+  `~/.vibe-trading/portfolio.json`;
+- isolates source failures, carries forward the last successful source data,
+  and excludes partial snapshots from the history chart;
+- detects the same instrument held across multiple sources;
+- exports the latest holdings as CSV; and
+- exposes a sanitized `portfolio_summary` tool to the built-in Agent.
+
+The Agent context excludes account numbers, credential material, order IDs,
+personal names, and local paths. Portfolio arithmetic is deterministic; the LLM
+only interprets the sanitized result. No portfolio endpoint or tool can place,
+cancel, transfer, or withdraw. The settings API rejects profiles that expose
+write capabilities; credentials stay in their connector-specific stores and
+never enter `portfolio.json`.
+
+### Local connector instances and Codex workflow
+
+Portfolio sources are **connection instances**, not hard-coded broker names:
+
+- a `TradingProfile` in the repository is a reusable, credential-free template;
+- a connection in `~/.vibe-trading/connections.json` is an account instance on
+  one computer; and
+- `portfolio.json` references only the local `connection_id`.
+
+User-installed connectors live outside the Git checkout under
+`~/.vibe-trading/connectors/<connector>/`. Their `connector.json` manifest must
+declare `readonly: true` plus `account.read` and `positions.read`; manifests
+with order, transfer, cancellation, withdrawal, or other write capabilities
+are rejected. Each adapter implements only:
+
+```python
+check_status(credentials=..., config=...)
+get_account_snapshot(credentials=..., config=...)
+get_positions(credentials=..., config=...)
+```
+
+The manifest declares credential field names, but never values. Values entered
+in the local Connection Center are stored through the operating-system secret
+vault (macOS Keychain, Windows Credential Manager, or Linux Secret Service) and
+are never returned by the Web API.
+
+Codex can start a connector from the bundled local-only template:
+
+```bash
+vibe-trading connector init my-broker --destination /tmp
+# Ask Codex to implement /tmp/my-broker/adapter.py from the official read API docs.
+vibe-trading connector validate /tmp/my-broker
+vibe-trading connector install /tmp/my-broker
+```
+
+Restart the local server, open **Portfolio → Manage accounts → Connection
+center**, create an account connection from the installed profile, save its
+credentials, test it, and then add that connection to the portfolio. Private
+plugins and credentials remain local; a public, credential-free connector can
+still be contributed separately when useful to the community.
+
+Install the two optional broker SDKs (CCXT for Binance is in the base package):
+
+```bash
+pip install "vibe-trading-ai[ibkr,longbridge]"
+```
+
+Configure IBKR against a running TWS or IB Gateway session with read-only API
+access enabled:
+
+```bash
+vibe-trading connector configure ibkr-live-local-readonly --yes
+vibe-trading connector check ibkr-live-local-readonly
+```
+
+Set the Longbridge credentials in `agent/.env` (or an owner-only
+`~/.vibe-trading/longbridge.json`) and use an API application intended for
+read access:
+
+```dotenv
+LONGBRIDGE_APP_KEY=...
+LONGBRIDGE_APP_SECRET=...
+LONGBRIDGE_ACCESS_TOKEN=...
+```
+
+Store a Binance key with **read-only permission only** in
+`~/.vibe-trading/binance.json` and make the file owner-readable only:
+
+```json
+{
+  "api_key": "...",
+  "api_secret": "...",
+  "profile": "live-readonly",
+  "readonly": true
+}
+```
+
+```bash
+chmod 600 ~/.vibe-trading/binance.json
+vibe-trading connector check binance-live-sdk-readonly
+vibe-trading connector check longbridge-live-sdk-readonly
+```
+
+Build the frontend and start the local server, then open `/portfolio` and press
+**Refresh all**:
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+vibe-trading serve --port 8899
+```
+
+Historical changes begin with the first successful refresh. Until deposits and
+withdrawals are imported, the history is an asset-value series and must not be
+treated as investment return. Crypto values use USDT as a USD valuation proxy;
+the snapshot records this limitation rather than treating it as an exact FX rate.
+
 ---
 
 ## 🧪 Research Workflow
@@ -1472,7 +1597,7 @@ endpoint in read-only mode. Add this to `~/.vibe-trading/agent.json`:
   "mcpServers": {
     "ibkr": {
       "type": "streamableHttp",
-      "url": "https://api.ibkr.com/v1/api/mcp",
+      "url": "https://api.ibkr.com/v1/api/mcp-public",
       "auth": {
         "type": "oauth",
         "scopes": ["mcp.read"],

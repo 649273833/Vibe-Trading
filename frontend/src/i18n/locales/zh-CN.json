@@ -8,6 +8,7 @@
     "runtime": "交易监控",
     "scheduled": "定时任务",
     "reports": "报告",
+    "portfolio": "持仓",
     "alphaZoo": "Alpha 因子库",
     "settings": "设置",
     "correlation": "相关性矩阵",

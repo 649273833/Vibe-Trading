@@ -335,6 +335,52 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 
 ---
 
+## 💼 本地多账户持仓
+
+Web UI 提供可编辑的只读 **持仓** 页面。点击“管理账户”，即可从仓库已有的只读连接 Profile 中添加、停用、重命名和排序账户，设置是否计入现金，并选择 USD 或 CNY 作为主要显示货币。新安装默认不选择任何账户。
+
+手动刷新会依次读取所有已启用账户，统一换算 USD/CNY，并把不可变快照保存到 `~/.vibe-trading/portfolio/portfolio.sqlite3`。账户选择等不含密钥的偏好保存在权限为仅当前用户可读写的 `~/.vibe-trading/portfolio.json`。单个账户失败时会继续使用该账户最后一次成功数据；不完整快照不会进入历史曲线。
+
+持仓设置只接受同时声明账户读取、持仓读取和只读能力的连接 Profile，拒绝交易型 Profile。券商密钥仍保留在各连接器自己的凭证存储中，不会进入持仓配置。持仓接口不能下单、撤单、转账或提现；发送给模型的分析上下文也不包含账号、密钥、订单 ID、个人姓名或本机路径。
+
+### 本地连接实例与 Codex 接入流程
+
+持仓数据源现在是“本地连接实例”，而不是写死的券商名称：
+
+- 仓库里的 `TradingProfile` 是不含凭证、可复用的连接模板；
+- `~/.vibe-trading/connections.json` 记录这台电脑上的账户连接；
+- `portfolio.json` 只引用本地 `connection_id`。
+
+开发者自己的连接器安装在 Git 仓库外的
+`~/.vibe-trading/connectors/<connector>/`。其中 `connector.json` 必须声明
+`readonly: true`、`account.read` 和 `positions.read`；如果出现下单、撤单、
+转账、提现或其他写能力，框架会拒绝加载。连接器只需实现三个统一函数：
+
+```python
+check_status(credentials=..., config=...)
+get_account_snapshot(credentials=..., config=...)
+get_positions(credentials=..., config=...)
+```
+
+清单文件只声明需要哪些凭证字段，不保存值。在网页“连接中心”输入的值通过
+操作系统凭证库保存（macOS 钥匙串、Windows Credential Manager 或 Linux Secret
+Service），Web API 不会返回凭证明文。
+
+Codex 可以用仓库提供的模板快速开始：
+
+```bash
+vibe-trading connector init my-broker --destination /tmp
+# 让 Codex 根据券商官方只读 API 文档实现 /tmp/my-broker/adapter.py
+vibe-trading connector validate /tmp/my-broker
+vibe-trading connector install /tmp/my-broker
+```
+
+重启本地服务后，打开“持仓 → 管理账户 → 连接中心”，从新安装的 Profile 创建
+本机账户连接、保存凭证、测试连接，再加入持仓汇总。私人插件和密钥始终只留在
+本机；如果某个连接器适合社区，也可以单独提交一份不含任何凭证的公共实现。
+
+---
+
 ## 🧪 Research Workflow
 
 多数运行都会遵循同一条证据路径：路由请求、加载正确的市场上下文、执行工具、验证输出，并保持 artifacts 可检查。
@@ -1366,7 +1412,7 @@ Vibe-Trading 可以以只读模式直连 Interactive Brokers 的官方远程 MCP
   "mcpServers": {
     "ibkr": {
       "type": "streamableHttp",
-      "url": "https://api.ibkr.com/v1/api/mcp",
+      "url": "https://api.ibkr.com/v1/api/mcp-public",
       "auth": {
         "type": "oauth",
         "scopes": ["mcp.read"],
