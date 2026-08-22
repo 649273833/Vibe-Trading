@@ -919,6 +919,7 @@ class SwarmRuntime:
                     run_id=run.id,
                     include_shell_tools=include_shell_tools,
                     grounding_block=grounding_block,
+                    cancel_event=cancel_event,
                 )
                 futures[future] = tid
                 per_task_budget = agent_spec.timeout_seconds * (agent_spec.max_retries + 1)
@@ -977,6 +978,7 @@ class SwarmRuntime:
         run_id: str,
         include_shell_tools: bool = False,
         grounding_block: str = "",
+        cancel_event: threading.Event | None = None,
     ) -> WorkerResult:
         """Run a worker with automatic retry on failure.
 
@@ -996,6 +998,10 @@ class SwarmRuntime:
             grounding_block: Pre-rendered "Ground Truth" markdown spliced
                 into the worker's system prompt. Empty string when no
                 symbols were extracted from user_vars.
+            cancel_event: Optional cancellation signal from cancel_run().
+                Forwarded to run_worker() so a signalled cancellation reaches
+                an already-dispatched worker. A "cancelled" result is never
+                retried (see the status check below).
 
         Returns:
             WorkerResult from the last attempt.
@@ -1044,6 +1050,7 @@ class SwarmRuntime:
                 include_shell_tools=include_shell_tools,
                 grounding_block=grounding_block,
                 agent_config=self._agent_config,
+                cancel_event=cancel_event,
             )
 
             cumulative_input_tokens += result.input_tokens
