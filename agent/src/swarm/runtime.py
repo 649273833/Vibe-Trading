@@ -508,6 +508,37 @@ class SwarmRuntime:
                                 },
                             ),
                         )
+                    elif result.status == "cancelled":
+                        # The worker stopped because cancel_run() was
+                        # signalled mid-flight; that is a user stop, not a
+                        # worker error. Persist it as cancelled — the same
+                        # terminal state _cancel_remaining_tasks gives tasks
+                        # that never started — so the dashboard, the run
+                        # summary and a later resume all see one consistent
+                        # story instead of a spurious "worker did not
+                        # complete" failure.
+                        all_succeeded = False
+                        task_store.update_status(
+                            tid,
+                            TaskStatus.cancelled,
+                            summary=result.summary,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            artifacts=result.artifact_paths,
+                            worker_iterations=result.iterations,
+                        )
+                        self._emit_event(
+                            run_id,
+                            self._make_event(
+                                "task_cancelled",
+                                task_id=tid,
+                                data={
+                                    "status": result.status,
+                                    "iterations": result.iterations,
+                                    "input_tokens": result.input_tokens,
+                                    "output_tokens": result.output_tokens,
+                                },
+                            ),
+                        )
                     else:
                         all_succeeded = False
                         task_store.update_status(

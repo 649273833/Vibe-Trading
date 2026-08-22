@@ -87,3 +87,32 @@ def test_run_worker_receives_cancel_event_kwarg(tmp_path, monkeypatch):
     runtime._execute_run(run, cancel_event)
 
     assert received["cancel_event"] is cancel_event
+
+
+def test_cancelled_worker_result_persists_as_cancelled_task(tmp_path, monkeypatch):
+    """A worker that stopped because cancel_run() fired must land as a
+    *cancelled* task with a task_cancelled event — the generic "worker did
+    not complete" branch would otherwise relabel a user stop as a failure."""
+    from src.swarm.models import RunStatus, TaskStatus
+    from src.swarm.task_store import TaskStore
+
+    def cancelling_worker(agent_spec, task, **kwargs):
+        kwargs["cancel_event"].set()
+        return WorkerResult(status="cancelled", summary="stopped on request", iterations=2)
+
+    monkeypatch.setattr(rt, "run_worker", cancelling_worker)
+    store, runtime, run = _make_run(tmp_path)
+    cancel_event = threading.Event()
+
+    runtime._execute_run(run, cancel_event)
+
+    task = TaskStore(store.run_dir(run.id)).load_task("t1")
+    assert task.status == TaskStatus.cancelled, task.status
+    assert not task.error, f"a cancelled task must carry no failure error, got {task.error!r}"
+    assert task.worker_iterations == 2
+
+    event_types = [e.type for e in store.read_events(run.id)]
+    assert "task_cancelled" in event_types, event_types
+    assert "task_failed" not in event_types, event_types
+
+    assert store.load_run(run.id).status == RunStatus.cancelled
