@@ -18,21 +18,36 @@ from src.trading.service import check_connection
 
 
 class ConnectionRequest(BaseModel):
+    """Payload creating or renaming a read-only connection instance."""
+
     id: str = Field(min_length=1, max_length=80)
     profile_id: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=80)
 
 
 class CredentialRequest(BaseModel):
+    """Payload carrying credential values for one connection instance."""
+
     values: dict[str, str] = Field(default_factory=dict)
 
 
 def register_connection_routes(app: FastAPI) -> None:
+    """Register the auth-gated read-only connection endpoints.
+
+    Every route is read-only with respect to the broker: the API exposes
+    connection metadata, credential presence, and a connectivity check, and
+    never reaches an order path.
+
+    Args:
+        app: FastAPI application the routes are attached to.
+    """
+
     def store() -> ConnectionStore:
         return ConnectionStore()
 
     @app.get("/api/connections", dependencies=[Depends(require_auth)])
     def list_connections():
+        """List connection instances, eligible profiles, and the plugin root."""
         return {
             "status": "ok",
             "connections": store().public_list(),
@@ -45,6 +60,7 @@ def register_connection_routes(app: FastAPI) -> None:
         dependencies=[Depends(require_settings_write_auth)],
     )
     def create_connection(payload: ConnectionRequest):
+        """Create one connection instance from an eligible read-only profile."""
         try:
             instance = store().create(payload.id, payload.profile_id, payload.label)
             return {"status": "ok", "connection": instance.to_dict()}
@@ -56,6 +72,7 @@ def register_connection_routes(app: FastAPI) -> None:
         dependencies=[Depends(require_settings_write_auth)],
     )
     def update_connection(connection_id: str, payload: ConnectionRequest):
+        """Rename a connection instance; its id and profile are immutable."""
         if payload.id.strip().lower() != connection_id.strip().lower():
             raise HTTPException(
                 status_code=400, detail="connection id cannot be changed"
@@ -83,6 +100,7 @@ def register_connection_routes(app: FastAPI) -> None:
         dependencies=[Depends(require_settings_write_auth)],
     )
     def save_connection_credentials(connection_id: str, payload: CredentialRequest):
+        """Store credentials in the OS vault and return presence flags only."""
         try:
             instance = store()
             connection = instance.get(connection_id)
@@ -107,6 +125,7 @@ def register_connection_routes(app: FastAPI) -> None:
         dependencies=[Depends(require_auth)],
     )
     def check_local_connection(connection_id: str):
+        """Run the connector's read-only status check for one connection."""
         try:
             connection = store().get(connection_id)
             report = check_connection(
@@ -126,6 +145,7 @@ def register_connection_routes(app: FastAPI) -> None:
         dependencies=[Depends(require_settings_write_auth)],
     )
     def delete_connection(connection_id: str):
+        """Delete a connection and its secrets once no portfolio source uses it."""
         try:
             selected = {
                 source.connection_id

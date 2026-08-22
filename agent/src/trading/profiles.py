@@ -47,7 +47,14 @@ def config_path() -> Path:
 
 
 def list_profiles() -> list[TradingProfile]:
-    """Return built-in profiles plus operator-installed local read-only plugins."""
+    """Return built-in profiles plus operator-installed local read-only plugins.
+
+    Returns:
+        The built-in profiles, followed by the profile of every valid plugin
+        installed under the user's plugin root. A plugin never shadows a
+        built-in profile id, and an invalid manifest is skipped rather than
+        breaking the registry.
+    """
     from src.trading.local_plugins import discover_plugins
 
     plugins, _ = discover_plugins()

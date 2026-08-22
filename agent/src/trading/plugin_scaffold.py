@@ -7,7 +7,12 @@ import re
 import shutil
 from pathlib import Path
 
-from src.trading.local_plugins import MANIFEST_FILENAME, parse_manifest, plugin_root
+from src.trading.local_plugins import (
+    MANIFEST_FILENAME,
+    LocalConnectorPlugin,
+    parse_manifest,
+    plugin_root,
+)
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
@@ -42,7 +47,20 @@ def get_positions(*, credentials: Mapping[str, str], config: Mapping[str, Any]) 
 
 
 def scaffold_connector(connector_id: str, destination: Path) -> Path:
-    """Create a safe local connector starter for Codex or a developer to fill in."""
+    """Create a read-only local connector starter for a developer to fill in.
+
+    Args:
+        connector_id: Lowercase connector id used for the directory name, the
+            generated profile id, and the manifest connector field.
+        destination: Parent directory the template directory is created in.
+
+    Returns:
+        The created template directory.
+
+    Raises:
+        ValueError: If the connector id is not lowercase letters, numbers and
+            dashes, or the destination directory already exists.
+    """
     clean = str(connector_id or "").strip().lower()
     if not _ID_RE.fullmatch(clean):
         raise ValueError("connector id must use lowercase letters, numbers, and dashes")
@@ -87,20 +105,43 @@ def scaffold_connector(connector_id: str, destination: Path) -> Path:
     (target / "adapter.py").write_text(_ADAPTER_TEMPLATE, encoding="utf-8")
     (target / "README.md").write_text(
         f"# {clean} local connector\n\n"
-        "This directory is local-only. Implement the official read endpoints in `adapter.py`, "
+        "This directory is local-only. Implement `adapter.py` from the broker's official "
+        "read-only API docs, "
         "then run `vibe-trading connector validate .` and `vibe-trading connector install .`.\n",
         encoding="utf-8",
     )
     return target
 
 
-def validate_connector(directory: Path):
-    """Validate a local connector directory without importing its Python code."""
+def validate_connector(directory: Path) -> LocalConnectorPlugin:
+    """Validate a local connector directory without importing its Python code.
+
+    Args:
+        directory: Directory holding a ``connector.json`` manifest.
+
+    Returns:
+        The validated plugin described by the manifest.
+
+    Raises:
+        ValueError: If the manifest is missing, malformed, or declares
+            anything beyond read-only capabilities.
+    """
     return parse_manifest(directory.expanduser().resolve() / MANIFEST_FILENAME)
 
 
 def install_connector(directory: Path) -> Path:
-    """Install a validated local connector under the user's runtime directory."""
+    """Install a validated local connector under the user's runtime directory.
+
+    Args:
+        directory: Directory holding the connector to install.
+
+    Returns:
+        The installed directory under the operator's plugin root.
+
+    Raises:
+        ValueError: If the manifest fails validation, or a connector with the
+            same id is already installed.
+    """
     plugin = validate_connector(directory)
     root = plugin_root()
     root.mkdir(parents=True, exist_ok=True)

@@ -49,7 +49,6 @@ dependencies = [
     "ccxt>=4.5.71",
     "aiohttp>=3.14.3",
     "cryptography>=50.0.0",
-    "keyring>=25.0.0",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "websockets>=12.0",
@@ -163,6 +162,13 @@ smc = [
     # macOS x86_64 wheel from 0.46 on: as a base dependency it turned every
     # Intel-Mac install into a source build that needs cmake (discussion #1035).
     "smartmoneyconcepts>=0.0.27",
+]
+keyring = [
+    # OS credential vault (Keychain / Credential Manager / Secret Service) for
+    # user-installed local read-only connector plugins. CredentialStore imports
+    # it lazily and raises an actionable hint naming this extra, so a base
+    # install stays lean for users who configure no local connector.
+    "keyring>=25.0.0",
 ]
 dingtalk = [
     "dingtalk-stream>=0.24.0",
