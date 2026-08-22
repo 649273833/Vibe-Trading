@@ -284,7 +284,7 @@ It is designed for research, simulation, and backtesting — and, when you choos
 | **Ask a trading question** | Market research with tools, data, documents, and reusable session context. |
 | **Backtest a strategy idea** | Strategy code, metrics, benchmark context, validation artifacts, and run cards. |
 | **Review your own trades** | Broker-journal parsing, behavior diagnostics, rule extraction, and Shadow Account comparisons. |
-| **Read documents & charts** | Parse PDF / DOCX / XLSX / PPTX / images with pluggable OCR (`read_document`), and read chart screenshots semantically with a vision model (`analyze_image`). |
+| **Read documents & charts** | Parse PDF / DOCX / XLSX / PPTX / images with pluggable OCR (`read_document`), and read chart screenshots semantically with a vision model (`analyze_image`). Web chat accepts up to five files at once through the picker, drag-and-drop, or clipboard paste. |
 | **Read institutional filings & fund books** | SEC 13F manager books with quarter-over-quarter position diffs, ETF constituents across markets, event-contract implied probability, and arXiv / OpenAlex factor extraction — all read-only, on free public sources. |
 | **Improve repeated research** | Persistent memory and editable skills turn useful routines into reusable workflows. |
 | **Run analyst teams** | Multi-agent research reviews for investment, quant, crypto, macro, and risk workflows. |
@@ -1156,7 +1156,7 @@ vibe-trading serve --port 8899
 | `POST` | `/sessions` | Create session |
 | `POST` | `/sessions/{id}/messages` | Send message |
 | `GET` | `/sessions/{id}/events` | SSE event stream |
-| `POST` | `/upload` | Upload PDF/file |
+| `POST` | `/upload` | Upload a document, data file, or image |
 | `GET` | `/swarm/presets` | List swarm presets |
 | `POST` | `/swarm/runs` | Start swarm run |
 | `GET` | `/swarm/runs/{id}/events` | Swarm SSE stream |
