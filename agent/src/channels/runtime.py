@@ -184,6 +184,8 @@ class ChannelRuntime:
                 return
 
             session_id = self._session_for(msg)
+            if await self._handle_scheduled_confirmation(msg, session_id):
+                return
             result = await self.session_service.send_message(
                 session_id,
                 msg.content,
@@ -191,11 +193,32 @@ class ChannelRuntime:
             )
             attempt_id = result.get("attempt_id") if isinstance(result, dict) else None
             reply = await self._wait_for_reply(session_id, attempt_id)
+            reply_content = reply.content
+            try:
+                from src.scheduled_research.proposals import latest_pending_for_session
+
+                proposal = latest_pending_for_session(session_id)
+            except Exception:  # noqa: BLE001 - confirmation UI must not hide the reply
+                proposal = None
+            if proposal is not None:
+                job = proposal.get("job") or {}
+                schedule = job.get("schedule") or {}
+                delivery = job.get("delivery") or {}
+                action = "创建" if proposal.get("operation") == "create" else "取消"
+                reply_content = (
+                    f"{reply_content}\n\n"
+                    f"【定时研究确认 · {action}】\n"
+                    f"任务：{job.get('title') or job.get('id') or '?'}\n"
+                    f"节奏：{schedule.get('expression') or '-'} · "
+                    f"{schedule.get('timezone') or 'UTC'}\n"
+                    f"投递：{delivery.get('target_label') or '仅应用内'}\n"
+                    "请准确回复「确认」或「取消」。"
+                )
             await self.bus.publish_outbound(
                 OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
-                    content=reply.content,
+                    content=reply_content,
                     metadata={
                         "_channel_runtime": True,
                         "attempt_id": attempt_id,
@@ -243,6 +266,46 @@ class ChannelRuntime:
                     },
                 )
             )
+
+    async def _handle_scheduled_confirmation(
+        self, msg: InboundMessage, session_id: str
+    ) -> bool:
+        """Commit/discard exact IM confirmation replies outside the model."""
+        token = msg.content.strip()
+        if token not in {"确认", "取消"}:
+            return False
+        try:
+            from src.scheduled_research.proposals import (
+                commit_proposal,
+                discard_proposal,
+                latest_pending_for_session,
+            )
+
+            proposal = latest_pending_for_session(session_id)
+            if proposal is None:
+                return False
+            if token == "确认":
+                result = commit_proposal(proposal["proposal_id"])
+                action = "创建" if proposal.get("operation") == "create" else "取消"
+                content = f"✅ 定时研究任务已{action}：{result.get('committed_job_id') or '?'}"
+            else:
+                discard_proposal(proposal["proposal_id"])
+                content = "已放弃这次定时研究变更。"
+        except Exception as exc:  # noqa: BLE001 - keep proposal pending for retry
+            content = f"定时研究确认失败：{exc}"
+        await self.bus.publish_outbound(
+            OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=content,
+                metadata={
+                    "_channel_runtime": True,
+                    "scheduled_research_confirmation": True,
+                    "message_id": msg.metadata.get("message_id"),
+                },
+            )
+        )
+        return True
 
     def _session_for(self, msg: InboundMessage) -> str:
         key = msg.session_key

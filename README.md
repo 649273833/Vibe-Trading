@@ -1175,7 +1175,11 @@ vibe-trading serve --port 8899
 | `POST` | `/channels/pairing/command` | Run a sender-pairing command against the shared store |
 | `POST` | `/scheduled-runs` | Create a scheduled research job (interval-ms or cron) |
 | `GET` | `/scheduled-runs` | List scheduled jobs |
+| `GET` | `/scheduled-runs/status` | Executor state and configured delivery targets |
+| `GET` | `/scheduled-runs/{job_id}` | Read one scheduled job |
 | `DELETE` | `/scheduled-runs/{job_id}` | Cancel a scheduled job |
+| `POST` | `/scheduled-runs/proposals/{proposal_id}/commit` | Confirm an agent-proposed create/cancel |
+| `POST` | `/scheduled-runs/proposals/{proposal_id}/discard` | Discard an agent proposal |
 | `GET` | `/scheduled-runs/playbooks` | List the research templates |
 | `GET` | `/scheduled-runs/playbooks/{slug}` | Show one template, with its variables |
 | `POST` | `/scheduled-runs/playbooks/{slug}` | Schedule a job from a template |
@@ -1232,6 +1236,40 @@ curl -X DELETE http://localhost:8899/scheduled-runs/<job_id>
 ```
 
 Each fire runs the `prompt` through a fresh agent session (optional backtest parameters go in `config`), and jobs persist under `~/.vibe-trading/` so they survive restarts. Without the flag, the `/scheduled-runs` endpoints still record jobs but nothing fires. Add `-H "Authorization: Bearer <key>"` to each call when `API_AUTH_KEY` is set.
+
+The agent sees exactly one scheduling tool, `scheduled_research`. Its read
+actions inspect status/jobs/playbooks; `propose_create` and `propose_cancel`
+only persist a short-lived confirmation proposal. They never mutate the job
+store. Web renders a deterministic confirmation card, CLI asks `y/N`, and IM
+conversations require an exact `确认` or `取消`; only that surface action calls
+the commit endpoint. Create drafts carry `title`, `source`, `schedule`,
+`end_at`, and `delivery`. Once `end_at` passes, the retained job becomes
+`expired` and is not dispatched again.
+
+Scheduled delivery is channel-agnostic. Configure reusable opaque target refs
+under `channels.deliveryTargets`; the agent tool and its confirmation surfaces
+expose the ref, label, and channel but never the provider's raw chat/user id.
+The existing direct REST/admin fields remain available for backward
+compatibility:
+
+```json
+{
+  "channels": {
+    "deliveryTargets": {
+      "research-team": {
+        "label": "Research Team",
+        "channel": "feishu",
+        "target": "<provider chat or user id>"
+      }
+    }
+  }
+}
+```
+
+Any configured channel adapter can be selected. Delivery status is `accepted`
+when an adapter succeeded without a provider receipt, and `sent` only when the
+adapter returned a provider message id (currently implemented end to end for
+Feishu). Failures remain retryable in the persisted outbox.
 
 **Five ready-to-schedule templates** ship with the scheduler — `premarket-brief`, `earnings-season-tracker`, `portfolio-checkup`, `a-share-money-flow`, `institutional-holdings-diff`. Each states the data a run needs in plain language instead of naming tools, so a template keeps working as the tool surface grows, and each is required to name a missing input rather than fill it from memory. Reach them from the CLI, over REST, or with `/playbook` in the TUI:
 
