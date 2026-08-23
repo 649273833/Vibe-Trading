@@ -10,6 +10,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
+from backtest.runner import _VALID_INTERVALS
 
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -159,12 +160,26 @@ class MarketDataTool(BaseTool):
         if source not in source_enum:
             return _error(f"source must be one of {list(source_enum)}")
 
+        interval = kwargs.get("interval", "1D")
+        if not isinstance(interval, str):
+            return _error("interval must be a string like '1D', '1H', '4H', '30m'")
+        normalized_interval = interval.strip().upper()
+        if normalized_interval not in _VALID_INTERVALS:
+            return _error(
+                f"interval must be one of {sorted(_VALID_INTERVALS)} "
+                f"(case-insensitive); got {interval!r}"
+            )
+
+        max_rows = kwargs.get("max_rows", DEFAULT_MAX_ROWS)
+        if not isinstance(max_rows, int) or isinstance(max_rows, bool) or max_rows < 0:
+            return _error("max_rows must be a non-negative integer (0 = all rows)")
+
         return fetch_market_data_json(
             codes=codes,
             start_date=start_date,
             end_date=end_date,
             source=source,
-            interval=kwargs.get("interval", "1D"),
-            max_rows=kwargs.get("max_rows", DEFAULT_MAX_ROWS),
+            interval=normalized_interval,
+            max_rows=max_rows,
             include_provenance=True,
         )

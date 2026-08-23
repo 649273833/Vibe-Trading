@@ -312,3 +312,37 @@ def test_market_data_tool_rejects_unknown_source():
 
     out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", source="bogus"))
     assert out == {"ok": False, "error": "source must be one of ['auto', 'longbridge', 'yfinance', 'yahoo', 'okx', 'ccxt', 'tushare', 'baostock', 'tencent', 'akshare', 'mootdx', 'eastmoney', 'sina', 'stooq', 'finnhub', 'alphavantage', 'tiingo', 'fmp', 'mt5', 'pykrx']"}
+
+
+def test_market_data_tool_rejects_garbage_interval():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", interval="BANANA"))
+    assert out["ok"] is False
+    assert "interval must be one of" in out["error"]
+    assert "BANANA" in out["error"]
+
+
+def test_market_data_tool_normalizes_interval_case():
+    """'1d' is accepted but normalized to canonical '1D' before fetch."""
+    import src.tools.market_data_tool as mod
+    from unittest import mock
+
+    calls = []
+    with mock.patch.object(mod, "fetch_market_data_json", side_effect=lambda **kw: calls.append(kw) or "{}"):
+        mod.MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-08-20", end_date="2026-08-21", interval="1d", max_rows=0)
+    assert calls and calls[0]["interval"] == "1D"
+
+
+def test_market_data_tool_rejects_non_int_max_rows():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", max_rows="abc"))
+    assert out == {"ok": False, "error": "max_rows must be a non-negative integer (0 = all rows)"}
+
+
+def test_market_data_tool_rejects_negative_max_rows():
+    from src.tools.market_data_tool import MarketDataTool
+
+    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", max_rows=-5))
+    assert out == {"ok": False, "error": "max_rows must be a non-negative integer (0 = all rows)"}
