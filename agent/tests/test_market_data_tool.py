@@ -309,9 +309,40 @@ def test_market_data_tool_rejects_compact_date_form():
 
 def test_market_data_tool_rejects_unknown_source():
     from src.tools.market_data_tool import MarketDataTool
+    from backtest.loaders.registry import VALID_SOURCES
 
     out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", source="bogus"))
-    assert out == {"ok": False, "error": "source must be one of ['auto', 'longbridge', 'yfinance', 'yahoo', 'okx', 'ccxt', 'tushare', 'baostock', 'tencent', 'akshare', 'mootdx', 'eastmoney', 'sina', 'stooq', 'finnhub', 'alphavantage', 'tiingo', 'fmp', 'mt5', 'pykrx']"}
+    assert out == {"ok": False, "error": f"source must be one of {sorted(VALID_SOURCES)}"}
+
+
+def test_market_data_tool_accepts_every_registered_source():
+    """Every source in the loader registry must pass MarketDataTool validation.
+
+    Regression (#1185): the source allow-list was a hardcoded subset that
+    rejected registered, documented sources (binance, local, futu, qveris,
+    india_broker, tickerall). The tool's enum must match VALID_SOURCES so the
+    tool can never silently drop a loader the registry serves.
+    """
+    import src.tools.market_data_tool as mod
+    from backtest.loaders.registry import VALID_SOURCES
+    from unittest import mock
+
+    enum = set(mod.MarketDataTool.parameters["properties"]["source"]["enum"])
+    assert enum == VALID_SOURCES
+
+    calls = []
+    with mock.patch.object(
+        mod, "fetch_market_data_json", side_effect=lambda **kw: calls.append(kw) or "{}"
+    ):
+        for source in sorted(VALID_SOURCES):
+            out = mod.MarketDataTool().execute(
+                codes=["BTC-USDT"],
+                start_date="2026-08-20",
+                end_date="2026-08-21",
+                source=source,
+            )
+            assert json.loads(out) == {}, f"source={source!r} was rejected"
+    assert len(calls) == len(VALID_SOURCES)
 
 
 def test_market_data_tool_rejects_garbage_interval():

@@ -10,6 +10,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
+from backtest.loaders.registry import VALID_SOURCES
 from backtest.runner import _VALID_INTERVALS
 
 # Canonical-case lookup: `_VALID_INTERVALS` mixes cases ("1m" minutes vs "1H"
@@ -17,6 +18,11 @@ from backtest.runner import _VALID_INTERVALS
 # "1M"/"5M"/… which loaders reject. Map any case spelling to the canonical
 # form the loaders expect ("1d" -> "1D", "30M" -> "30m").
 _INTERVAL_CANON = {v.upper(): v for v in _VALID_INTERVALS}
+
+# Source allow-list derived from the shared loader registry (the same set the
+# backtest tool validates against), so the MCP/agent-facing surface can never
+# silently drop a loader the registry serves. Sorted for a stable schema.
+_SOURCE_ENUM = sorted(VALID_SOURCES)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -74,41 +80,24 @@ class MarketDataTool(BaseTool):
             },
             "source": {
                 "type": "string",
-                "enum": [
-                    "auto",
-                    "longbridge",
-                    "yfinance",
-                    "yahoo",
-                    "okx",
-                    "ccxt",
-                    "tushare",
-                    "baostock",
-                    "tencent",
-                    "akshare",
-                    "mootdx",
-                    "eastmoney",
-                    "sina",
-                    "stooq",
-                    "finnhub",
-                    "alphavantage",
-                    "tiingo",
-                    "fmp",
-                    "mt5",
-                    "pykrx",
-                ],
+                "enum": _SOURCE_ENUM,
                 "description": (
                     "Data source. 'auto' detects from symbol format with fallback. "
                     "Use 'longbridge' explicitly for US/HK OHLCV through the "
                     "Longbridge OpenAPI (requires Longbridge credentials). "
                     "Free, no key: yfinance/yahoo (US/HK/Canada equities; "
-                    "Canada uses .TO/.V), okx/ccxt "
+                    "Canada uses .TO/.V), okx/ccxt/binance "
                     "(crypto), baostock/tencent/eastmoney/sina/akshare/mootdx "
-                    "(China A-shares), stooq (global EOD), pykrx (Korea KRX daily "
+                    "(China A-shares), futu (HK/A via local FutuOpenD), stooq "
+                    "(global EOD), pykrx (Korea KRX daily "
                     "bars for <CODE>.KS / <CODE>.KQ; needs the optional pykrx "
                     "package, else Korea falls back to yahoo/yfinance). Key-gated "
                     "REST: tushare (China A-shares), finnhub/alphavantage/tiingo/fmp "
-                    "(US/global). mt5: forex/metals from a local MetaTrader 5 "
-                    "terminal (Windows; e.g. EUR/USD, XAUUSD.FX)."
+                    "(US/global), qveris (premium marketplace). india_broker: "
+                    "read-only Shoonya/Dhan bars for .NS/.BO. mt5: forex/metals "
+                    "from a local MetaTrader 5 terminal (Windows; e.g. EUR/USD, "
+                    "XAUUSD.FX); tickerall: the same feed hosted, no terminal, "
+                    "any OS. local: your own CSV/Parquet/DuckDB files."
                 ),
                 "default": "auto",
             },
@@ -163,9 +152,8 @@ class MarketDataTool(BaseTool):
             )
 
         source = kwargs.get("source", "auto")
-        source_enum = self.parameters["properties"]["source"]["enum"]
-        if source not in source_enum:
-            return _error(f"source must be one of {list(source_enum)}")
+        if source not in _SOURCE_ENUM:
+            return _error(f"source must be one of {_SOURCE_ENUM}")
 
         interval = kwargs.get("interval", "1D")
         if not isinstance(interval, str):
