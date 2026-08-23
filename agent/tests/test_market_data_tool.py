@@ -341,8 +341,38 @@ def test_market_data_tool_rejects_non_int_max_rows():
     assert out == {"ok": False, "error": "max_rows must be a non-negative integer (0 = all rows)"}
 
 
-def test_market_data_tool_rejects_negative_max_rows():
-    from src.tools.market_data_tool import MarketDataTool
+def test_market_data_tool_clamps_negative_max_rows_to_default_cap():
+    """Negative max_rows is invalid but must never be unbounded (P07 G3ii):
+    it is clamped to the default cap before fetching, same as cap_rows."""
+    import src.tools.market_data_tool as mod
+    from unittest import mock
 
-    out = json.loads(MarketDataTool().execute(codes=["AAPL.US"], start_date="2026-01-01", end_date="2026-02-01", max_rows=-5))
-    assert out == {"ok": False, "error": "max_rows must be a non-negative integer (0 = all rows)"}
+    calls = []
+    with mock.patch.object(mod, "fetch_market_data_json", side_effect=lambda **kw: calls.append(kw) or "{}"):
+        out = mod.MarketDataTool().execute(
+            codes=["AAPL.US"], start_date="2026-08-20", end_date="2026-08-21", max_rows=-5
+        )
+    assert json.loads(out) == {}
+    assert calls and calls[0]["max_rows"] == mod.DEFAULT_MAX_ROWS
+
+
+def test_market_data_tool_accepts_minute_intervals():
+    """'30m' is documented-valid; '30M' must normalize to it, not to '30M'.
+
+    Regression: plain .upper() turned valid minute intervals ('1m', '5m',
+    '15m', '30m') into '1M'/'30M' which are not in _VALID_INTERVALS.
+    """
+    import src.tools.market_data_tool as mod
+    from unittest import mock
+
+    calls = []
+    with mock.patch.object(mod, "fetch_market_data_json", side_effect=lambda **kw: calls.append(kw) or "{}"):
+        for interval in ("1m", "5m", "15m", "30m", "30M", "1H", "1d"):
+            out = mod.MarketDataTool().execute(
+                codes=["AAPL.US"],
+                start_date="2026-08-20",
+                end_date="2026-08-21",
+                interval=interval,
+            )
+            assert json.loads(out) == {}
+    assert [c["interval"] for c in calls] == ["1m", "5m", "15m", "30m", "30m", "1H", "1D"]

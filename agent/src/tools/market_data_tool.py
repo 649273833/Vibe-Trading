@@ -12,6 +12,11 @@ from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
 from backtest.runner import _VALID_INTERVALS
 
+# Canonical-case lookup: `_VALID_INTERVALS` mixes cases ("1m" minutes vs "1H"
+# hours), so a plain `.upper()` would turn valid "1m"/"5m"/"15m"/"30m" into
+# "1M"/"5M"/… which loaders reject. Map any case spelling to the canonical
+# form the loaders expect ("1d" -> "1D", "30M" -> "30m").
+_INTERVAL_CANON = {v.upper(): v for v in _VALID_INTERVALS}
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -127,7 +132,9 @@ class MarketDataTool(BaseTool):
 
         Args:
             **kwargs: ``codes``, ``start_date``, ``end_date``, optional
-                ``source``, ``interval``, ``max_rows``.
+                ``source``, ``interval``, ``max_rows``, and (internal,
+                MCP-only) ``loader_resolver`` — the resolver the MCP server
+                injects so its own loader-hook contract is preserved.
 
         Returns:
             Strict JSON envelope with per-symbol OHLCV panels plus
@@ -163,23 +170,33 @@ class MarketDataTool(BaseTool):
         interval = kwargs.get("interval", "1D")
         if not isinstance(interval, str):
             return _error("interval must be a string like '1D', '1H', '4H', '30m'")
-        normalized_interval = interval.strip().upper()
-        if normalized_interval not in _VALID_INTERVALS:
+        normalized_interval = _INTERVAL_CANON.get(interval.strip().upper())
+        if normalized_interval is None:
             return _error(
                 f"interval must be one of {sorted(_VALID_INTERVALS)} "
                 f"(case-insensitive); got {interval!r}"
             )
 
         max_rows = kwargs.get("max_rows", DEFAULT_MAX_ROWS)
-        if not isinstance(max_rows, int) or isinstance(max_rows, bool) or max_rows < 0:
+        if not isinstance(max_rows, int) or isinstance(max_rows, bool):
             return _error("max_rows must be a non-negative integer (0 = all rows)")
+        if max_rows < 0:
+            # P07 contract (test_get_market_data_size.py::G3ii): a negative
+            # cap is invalid but must never become unbounded — the loader
+            # layer clamps it to the default cap. Keep that observable
+            # behavior here so both surfaces agree.
+            max_rows = DEFAULT_MAX_ROWS
 
-        return fetch_market_data_json(
-            codes=codes,
-            start_date=start_date,
-            end_date=end_date,
-            source=source,
-            interval=normalized_interval,
-            max_rows=max_rows,
-            include_provenance=True,
-        )
+        fetch_kwargs: dict[str, Any] = {
+            "codes": codes,
+            "start_date": start_date,
+            "end_date": end_date,
+            "source": source,
+            "interval": normalized_interval,
+            "max_rows": max_rows,
+            "include_provenance": True,
+        }
+        loader_resolver = kwargs.get("loader_resolver")
+        if loader_resolver is not None:
+            fetch_kwargs["loader_resolver"] = loader_resolver
+        return fetch_market_data_json(**fetch_kwargs)
