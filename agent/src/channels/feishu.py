@@ -7,12 +7,14 @@ import importlib.util
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 import uuid
 from collections import OrderedDict
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
@@ -34,6 +36,80 @@ if TYPE_CHECKING:
 
 FEISHU_AVAILABLE = importlib.util.find_spec("lark_oapi") is not None
 _LOGIN_CONSOLE = Console()
+
+
+def _persist_login_credentials(
+    app_id: str,
+    app_secret: str,
+    domain: str,
+    *,
+    config_path: Path | None = None,
+) -> Path:
+    """Persist Feishu login credentials in the operator JSON config.
+
+    The QR flow creates a bot application and returns its secret only once, so
+    reporting a successful login without durably storing that secret leaves the
+    channel unusable after the CLI process exits.  Write through a private
+    same-directory temporary file and atomically replace the config so readers
+    never observe a partial credential record.
+    """
+    from src.config.loader import _read_config_file
+    from src.config.paths import get_config_path
+
+    path = config_path or get_config_path()
+    if path.suffix.lower() != ".json":
+        raise ValueError(
+            "Feishu QR login requires a JSON agent config; use "
+            "~/.vibe-trading/agent.json"
+        )
+
+    payload: dict[str, Any] = {}
+    if path.exists():
+        payload = _read_config_file(path)
+    channels = payload.setdefault("channels", {})
+    if not isinstance(channels, dict):
+        raise ValueError("agent config 'channels' must be an object")
+    section = channels.setdefault("feishu", {})
+    if not isinstance(section, dict):
+        raise ValueError("agent config 'channels.feishu' must be an object")
+    section.update(
+        {
+            "enabled": True,
+            "app_id": app_id,
+            "app_secret": app_secret,
+            "domain": domain,
+        }
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    content = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    fd, temporary = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                handle.write(content)
+                handle.flush()
+                if hasattr(os, "fchmod"):
+                    os.fchmod(handle.fileno(), 0o600)
+                os.fsync(handle.fileno())
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        os.replace(temporary, path)
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(temporary)
+        raise
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
 
 
 def _load_lark_runtime() -> tuple[Any, str, str]:
@@ -644,18 +720,25 @@ class FeishuChannel(BaseChannel):
         self.config.app_secret = result["app_secret"]
         self.config.domain = result.get("domain", "feishu")
 
-        # Write credentials back to config
-        # VT-TODO: persist feishu credentials via VT config system
+        # Write credentials back to the operator config before claiming login
+        # success. The registration endpoint returns the secret only once.
         try:
-            from src.config.loader import load_agent_config
-            # Credentials stored in-memory on self.config; persist via VT config
-            # when channel config persistence is wired up.
-        except Exception:
-            pass
+            config_path = _persist_login_credentials(
+                self.config.app_id,
+                self.config.app_secret,
+                self.config.domain,
+            )
+        except (OSError, ValueError) as exc:
+            _LOGIN_CONSOLE.print(
+                "[red]Feishu/Lark authorization succeeded, but credentials "
+                f"could not be saved:[/red] {escape(str(exc))}"
+            )
+            return False
 
         _LOGIN_CONSOLE.print("\n[green]Feishu/Lark login complete.[/green]")
         _LOGIN_CONSOLE.print(f"App ID: {escape(result['app_id'])}")
         _LOGIN_CONSOLE.print(f"Domain: {escape(self.config.domain)}")
+        _LOGIN_CONSOLE.print(f"Config: {escape(str(config_path))}")
         return True
 
     @staticmethod
@@ -691,7 +774,7 @@ class FeishuChannel(BaseChannel):
             .app_id(self.config.app_id)
             .app_secret(self.config.app_secret)
             .domain(domain)
-            .log_level(lark.LogLevel.INFO)
+            .log_level(lark.LogLevel.WARNING)
             .build()
         )
         builder = lark.EventDispatcherHandler.builder(
@@ -732,7 +815,7 @@ class FeishuChannel(BaseChannel):
             self.config.app_secret,
             domain=domain,
             event_handler=event_handler,
-            log_level=lark.LogLevel.INFO,
+            log_level=lark.LogLevel.WARNING,
         )
 
         # Start WebSocket client in a separate thread with reconnect loop.

@@ -1035,6 +1035,10 @@ vibe-trading channels login weixin     # run an adapter login hook when needed
 vibe-trading channels pairing --channel telegram list
 ```
 
+`vibe-trading channels login feishu` saves the QR-authorized app credentials to
+`~/.vibe-trading/agent.json` with owner-only file permissions before reporting
+login success.
+
 The built-in adapters cover `websocket`, `telegram`, `slack`, `discord`, `matrix`, `whatsapp`, `signal`, `qq`, `napcat`, `weixin`, `wecom`, `feishu`, `dingtalk`, `msteams`, `email`, and `mochat`. Use narrow extras such as `pip install "vibe-trading-ai[telegram]"`, or install the full channel set with `pip install "vibe-trading-ai[channels]"`.
 
 **In-chat slash commands** (channel-agnostic, work in all 16 adapters):
