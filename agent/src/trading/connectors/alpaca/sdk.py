@@ -847,10 +847,17 @@ def _obj_get(obj: Any, name: str, default: Any = None) -> Any:
 
 
 def _position_to_dict(item: Any) -> dict[str, Any]:
+    side = str(_obj_get(item, "side", ""))
+    quantity = _obj_get(item, "qty")
+    if side == "short" and quantity is not None:
+        # Alpaca reports qty as an absolute magnitude and carries direction in
+        # side. The mandate gate (like the tiger connector) reads quantity as
+        # signed, so an unsigned short would book as positive exposure.
+        quantity = -float(quantity)
     return {
         "symbol": _obj_get(item, "symbol"),
-        "side": str(_obj_get(item, "side", "")),
-        "quantity": _obj_get(item, "qty"),
+        "side": side,
+        "quantity": quantity,
         "average_cost": _obj_get(item, "avg_entry_price"),
         "market_value": _obj_get(item, "market_value"),
         "current_price": _obj_get(item, "current_price"),

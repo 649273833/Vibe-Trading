@@ -1,0 +1,46 @@
+"""Tests for the Alpaca position mapping's quantity sign.
+
+Alpaca reports ``qty`` as an absolute magnitude and carries direction in
+``side`` (``"long"``/``"short"``). The mandate gate reads position quantity as
+signed (its own fixtures use negative quantities for shorts), so an unsigned
+short would book as positive exposure and every sell would move the computed
+exposure toward zero. The connector now negates qty for short positions.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from src.live.enforcement import _position_signed_market_value
+from src.trading.connectors.alpaca.sdk import _position_to_dict
+
+pytestmark = pytest.mark.unit
+
+
+def test_short_position_gets_negative_quantity() -> None:
+    row = _position_to_dict({"symbol": "AAPL", "side": "short", "qty": "400", "market_value": "-50000"})
+    assert row["quantity"] == -400.0
+    assert row["side"] == "short"
+
+
+def test_long_position_quantity_passes_through() -> None:
+    row = _position_to_dict({"symbol": "AAPL", "side": "long", "qty": "400", "market_value": "50000"})
+    assert row["quantity"] == "400"
+
+
+def test_short_position_without_qty_stays_none() -> None:
+    row = _position_to_dict({"symbol": "AAPL", "side": "short", "qty": None})
+    assert row["quantity"] is None
+
+
+def test_object_positions_get_the_same_sign() -> None:
+    item = SimpleNamespace(symbol="AAPL", side="short", qty="400", market_value="-50000")
+    row = _position_to_dict(item)
+    assert row["quantity"] == -400.0
+
+
+def test_gate_reads_alpaca_short_as_negative_exposure() -> None:
+    row = _position_to_dict({"symbol": "AAPL", "side": "short", "qty": "400", "market_value": "-50000"})
+    assert _position_signed_market_value(row) == -50000.0
