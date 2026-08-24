@@ -359,3 +359,104 @@ class TestErrorEnvelope:
         )
         assert payload["ok"] is False
         assert "period" in payload["error"]
+
+
+class TestUKYahooStatements:
+    """UK (.L/.IL) routes to Yahoo quoteSummary with flattened raw values."""
+
+    _INCOME_PAYLOAD = {
+        "incomeStatementHistory": {
+            "maxAge": 1,
+            "incomeStatementHistory": [
+                {
+                    "maxAge": 1,
+                    "endDate": 1743379200,
+                    "totalRevenue": {"raw": 37448000000, "fmt": "37.45B"},
+                    "netIncome": {"raw": -4169000000, "fmt": "-4.17B"},
+                    "currencyCode": "GBp",
+                },
+                {
+                    "maxAge": 1,
+                    "endDate": 1711843200,
+                    "totalRevenue": {"raw": 32907000000, "fmt": "32.91B"},
+                    "netIncome": {"raw": 1248000000, "fmt": "1.25B"},
+                },
+            ],
+        }
+    }
+
+    def test_uk_income_uses_yahoo_and_flattens_raw_values(self) -> None:
+        with patch(
+            "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
+            return_value=self._INCOME_PAYLOAD,
+        ) as mock_qs:
+            text = FinancialStatementsTool().execute(
+                code="VOD.L", statement="income", period="annual"
+            )
+
+        payload = json.loads(text)
+        assert payload["ok"] is True
+        assert payload["source"] == "yahoo"
+        assert payload["market"] == "uk"
+        assert mock_qs.call_args.args == ("VOD.L", ["incomeStatementHistory"])
+        periods = payload["data"]["VOD.L"]["periods"]
+        assert periods[0]["endDate"] == 1743379200
+        assert periods[0]["totalRevenue"] == 37448000000
+        assert periods[0]["netIncome"] == -4169000000
+        # Newest first.
+        assert periods[0]["endDate"] > periods[1]["endDate"]
+
+    def test_uk_il_suffix_routes_to_yahoo(self) -> None:
+        with patch(
+            "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
+            return_value=self._INCOME_PAYLOAD,
+        ) as mock_qs:
+            FinancialStatementsTool().execute(
+                code="DCC.IL", statement="income", period="annual"
+            )
+        assert mock_qs.call_args.args == ("DCC.IL", ["incomeStatementHistory"])
+
+    def test_uk_indicators_flatten_nested_blocks(self) -> None:
+        payload = {
+            "financialData": {
+                "maxAge": 1,
+                "totalRevenue": {"raw": 40461000704, "longFmt": "40,461,000,704"},
+                "grossMargins": {"raw": 0.3147},
+            },
+            "defaultKeyStatistics": {
+                "maxAge": 1,
+                "returnOnEquity": {"raw": 0.00109},
+                "trailingEps": {"raw": -0.17},
+            },
+        }
+        with patch(
+            "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
+            return_value=payload,
+        ) as mock_qs:
+            text = FinancialStatementsTool().execute(
+                code="VOD.L", statement="indicators", period="annual"
+            )
+
+        payload_out = json.loads(text)
+        assert payload_out["ok"] is True
+        assert mock_qs.call_args.args == (
+            "VOD.L",
+            ["financialData", "defaultKeyStatistics"],
+        )
+        record = payload_out["data"]["VOD.L"]["periods"][0]
+        assert record["totalRevenue"] == 40461000704
+        assert record["grossMargins"] == 0.3147
+        assert record["returnOnEquity"] == 0.00109
+
+    def test_uk_yahoo_failure_surfaces_ok_false(self) -> None:
+        with patch(
+            "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
+            side_effect=RuntimeError("crumb expired"),
+        ):
+            text = FinancialStatementsTool().execute(
+                code="VOD.L", statement="balance", period="annual"
+            )
+        payload = json.loads(text)
+        assert payload["ok"] is False
+        assert "crumb expired" in payload["error"]
+        assert "crumb expired" in payload["data"]["VOD.L"]["error"]
