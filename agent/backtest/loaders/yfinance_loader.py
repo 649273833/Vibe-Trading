@@ -12,8 +12,10 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 from backtest.loaders.base import (
+    is_gbp_pence_symbol,
     loader_cache_get,
     loader_cache_put,
+    scale_pence_to_currency,
     validate_date_range,
     validate_ohlc,
 )
@@ -233,7 +235,7 @@ class DataLoader:
     name = "yfinance"
     markets = {
         "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-        "vietnam_equity", "crypto",
+        "vietnam_equity", "uk_equity", "crypto",
     }
     # yfinance volume is single shares for US/HK equities
     # (HKUDS/Vibe-Trading#1062; HK verified 2026-08-11, 00700.HK ratio 1.00
@@ -327,6 +329,11 @@ class DataLoader:
                 if normalized.empty:
                     logger.warning("yfinance returned no usable data for %s", symbol)
                     continue
+
+                # Yahoo-family data: .L/.IL UK names quote in GBp (pence).
+                # Normalize ÷100 so code_currency's GBP matches the values.
+                if is_gbp_pence_symbol(symbol):
+                    normalized, _ = scale_pence_to_currency(normalized, "GBp")
 
                 loader_cache_put(
                     source=self.name,

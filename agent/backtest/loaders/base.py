@@ -20,8 +20,54 @@ from pathlib import Path
 from typing import Callable, Protocol, TypeVar, runtime_checkable
 
 import pandas as pd
+import re
 
 logger = logging.getLogger(__name__)
+
+
+# Yahoo quotes LSE (.L) and GBp-quoted Irish (.IL) equities in pence, not
+# pounds: VOD.L is ~117p, HSBA.L ~1500p. `code_currency`/`_MARKET_CURRENCY`
+# declare GBP, so prices must be normalized ÷100 when a source reports the
+# pence marker (HKUDS/Vibe-Trading#1206). Anything else is left untouched.
+_GBP_PENCE_CURRENCY = "GBp"
+_PRICE_COLUMNS = ("open", "high", "low", "close")
+_UK_EQUITY_PATTERN = re.compile(r"^[A-Z0-9&.\-]+\.(L|IL)$", re.I)
+
+
+def is_gbp_pence_symbol(code: str) -> bool:
+    """Return whether a project symbol quotes in GBp (LSE/ISE UK names).
+
+    Both Yahoo sources (direct chart + yfinance) serve ``.L`` (always) and
+    ``.IL`` (for GBp-quoted Irish listings) in pence. The engine-side
+    ``code_currency`` resolves these to GBP, so any loader emitting them must
+    normalize ÷100 — callers with chart meta (Yahoo) pass the ``"GBp"``
+    currency directly; sources without per-symbol meta (yfinance) fall back to
+    this suffix rule (#1206).
+    """
+    return bool(_UK_EQUITY_PATTERN.match(str(code).strip()))
+
+
+def scale_pence_to_currency(
+    frame: pd.DataFrame, currency: str
+) -> tuple[pd.DataFrame, str]:
+    """Convert GBp-quoted OHLC prices to GBP (÷100) when the source says GBp.
+
+    Args:
+        frame: OHLCV frame with float price columns.
+        currency: Quote currency declared by the source (e.g. ``"GBp"`` for
+            LSE/ISE pence-quoted names; ``"USD"``/``"EUR"``/``"GBP"`` pass
+            through).
+
+    Returns:
+        ``(frame, applied)``: the (possibly scaled) frame, and the conversion
+        applied — ``"GBp→GBP (÷100)"`` when scaled, else ``"none"``.
+    """
+    if currency != _GBP_PENCE_CURRENCY or frame is None or frame.empty:
+        return frame, "none"
+    scaled = frame.copy()
+    for column in _PRICE_COLUMNS:
+        scaled[column] = scaled[column] / 100.0
+    return scaled, "GBp→GBP (÷100)"
 
 
 class NoAvailableSourceError(Exception):
@@ -247,7 +293,9 @@ _LOADER_CACHE_TRUE_VALUES = {"1", "true", "yes", "on"}
 # simply never matched (old files become unreachable garbage, safe to delete).
 # v4: baostock volume normalized from shares to lots (#1062) — entries cached
 # under the pre-normalization unit must never be served again.
-_LOADER_CACHE_VERSION = 4
+# v5: UK (.L/.IL) prices normalized from GBp to GBP (÷100) (#1206) — entries
+# cached under the pre-normalization pence values must never be served again.
+_LOADER_CACHE_VERSION = 5
 
 
 def loader_cache_enabled() -> bool:

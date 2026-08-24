@@ -133,6 +133,45 @@ def test_market_data_provenance_exposes_declared_volume_unit():
     assert payload["_provenance"]["0700.HK"]["volume_unit"] == "shares"
 
 
+def test_market_data_provenance_declares_gbp_conversion_for_uk():
+    """UK-serving loaders declare the GBp->GBP price normalization (#1206)."""
+    idx = pd.date_range("2026-01-01", periods=1, freq="D")
+    idx.name = "trade_date"
+    df = pd.DataFrame(
+        {
+            "open": [1.17],
+            "high": [1.18],
+            "low": [1.16],
+            "close": [1.175],
+            "volume": [100],
+        },
+        index=idx,
+    )
+
+    class _UKAwareLoader:
+        volume_units = {"uk_equity": "shares"}
+        price_units = {"uk_equity": "GBP"}
+
+        def fetch(self, codes, start, end, interval="1D"):
+            return {code: df for code in codes}
+
+    payload = json.loads(
+        fetch_market_data_json(
+            codes=["VOD.L", "AAPL.US"],
+            start_date="2026-01-01",
+            end_date="2026-01-02",
+            source="yahoo",
+            loader_resolver=lambda source: _UKAwareLoader,
+            include_provenance=True,
+        )
+    )
+
+    assert payload["_provenance"]["VOD.L"]["currency_conversion"] == "GBp→GBP (÷100)"
+    assert payload["_provenance"]["VOD.L"]["volume_unit"] == "shares"
+    # Non-UK symbols served by the same loader keep "none".
+    assert payload["_provenance"]["AAPL.US"]["currency_conversion"] == "none"
+
+
 def test_market_data_provenance_volume_unit_follows_serving_loader():
     """After fallback, the unit comes from the loader that actually served."""
     idx = pd.date_range("2026-01-01", periods=1, freq="D")

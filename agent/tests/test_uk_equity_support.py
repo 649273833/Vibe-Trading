@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from backtest.engines.global_equity import GlobalEquityEngine
 from backtest.engines._market_hooks import _detect_market, _detect_submarket, code_currency
+from backtest.loaders.base import is_gbp_pence_symbol, scale_pence_to_currency
 from backtest.loaders.registry import FALLBACK_CHAINS
 from backtest.runner import _create_market_engine, _MARKET_TO_SOURCE
 from src.market_data import detect_source
@@ -97,3 +98,52 @@ class TestUKBacktestRouting:
         engine = _create_market_engine("auto", {"initial_cash": 100_000}, ["DCC.IL"])
         assert isinstance(engine, GlobalEquityEngine)
         assert engine.market == "uk"
+
+
+class TestGbpPenceNormalization:
+    """GBp-quoted UK prices must normalize to GBP (÷100) at the loader."""
+
+    def test_scale_scales_pence_when_currency_is_gbp(self) -> None:
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            {
+                "open": [117.0],
+                "high": [118.5],
+                "low": [116.0],
+                "close": [117.5],
+                "volume": [1000],
+            }
+        )
+        scaled, applied = scale_pence_to_currency(frame, "GBp")
+        assert applied == "GBp→GBP (÷100)"
+        assert scaled["close"].iloc[0] == 117.5 / 100
+        # Volume is never part of the price normalization.
+        assert scaled["volume"].iloc[0] == 1000
+
+    def test_scale_leaves_other_currencies_untouched(self) -> None:
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            {"open": [10.0], "high": [11.0], "low": [9.0], "close": [10.5], "volume": [1]}
+        )
+        for currency in ("USD", "GBP", "EUR", "HKD", ""):
+            scaled, applied = scale_pence_to_currency(frame, currency)
+            assert applied == "none"
+            assert scaled["close"].iloc[0] == 10.5
+
+    def test_scale_empty_frame_is_noop(self) -> None:
+        import pandas as pd
+
+        empty = pd.DataFrame()
+        scaled, applied = scale_pence_to_currency(empty, "GBp")
+        assert applied == "none"
+        assert scaled.empty
+
+    def test_pence_symbol_detection(self) -> None:
+        assert is_gbp_pence_symbol("VOD.L")
+        assert is_gbp_pence_symbol("DCC.IL")
+        assert is_gbp_pence_symbol("vod.l")
+        assert not is_gbp_pence_symbol("AAPL.US")
+        assert not is_gbp_pence_symbol("0700.HK")
+        assert not is_gbp_pence_symbol("GC=F")

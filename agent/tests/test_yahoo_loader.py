@@ -236,7 +236,7 @@ class TestFetch:
         ]
         with patch(
             "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
-            return_value=rows,
+            return_value=(rows, "USD"),
         ) as mock_chart:
             out = DataLoader().fetch(["AAPL.US"], "2024-01-01", "2024-01-31")
         assert "AAPL.US" in out
@@ -256,7 +256,7 @@ class TestFetch:
         ]
         with patch(
             "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
-            return_value=rows,
+            return_value=(rows, "INR"),
         ) as mock_chart:
             out = DataLoader().fetch(["RELIANCE.NS"], "2024-01-01", "2024-01-31")
         assert "RELIANCE.NS" in out
@@ -272,13 +272,48 @@ class TestFetch:
         assert out == {}
         mock_chart.assert_not_called()
 
-    def test_one_failure_does_not_abort_batch(self):
+    def test_gbp_pence_meta_scales_ohlc_to_gbp(self):
+        # LSE prices arrive in pence ("GBp") from Yahoo's chart meta; the
+        # loader must normalize ÷100 so 117p becomes £1.17.
+        rows = [
+            _row("2024-01-02", 11700, 11800, 11600, 11750, 1000),
+        ]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, "GBp"),
+        ) as mock_chart:
+            out = DataLoader().fetch(["VOD.L"], "2024-01-01", "2024-01-31")
+        assert "VOD.L" in out
+        frame = out["VOD.L"]
+        assert frame["open"].iloc[0] == 117.0
+        assert frame["high"].iloc[0] == 118.0
+        assert frame["low"].iloc[0] == 116.0
+        assert frame["close"].iloc[0] == 117.5
+        # Volume is untouched.
+        assert frame["volume"].iloc[0] == 1000
+        assert mock_chart.call_args.args[0] == "VOD.L"
+
+    def test_non_gbp_currency_meta_left_untouched(self):
+        rows = [
+            _row("2024-01-02", 10, 11, 9, 10.5, 1000),
+        ]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, "USD"),
+        ):
+            out = DataLoader().fetch(["AAPL.US"], "2024-01-01", "2024-01-31")
+        assert out["AAPL.US"]["close"].iloc[0] == 10.5
+
+    def test_uk_symbols_are_supported(self):
+        assert _is_supported("VOD.L")
+        assert _is_supported("DCC.IL")
+        assert not _is_supported("601398.SH")
         good_rows = [_row("2024-01-02", 10, 11, 9, 10.5, 1000)]
 
         def fake_chart(symbol, **_kwargs):
             if symbol == "BAD.US":
                 raise ValueError("yahoo chart error")
-            return good_rows
+            return good_rows, "USD"
 
         with patch(
             "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
@@ -300,7 +335,7 @@ class TestFetch:
     def test_no_data_symbol_omitted(self):
         with patch(
             "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
-            return_value=[],
+            return_value=([], ""),
         ):
             out = DataLoader().fetch(["AAPL.US"], "2024-01-01", "2024-01-31")
         assert out == {}
@@ -314,7 +349,7 @@ class TestLoaderMetadata:
         assert loader.name == "yahoo"
         assert loader.markets == {
             "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-            "vietnam_equity",
+            "vietnam_equity", "uk_equity",
         }
         assert loader.requires_auth is False
         assert loader.is_available() is True
