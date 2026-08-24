@@ -607,7 +607,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>19 个模块 286 个经测试的函数，四条通路皆可调用</sub></summary>
+<summary><b>Quant Library</b> <sub>19 个模块 290 个经测试的函数，四条通路皆可调用</sub></summary>
 
 `src/quantlib` 为 agent 需要的每一块金融数学各提供**一份**经测试的实现。skill 现在是
 **import** 这些函数，而不再把公式抄在 markdown 代码块里——如果你在某个 `SKILL.md`

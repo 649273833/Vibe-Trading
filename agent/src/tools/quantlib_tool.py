@@ -82,6 +82,7 @@ ALLOWED_MODULES: dict[str, str] = {
     "valuation.threestatement": "src.quantlib.valuation.threestatement",
     "valuation.artifact": "src.quantlib.valuation.artifact",
     "valuation.contracts": "src.quantlib.valuation.contracts",
+    "portfolio": "src.quantlib.portfolio",
 }
 
 #: Exported names refused because they write to a caller-supplied path. This
