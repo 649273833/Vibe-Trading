@@ -385,7 +385,7 @@ class TestUKYahooStatements:
         }
     }
 
-    def test_uk_income_uses_yahoo_and_flattens_raw_values(self) -> None:
+    def test_uk_income_annual_uses_annual_module(self) -> None:
         with patch(
             "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
             return_value=self._INCOME_PAYLOAD,
@@ -405,6 +405,40 @@ class TestUKYahooStatements:
         assert periods[0]["netIncome"] == -4169000000
         # Newest first.
         assert periods[0]["endDate"] > periods[1]["endDate"]
+
+    def test_uk_income_quarter_uses_quarterly_module(self) -> None:
+        quarterly = {
+            "incomeStatementHistoryQuarterly": {
+                "maxAge": 1,
+                "incomeStatementHistory": [
+                    {
+                        "maxAge": 1,
+                        "endDate": {"raw": 1743379200, "fmt": "2025-03-31"},
+                        "totalRevenue": {"raw": 9361000000, "fmt": "9.36B"},
+                    },
+                ],
+            }
+        }
+        with patch(
+            "src.tools.financial_statements_tool.yahoo_client.get_quote_summary",
+            return_value=quarterly,
+        ) as mock_qs:
+            payload = json.loads(
+                FinancialStatementsTool().execute(
+                    code="VOD.L", statement="income", period="quarter"
+                )
+            )
+
+        assert payload["ok"] is True
+        assert payload["period"] == "quarter"
+        assert mock_qs.call_args.args == (
+            "VOD.L",
+            ["incomeStatementHistoryQuarterly"],
+        )
+        period_record = payload["data"]["VOD.L"]["periods"][0]
+        # Quarterly endDate is a {raw, fmt} dict on Yahoo; flattened to int.
+        assert period_record["endDate"] == 1743379200
+        assert period_record["totalRevenue"] == 9361000000
 
     def test_uk_il_suffix_routes_to_yahoo(self) -> None:
         with patch(

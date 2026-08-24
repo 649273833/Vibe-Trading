@@ -290,13 +290,17 @@ def _fetch_eastmoney_statement(
     return {"periods": _cap_periods(periods)}
 
 
-# Yahoo quoteSummary module + result-key per statement. UK (.L/.IL) names have
-# no Eastmoney or SEC filing pipeline; Yahoo's crumb-gated quoteSummary serves
-# these histories for LSE/ISE tickers (UK parity, #1206).
-_YAHOO_STATEMENT_MODULES: dict[str, tuple[str, str]] = {
-    "balance": ("balanceSheetHistory", "balanceSheetStatements"),
-    "income": ("incomeStatementHistory", "incomeStatementHistory"),
-    "cashflow": ("cashflowStatementHistory", "cashflowStatements"),
+# Yahoo quoteSummary module + result-key per (statement, cadence). UK
+# (.L/.IL) names have no Eastmoney or SEC filing pipeline; Yahoo's
+# crumb-gated quoteSummary serves annual and quarterly histories for
+# LSE/ISE tickers (UK parity, #1206).
+_YAHOO_STATEMENT_MODULES: dict[tuple[str, str], tuple[str, str]] = {
+    ("balance", "annual"): ("balanceSheetHistory", "balanceSheetStatements"),
+    ("balance", "quarter"): ("balanceSheetHistoryQuarterly", "balanceSheetStatements"),
+    ("income", "annual"): ("incomeStatementHistory", "incomeStatementHistory"),
+    ("income", "quarter"): ("incomeStatementHistoryQuarterly", "incomeStatementHistory"),
+    ("cashflow", "annual"): ("cashflowStatementHistory", "cashflowStatements"),
+    ("cashflow", "quarter"): ("cashflowStatementHistoryQuarterly", "cashflowStatements"),
 }
 _YAHOO_INDICATOR_MODULES = ["financialData", "defaultKeyStatistics"]
 # {raw, fmt, longFmt} value shapes; keep the numeric raw only.
@@ -329,19 +333,17 @@ def _fetch_yahoo_statement(
     Args:
         code: UK symbol (e.g. ``"VOD.L"`` or ``"DCC.IL"``).
         statement: One of :data:`_VALID_STATEMENTS`.
-        period: ``"annual"`` or ``"quarter"`` (Yahoo's history is annual-only;
-            a quarter request returns the annual periods, matching Eastmoney's
-            behavior of degrading gracefully when only one cadence exists).
+        period: ``"annual"`` or ``"quarter"`` — selects the corresponding
+            history module; both exist for LSE/ISE tickers.
 
     Returns:
         ``{"periods": [...]}`` on success or ``{"error": ...}`` on failure;
         never raises.
     """
-    del period  # Yahoo statement histories are annual; quarterly is a no-op filter
     if statement == "indicators":
         modules = _YAHOO_INDICATOR_MODULES
     else:
-        module, key = _YAHOO_STATEMENT_MODULES[statement]
+        module, key = _YAHOO_STATEMENT_MODULES[(statement, period)]
         modules = [module]
     try:
         result = yahoo_client.get_quote_summary(code, modules)
