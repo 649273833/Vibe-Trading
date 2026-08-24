@@ -1612,7 +1612,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # クロスセッション永続メモリ
 │   │   │   └── persistent.py       #   ファイルベースメモリ (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 106 個の自動検出エージェントツール
+│   │   ├── tools/                  # 107 個の自動検出エージェントツール
 │   │   │   ├── backtest_tool.py    #   バックテスト実行
 │   │   │   ├── remember_tool.py    #   クロスセッションメモリ (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)

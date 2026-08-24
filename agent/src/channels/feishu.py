@@ -23,7 +23,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
-from src.channels.bus.events import OutboundMessage
+from src.channels.bus.events import DeliveryReceipt, OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.base import BaseChannel
 from src.channels.utils import get_media_dir
@@ -2041,8 +2041,7 @@ class FeishuChannel(BaseChannel):
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu, including media (images/files) if present."""
         if not self._client:
-            self.logger.warning("client not initialized")
-            return
+            raise RuntimeError("Feishu client is not initialized")
 
         try:
             receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
@@ -2193,6 +2192,63 @@ class FeishuChannel(BaseChannel):
         except Exception:
             self.logger.exception("Error sending message")
             raise
+
+    async def send_with_receipt(self, msg: OutboundMessage) -> DeliveryReceipt:
+        """Send a non-reply message and retain Feishu's provider message id.
+
+        Scheduled briefings use this path. Rich reply/media sends keep the
+        generic adapter contract because Feishu's reply and upload APIs do not
+        expose one uniform receipt shape.
+        """
+        if msg.media or msg.reply_to or msg.metadata:
+            return await super().send_with_receipt(msg)
+        if not self._client:
+            raise RuntimeError("Feishu client is not initialized")
+        content = (msg.content or "").strip()
+        if not content:
+            raise ValueError("Feishu message content must not be empty")
+
+        receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
+        loop = asyncio.get_running_loop()
+        payloads: list[tuple[str, str]] = []
+        fmt = self._detect_msg_format(content)
+        if fmt == "text":
+            payloads.append(("text", json.dumps({"text": content}, ensure_ascii=False)))
+        elif fmt == "post":
+            payloads.append(("post", self._markdown_to_post(content)))
+        else:
+            elements = self._build_card_elements(content)
+            for chunk in self._split_elements_by_table_limit(elements):
+                payloads.append(
+                    (
+                        "interactive",
+                        json.dumps(
+                            {"config": {"wide_screen_mode": True}, "elements": chunk},
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
+
+        message_ids: list[str] = []
+        for message_type, payload in payloads:
+            message_id = await loop.run_in_executor(
+                None,
+                self._send_message_sync,
+                receive_id_type,
+                msg.chat_id,
+                message_type,
+                payload,
+            )
+            if not message_id:
+                raise RuntimeError(
+                    f"Feishu did not acknowledge {message_type} message delivery"
+                )
+            message_ids.append(message_id)
+        return DeliveryReceipt(
+            status="sent",
+            provider_message_id=message_ids[-1],
+            sent_at=int(time.time() * 1000),
+        )
 
     def _on_message_sync(self, data: Any) -> None:
         """
