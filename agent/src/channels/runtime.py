@@ -204,15 +204,16 @@ class ChannelRuntime:
                 job = proposal.get("job") or {}
                 schedule = job.get("schedule") or {}
                 delivery = job.get("delivery") or {}
-                action = "创建" if proposal.get("operation") == "create" else "取消"
+                action = "create" if proposal.get("operation") == "create" else "cancel"
                 reply_content = (
                     f"{reply_content}\n\n"
-                    f"【定时研究确认 · {action}】\n"
-                    f"任务：{job.get('title') or job.get('id') or '?'}\n"
-                    f"节奏：{schedule.get('expression') or '-'} · "
+                    f"[Scheduled research confirmation · {action}]\n"
+                    f"Task: {job.get('title') or job.get('id') or '?'}\n"
+                    f"Schedule: {schedule.get('expression') or '-'} · "
                     f"{schedule.get('timezone') or 'UTC'}\n"
-                    f"投递：{delivery.get('target_label') or '仅应用内'}\n"
-                    "请准确回复「确认」或「取消」。"
+                    f"Delivery: {delivery.get('target_label') or 'in-app only'}\n"
+                    'Reply exactly "confirm" (确认) to commit, or "cancel" (取消) '
+                    "to discard."
                 )
             await self.bus.publish_outbound(
                 OutboundMessage(
@@ -270,9 +271,15 @@ class ChannelRuntime:
     async def _handle_scheduled_confirmation(
         self, msg: InboundMessage, session_id: str
     ) -> bool:
-        """Commit/discard exact IM confirmation replies outside the model."""
-        token = msg.content.strip()
-        if token not in {"确认", "取消"}:
+        """Commit/discard exact IM confirmation replies outside the model.
+
+        Tokens are exact-match by design so the model can never confirm on the
+        user's behalf; both the English and the Chinese spelling are accepted
+        because the 16 IM adapters serve both audiences.
+        """
+        token = msg.content.strip().casefold()
+        is_commit = token in {"确认", "confirm"}
+        if not is_commit and token not in {"取消", "cancel"}:
             return False
         try:
             from src.scheduled_research.proposals import (
@@ -284,15 +291,20 @@ class ChannelRuntime:
             proposal = latest_pending_for_session(session_id)
             if proposal is None:
                 return False
-            if token == "确认":
+            if is_commit:
                 result = commit_proposal(proposal["proposal_id"])
-                action = "创建" if proposal.get("operation") == "create" else "取消"
-                content = f"✅ 定时研究任务已{action}：{result.get('committed_job_id') or '?'}"
+                action = (
+                    "created" if proposal.get("operation") == "create" else "cancelled"
+                )
+                content = (
+                    f"✅ Scheduled research job {action}: "
+                    f"{result.get('committed_job_id') or '?'}"
+                )
             else:
                 discard_proposal(proposal["proposal_id"])
-                content = "已放弃这次定时研究变更。"
+                content = "Discarded this scheduled research change."
         except Exception as exc:  # noqa: BLE001 - keep proposal pending for retry
-            content = f"定时研究确认失败：{exc}"
+            content = f"Scheduled research confirmation failed: {exc}"
         await self.bus.publish_outbound(
             OutboundMessage(
                 channel=msg.channel,

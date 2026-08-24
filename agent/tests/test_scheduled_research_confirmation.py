@@ -174,3 +174,64 @@ def test_generic_adapter_acknowledgement_is_persisted_as_accepted(
     delivery = store.get("accepted").delivery
     assert delivery.status is DeliveryStatus.ACCEPTED
     assert delivery.provider_message_id is None
+
+
+def test_im_confirmation_accepts_english_and_chinese_tokens(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """"confirm"/"确认" commit and "cancel"/"取消" discard; free text passes through.
+
+    The IM runtime's exact-match tokens must cover both spellings: the 16
+    adapters serve both audiences, and a token set that only matches the
+    Chinese words locks English-speaking users out of confirming.
+    """
+    from src.channels.bus.events import InboundMessage
+    from src.channels.bus.queue import MessageBus
+    from src.channels.runtime import ChannelRuntime
+    from src.scheduled_research import proposals
+
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path))
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    monkeypatch.setattr(proposals, "default_store", lambda: store)
+    monkeypatch.setattr(
+        proposals,
+        "scheduler_status",
+        lambda: {"enabled": True, "running": True, "executable": True},
+    )
+    monkeypatch.setattr("src.scheduled_research.service.time.time", lambda: 1_000)
+    monkeypatch.setattr("src.scheduled_research.proposals.time.time", lambda: 1_000)
+
+    runtime = ChannelRuntime(
+        bus=MessageBus(),
+        session_service=None,
+        manager=None,
+        session_map_path=tmp_path / "channel_sessions.json",
+    )
+
+    def _msg(content: str) -> InboundMessage:
+        return InboundMessage(
+            channel="websocket", sender_id="u", chat_id="c", content=content
+        )
+
+    async def scenario() -> None:
+        # Free text is never treated as a confirmation.
+        assert await runtime._handle_scheduled_confirmation(_msg("sounds good"), "s-im") is False
+
+        proposals.propose_create(_draft(), session_id="s-im")
+        assert await runtime._handle_scheduled_confirmation(_msg("Confirm"), "s-im") is True
+        assert len(store.load()) == 1
+
+        proposals.propose_create(_draft(), session_id="s-im")
+        assert await runtime._handle_scheduled_confirmation(_msg("cancel"), "s-im") is True
+        assert len(store.load()) == 1  # discarded, not committed
+
+        proposals.propose_create(_draft(), session_id="s-im")
+        assert await runtime._handle_scheduled_confirmation(_msg("确认"), "s-im") is True
+        assert len(store.load()) == 2
+
+        proposals.propose_create(_draft(), session_id="s-im")
+        assert await runtime._handle_scheduled_confirmation(_msg("取消"), "s-im") is True
+        assert len(store.load()) == 2
+
+    asyncio.run(scenario())
