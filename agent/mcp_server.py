@@ -79,7 +79,6 @@ from src.market_data import (
     DEFAULT_MAX_ROWS,
     cap_rows,
     detect_source,
-    fetch_market_data_json,
     get_loader,
 )
 
