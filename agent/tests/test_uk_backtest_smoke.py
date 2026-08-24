@@ -5,12 +5,13 @@ Drives the real market-engine routing so a ``VOD.L`` backtest lands on
 bars. This is the path the routing tables feed: ``source=auto`` ->
 ``_MARKET_TO_SOURCE`` -> yahoo -> GlobalEquity, submarket ``uk``. Without the
 ``uk_equity`` entries the same call silently produced a CryptoEngine (the
-regression this guards).
+the regression this guards).
 
 All data is in-memory; no network access. LSE prices are quoted in GBp, so
 the synthetic series uses penny-scale prices and whole-share sizes (the
 generic GlobalEquity rounding path is what UK inherits, unlike HK board lots
-or Canada's tick grid).
+or Canada's tick grid), and buys carry the statutory 0.5% SDRT (rounded to
+the nearest penny, exact ½p up).
 """
 
 from __future__ import annotations
@@ -93,13 +94,19 @@ def test_uk_orders_are_whole_shares(tmp_path: Path) -> None:
     assert all(abs(f.signed_quantity) > 0 for f in fills)
 
 
-def test_uk_zero_commission_default() -> None:
-    """The generic GlobalEquity path charges no commission for US-style books.
+def test_uk_sdrt_charged_on_buys_only() -> None:
+    """LSE Main Market carries 0.5% SDRT on the buyer (purchase-side only).
 
-    A UK book must not inherit HK stamp tax or Canada's broker rate. The
-    engine's calc_commission is the fee surface the market= value selects.
+    The engine's commission function is the fee surface the market= value
+    selects. Sells pay nothing; buys (including covering a short) pay 0.5%
+    of consideration rounded to the nearest penny (FA86/S99(13)).
     """
     engine = _create_market_engine("auto", {"initial_cash": 100_000}, [CODE])
     assert isinstance(engine, GlobalEquityEngine)
     assert engine.market == "uk"
-    assert engine.calc_commission(100.0, 110.0, 1, is_open=True) == 0.0
+    assert engine.calc_commission(1000.0, 110.0, 1, is_open=True) == 550.0
+    assert engine.calc_commission(1000.0, 110.0, -1, is_open=True) == 0.0
+    # Exact half-penny rounds UP per the HMRC manual (13.4547 -> 13.45,
+    # 13.455 -> 13.46).
+    assert engine.calc_commission(2690.94, 1.0, 1, is_open=True) == 13.45
+    assert engine.calc_commission(2691.0, 1.0, 1, is_open=True) == 13.46
