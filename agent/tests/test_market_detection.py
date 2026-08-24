@@ -68,10 +68,14 @@ class TestDetectMarket:
             # Korea equity (KRX)
             ("005930.KS", "kr_equity"),  # KOSPI
             ("247540.KQ", "kr_equity"),  # KOSDAQ
-            # Canada equity (TSX / TSX Venture)
-            ("TD.TO", "ca_equity"),
-            ("BBD-B.TO", "ca_equity"),
-            ("PNG.V", "ca_equity"),
+# Canada equity (TSX / TSX Venture)
+             ("TD.TO", "ca_equity"),
+             ("BBD-B.TO", "ca_equity"),
+             ("PNG.V", "ca_equity"),
+             # UK / Irish equity (LSE / ISE)
+             ("VOD.L", "uk_equity"),
+             ("SHEL.L", "uk_equity"),
+             ("DCC.IL", "uk_equity"),
             # Crypto
             ("BTC-USDT", "crypto"),
             ("ETH-USDT", "crypto"),

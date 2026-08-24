@@ -35,6 +35,9 @@ _MARKET_PATTERNS = [
     # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
     # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
+    # UK equities: London Stock Exchange (VOD.L, SHEL.L) and Irish Stock
+    # Exchange (DCC.IL). Yahoo carries both suffixes verbatim.
+    (re.compile(r"^[A-Z0-9&.\-]+\.(L|IL)$", re.I), "uk_equity"),
     # Vietnam equities: HOSE (VIC.VN). Tickers are three letters in practice;
     # the class stays broad to admit fund certificates and ETF codes.
     (re.compile(r"^[A-Z0-9]+\.VN$", re.I), "vietnam_equity"),
@@ -74,6 +77,7 @@ _MARKET_CURRENCY = {
     "india_equity": "INR",
     "kr_equity": "KRW",
     "ca_equity": "CAD",
+    "uk_equity": "GBP",
     "vietnam_equity": "VND",
     # Every crypto pattern in _MARKET_PATTERNS is USDT-quoted, and USDT is
     # carried at its USD peg. This is the one approximation in the table: a
@@ -186,13 +190,14 @@ def _is_china_futures(code: str) -> bool:
 
 
 def _detect_submarket(codes: List[str]) -> str:
-    """Detect US, HK, or Canada from symbol suffixes.
+    """Detect US, HK, Canada, or UK from symbol suffixes.
 
     Args:
         codes: Instrument codes.
 
     Returns:
-        ``"hk"`` for ``.HK``, ``"ca"`` for ``.TO``/``.V``, else ``"us"``.
+        ``"hk"`` for ``.HK``, ``"ca"`` for ``.TO``/``.V``, ``"uk"`` for
+        ``.L``/``.IL``, else ``"us"``.
     """
     for code in codes:
         upper = code.upper()
@@ -200,6 +205,8 @@ def _detect_submarket(codes: List[str]) -> str:
             return "hk"
         if upper.endswith((".TO", ".V")):
             return "ca"
+        if upper.endswith((".L", ".IL")):
+            return "uk"
     return "us"
 
 # ── Crypto: OKX tiered maintenance margin table (simplified) ──
