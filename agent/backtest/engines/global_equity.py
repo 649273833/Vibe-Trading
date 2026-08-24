@@ -96,9 +96,10 @@ class GlobalEquityEngine(BaseEngine):
         """US: zero; HK: stamp tax + levies; Canada: configured broker rate;
         UK: SDRT on the buyer only.
 
-        ``direction`` is 1 for purchases (including buying to cover a short)
-        and -1 for sales. HK charges its stamp tax bilaterally; UK SDRT is
-        purchase-side only.
+        ``direction`` is the order/position side (1=buy-long/short-cover,
+        -1=sell/short). Trade side is direction on opens and -direction on
+        closes (closing a long sells; covering a short buys). UK SDRT applies
+        to purchases of every kind: opening long and buying to cover.
         """
         if self.market == "hk":
             notional = size * price
@@ -115,7 +116,12 @@ class GlobalEquityEngine(BaseEngine):
             # ½p rounds UP). Python's float round() is banker's rounding and
             # handles 1.005 inconsistently (-> 1.00), so use Decimal
             # ROUND_HALF_UP for the statutory direction.
-            if direction > 0:
+            #
+            # While open orders carry buyer/seller as the sign directly, a
+            # CLOSE passes the *position* side: closing a long (direction=1)
+            # is a sale, covering a short (direction=-1) is a purchase.
+            trade_is_buy = direction > 0 if is_open else direction < 0
+            if trade_is_buy:
                 consideration = Decimal(str(size)) * Decimal(str(price))
                 tax = consideration * Decimal(str(self.uk_stamp_tax))
                 return float(tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))

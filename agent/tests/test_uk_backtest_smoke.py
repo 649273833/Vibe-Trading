@@ -106,6 +106,10 @@ def test_uk_sdrt_charged_on_buys_only() -> None:
     assert engine.market == "uk"
     assert engine.calc_commission(1000.0, 110.0, 1, is_open=True) == 550.0
     assert engine.calc_commission(1000.0, 110.0, -1, is_open=True) == 0.0
+    # Close path: the engine passes the POSITION side, so closing a long
+    # (direction=1) is a sale and covering a short (direction=-1) is a buy.
+    assert engine.calc_commission(1000.0, 110.0, 1, is_open=False) == 0.0
+    assert engine.calc_commission(1000.0, 110.0, -1, is_open=False) == 550.0
     # Exact half-penny rounds UP per the HMRC manual (13.4547 -> 13.45,
     # 13.455 -> 13.46).
     assert engine.calc_commission(2690.94, 1.0, 1, is_open=True) == 13.45
