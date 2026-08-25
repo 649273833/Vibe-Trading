@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.live import pending_action
 from src.live.audit import LiveActionEvent, write_live_action
 from src.live.daily_count import (
+    DailyCountError,
     DailyOrderLockUnavailable,
     daily_order_lock,
     increment_daily_count,
@@ -134,10 +136,14 @@ def execute_live_order(
                         intent=intent, reason_code="pending_action_invalid",
                     )
                 if unresolved is not None:
-                    return _deny(
-                        broker, session_id, "pending broker action requires recovery",
-                        ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
-                        intent=intent, reason_code="pending_action_unresolved",
+                    if unresolved.phase == "resolved_needs_revalidation":
+                        return _deny(
+                            broker, session_id, "recovered broker order requires policy revalidation",
+                            ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
+                            intent=intent, reason_code="pending_action_needs_revalidation",
+                        )
+                    return _recover_pending_order(
+                        broker, session_id, connector_module, config, mandate, unresolved
                     )
             daily_count = read_daily_count(broker)
             breach = check_mandate(
@@ -428,6 +434,7 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
         result = {"status": "error", "error": str(exc)}
 
     is_error = not isinstance(result, dict) or str(result.get("status", "")).lower() != "ok"
+    accounting_failed = False
     checked = [
         "mandate",
         "expiry",
@@ -457,7 +464,13 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
             error=_error_message(result),
         )
     else:
-        increment_daily_count(broker)
+        try:
+            if pending is not None:
+                increment_daily_count(broker, pending.action_id)
+            else:
+                increment_daily_count(broker)
+        except DailyCountError:
+            accounting_failed = True
         record = _audit(
             broker,
             session_id,
@@ -467,7 +480,8 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
             intent=intent,
             broker_request=dict(place_kwargs),
             broker_response=result,
-            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked},
+            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked,
+                           **({"reason_code": "daily_action_accounting_failed"} if accounting_failed else {})},
         )
     if isinstance(result, dict) and record is not None:
         result = {**result, LIVE_ACTION_RESULT_KEY: record}
@@ -478,7 +492,7 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
             and result.get("client_order_id") == pending.client_order_id
             and bool(result.get("order_id"))
         )
-        if not is_error and exact_ack and record is not None:
+        if not is_error and not accounting_failed and exact_ack and record is not None:
             try:
                 pending_action.clear_pending_action(broker, pending.action_id)
                 cleared = True
@@ -492,6 +506,130 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
                 "reason_code": "pending_action_unresolved",
             }
     return result if isinstance(result, dict) else {"status": "error", "error": "non-dict broker result"}
+
+
+def _recover_pending_order(broker, session_id, connector, config, mandate, action):
+    """Resolve one Alpaca submission by exact identity, never by resubmission."""
+    checked = ["mandate", "expiry", "halt_flag", "pending_action", "exact_broker_evidence"]
+
+    def unresolved(reason):
+        return _deny(
+            broker, session_id, reason, checked, mandate,
+            intent=None, reason_code="pending_action_unresolved",
+        )
+
+    lookup = getattr(connector, "get_order_by_client_order_id", None)
+    if lookup is None:
+        return unresolved("connector lacks exact order recovery")
+    try:
+        response = lookup(config, client_order_id=action.client_order_id)
+    except Exception as exc:  # noqa: BLE001 - read failure is insufficient evidence
+        response = {"status": "error", "error": str(exc)}
+    evidence = _validate_recovery_evidence(action, response)
+    if evidence is None:
+        return unresolved("exact broker evidence is missing or contradictory")
+
+    status = evidence["order_status"]
+    filled = Decimal(str(evidence["filled_qty"]))
+    working = {"accepted", "new", "open", "pending_new", "accepted_for_bidding"}
+    terminal = {"rejected", "canceled", "expired"}
+    if ((status in working or status in terminal) and filled != 0) or (
+        status in {"partially_filled", "filled"} and filled <= 0
+    ):
+        return unresolved("broker status contradicts filled quantity")
+    if status != "rejected":
+        try:
+            increment_daily_count(broker, action.action_id)
+        except DailyCountError:
+            return unresolved("recovered order could not be durably accounted")
+
+    record = _audit(
+        broker, session_id,
+        kind="order_rejected" if status == "rejected" else "order_placed",
+        outcome="rejected" if status == "rejected" else ("filled" if status == "filled" else "accepted"),
+        mandate=mandate, intent=None,
+        broker_request=action.request.model_dump(mode="json"), broker_response=evidence,
+        gate_decision={"allowed": False, "decision": _DECISION_DENY,
+                       "checked_limits": checked, "reason_code": "exact_submit_recovered",
+                       "action_id": action.action_id},
+    )
+    if record is None:
+        return _recovery_refusal(broker, "recovery audit was not durable")
+    if status in working:
+        try:
+            pending_action.transition_to_revalidation(action, evidence)
+        except Exception as exc:  # noqa: BLE001 - retain the recovery block
+            logger.warning("pending action transition failed for %s: %s", broker, exc)
+            return _recovery_refusal(broker, "recovered order transition was not durable", record)
+        return _recovery_refusal(
+            broker, "recovered working order requires policy revalidation", record,
+            reason_code="pending_action_needs_revalidation",
+        )
+    if status in terminal:
+        try:
+            pending_action.clear_pending_action(broker, action.action_id)
+        except Exception as exc:  # noqa: BLE001 - retain the recovery block
+            logger.warning("pending action clear failed for %s: %s", broker, exc)
+            return _recovery_refusal(broker, "terminal recovery could not be cleared", record)
+        return _recovery_refusal(
+            broker, "exact terminal broker outcome recovered", record,
+            reason_code="pending_action_resolved_terminal", recovery_pending=False,
+        )
+    return _recovery_refusal(broker, "exact fill requires position attribution", record)
+
+
+def _validate_recovery_evidence(action, response) -> dict[str, Any] | None:
+    order = response.get("order") if isinstance(response, dict) and response.get("status") == "ok" else None
+    if (
+        not isinstance(order, dict)
+        or not isinstance(order.get("broker_order_id"), str)
+        or not order["broker_order_id"]
+    ):
+        return None
+    request = action.request
+    expected = {"client_order_id": action.client_order_id, "symbol": request.symbol,
+                "side": request.side, "order_type": request.order_type,
+                "time_in_force": request.time_in_force}
+    if any(order.get(key) != value for key, value in expected.items()):
+        return None
+    try:
+        submitted = datetime.fromisoformat(str(order.get("submitted_at") or "").replace("Z", "+00:00"))
+        normalized = dict(order)
+        for key in ("quantity", "notional", "limit_price"):
+            actual, wanted = _exact_decimal(order.get(key)), _exact_decimal(getattr(request, key))
+            if actual != wanted:
+                return None
+            normalized[key] = float(actual) if actual is not None else None
+        filled = _exact_decimal(order.get("filled_qty"))
+    except (InvalidOperation, ValueError):
+        return None
+    status = str(order.get("order_status") or "").strip().lower()
+    supported = {"accepted", "new", "open", "pending_new", "accepted_for_bidding",
+                 "rejected", "canceled", "expired", "partially_filled", "filled"}
+    if submitted.tzinfo is None or filled is None or filled < 0 or status not in supported:
+        return None
+    normalized.update(broker_order_id=str(order["broker_order_id"]), filled_qty=float(filled),
+                      order_status=status, submitted_at=submitted.isoformat())
+    return normalized
+
+
+def _exact_decimal(value) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise InvalidOperation
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise InvalidOperation
+    return number
+
+
+def _recovery_refusal(
+    broker, reason, record=None, *, reason_code="pending_action_unresolved", recovery_pending=True
+) -> dict[str, Any]:
+    result = _refusal(broker, decision=_DECISION_DENY, reason=reason, reauth=False, record=record)
+    result.update(reason_code=reason_code, recovery_pending=recovery_pending)
+    return result
 
 
 def _deny(broker, session_id, reason, checked, mandate, *, intent, reauth=False, reason_code=None) -> dict[str, Any]:

@@ -58,6 +58,8 @@ class _FakeConnector:
 
     def __init__(self, *, positions=None, balance=None, quote_last=100.0):
         self.placed: list[dict] = []
+        self.lookups: list[str] = []
+        self.lookup_result: dict | BaseException = {"status": "error", "error": "not found"}
         self._positions = positions if positions is not None else {"status": "ok", "positions": []}
         self._balance = balance if balance is not None else {"status": "ok", "account": {}}
         self._quote_last = quote_last
@@ -74,6 +76,18 @@ class _FakeConnector:
 
     def get_quote(self, symbol, *, config=None):
         return {"status": "ok", "symbol": symbol, "quote": {"last": self._quote_last}}
+
+    def get_order_by_client_order_id(self, config, *, client_order_id):
+        self.lookups.append(client_order_id)
+        if isinstance(self.lookup_result, BaseException):
+            raise self.lookup_result
+        return self.lookup_result
+
+
+class _LostResponseConnector(_FakeConnector):
+    def place_order(self, config, **kwargs):
+        self.placed.append(kwargs)
+        raise TimeoutError("response lost")
 
 
 def _mandate(
@@ -114,7 +128,7 @@ def _patch_gate(monkeypatch, *, mandate, halted=False):
     monkeypatch.setattr(gate, "halt_flag_set", lambda broker: halted)
     monkeypatch.setattr(gate, "write_live_action", lambda *a, **k: {"audited": True})
     monkeypatch.setattr(gate, "read_daily_count", lambda broker: 0)
-    monkeypatch.setattr(gate, "increment_daily_count", lambda broker: 1)
+    monkeypatch.setattr(gate, "increment_daily_count", lambda broker, action_id=None: 1)
     monkeypatch.setattr(gate, "daily_order_lock", lambda broker: nullcontext())
 
 
@@ -176,6 +190,7 @@ def test_gate_allows_in_bounds_and_places(monkeypatch) -> None:
 
 def test_alpaca_marker_precedes_submit_and_audit_precedes_clear(monkeypatch) -> None:
     events: list[str] = []
+    action_ids: list[str] = []
 
     class _OrderingConnector(_FakeConnector):
         def place_order(self, config, **kwargs):
@@ -192,6 +207,8 @@ def test_alpaca_marker_precedes_submit_and_audit_precedes_clear(monkeypatch) -> 
         return record
 
     monkeypatch.setattr(gate, "write_live_action", audited)
+    monkeypatch.setattr(gate, "increment_daily_count",
+                        lambda broker, action_id=None: action_ids.append(action_id) or 1)
     real_clear = pending_state.clear_pending_action
     monkeypatch.setattr(pending_state, "clear_pending_action",
                         lambda broker, action_id: events.append("clear") or real_clear(broker, action_id))
@@ -202,6 +219,7 @@ def test_alpaca_marker_precedes_submit_and_audit_precedes_clear(monkeypatch) -> 
 
     assert first["status"] == second["status"] == "ok"
     assert events == ["submit", "audit", "clear"] * 2
+    assert all(value and value.startswith("act_") for value in action_ids)
     assert connector.placed[0]["client_order_id"] != connector.placed[1]["client_order_id"]
     assert live_audit.audit_ledger_path().is_file()
     assert load_pending_action("alpaca") is None
@@ -273,6 +291,108 @@ def test_incomplete_or_mismatched_ack_retains_marker(monkeypatch, response) -> N
     assert len(connector.placed) == 1
 
 
+def _exact_order(action, *, status="new", filled_qty="0", **changes):
+    order = {
+        "broker_order_id": "broker-1", "client_order_id": action.client_order_id,
+        "symbol": action.request.symbol, "side": action.request.side,
+        "order_type": action.request.order_type, "time_in_force": action.request.time_in_force,
+        "quantity": action.request.quantity, "notional": action.request.notional,
+        "limit_price": action.request.limit_price, "filled_qty": filled_qty,
+        "order_status": status, "submitted_at": "2026-08-25T00:00:00Z",
+    }
+    order.update(changes)
+    return {"status": "ok", "order": order}
+
+
+def test_restart_recovers_exact_working_order_once_and_never_resubmits(monkeypatch) -> None:
+    counted: set[str] = set()
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "increment_daily_count",
+                        lambda broker, action_id=None: counted.add(action_id) or 1)
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action)
+    real_transition = pending_state.transition_to_revalidation
+    attempts = iter((False, True))
+    def crash_once(pending, evidence):
+        if not next(attempts):
+            raise OSError("crash after audit")
+        return real_transition(pending, evidence)
+    monkeypatch.setattr(pending_state, "transition_to_revalidation", crash_once)
+
+    interrupted = _place(connector)
+    recovered = _place(connector)
+    replay = _place(connector)
+    persisted = load_pending_action("alpaca")
+
+    assert interrupted["reason_code"] == "pending_action_unresolved"
+    assert recovered["reason_code"] == replay["reason_code"] == "pending_action_needs_revalidation"
+    assert persisted.phase == "resolved_needs_revalidation" and persisted.broker_order_id == "broker-1"
+    assert counted == {action.action_id}
+    assert len(connector.placed) == 1 and connector.lookups == [action.client_order_id] * 2
+
+
+@pytest.mark.parametrize("change", [None, {"symbol": "MSFT"}, {"client_order_id": "manual"},
+                                     {"order_status": "mystery"}])
+def test_recovery_insufficient_or_mismatched_evidence_stays_blocked(monkeypatch, change) -> None:
+    counted: list[str] = []
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "increment_daily_count",
+                        lambda broker, action_id=None: counted.append(action_id) or 1)
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = ({"status": "error", "error": "not found"}
+                               if change is None else _exact_order(action, **change))
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_unresolved"
+    assert load_pending_action("alpaca").phase == "pending_write"
+    assert counted == [] and len(connector.placed) == 1
+
+
+@pytest.mark.parametrize(("status", "was_counted"), [("rejected", False), ("canceled", True),
+                                                      ("expired", True)])
+def test_exact_zero_fill_terminal_is_audited_then_cleared(
+    monkeypatch, status, was_counted,
+) -> None:
+    counted: list[str] = []
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "increment_daily_count",
+                        lambda broker, action_id=None: counted.append(action_id) or 1)
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action, status=status)
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_resolved_terminal"
+    assert load_pending_action("alpaca") is None
+    assert counted == ([action.action_id] if was_counted else [])
+    assert len(connector.placed) == 1
+
+
+@pytest.mark.parametrize("status", ["partially_filled", "filled"])
+def test_exact_fill_is_counted_but_retained_for_position_attribution(monkeypatch, status) -> None:
+    counted: list[str] = []
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "increment_daily_count",
+                        lambda broker, action_id=None: counted.append(action_id) or 1)
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action, status=status, filled_qty="1")
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_unresolved"
+    assert load_pending_action("alpaca").phase == "pending_write"
+    assert counted == [action.action_id] and len(connector.placed) == 1
+
+
 def test_corrupt_pending_marker_and_failed_audit_both_fail_closed(monkeypatch) -> None:
     _patch_gate(monkeypatch, mandate=_mandate())
     connector = _FakeConnector()
@@ -293,6 +413,21 @@ def test_audit_durability_failure_retains_pending_marker(monkeypatch) -> None:
     monkeypatch.setattr(gate, "write_live_action", live_audit.write_live_action)
     connector = _FakeConnector()
     patch_module_os(monkeypatch, live_audit, fsync=lambda fd: (_ for _ in ()).throw(OSError("disk")))
+
+    result = _place(connector)
+
+    assert result["status"] == "ok" and result["recovery_pending"] is True
+    assert result["reason_code"] == "pending_action_unresolved"
+    assert len(connector.placed) == 1 and load_pending_action("alpaca") is not None
+
+
+def test_acknowledged_submit_count_failure_retains_recovery_marker(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(
+        gate, "increment_daily_count",
+        lambda *args: (_ for _ in ()).throw(gate.DailyCountError("disk")),
+    )
+    connector = _FakeConnector()
 
     result = _place(connector)
 
@@ -342,6 +477,33 @@ def test_external_client_id_reaches_direct_sdk_and_tap(monkeypatch) -> None:
         quantity=1, client_order_id="vt-tap",
     )
     assert tap["status"] == "ok" and captured["tap"]["client_order_id"] == "vt-tap"
+
+
+def test_exact_lookup_normalizes_equivalent_direct_and_tap_evidence(monkeypatch) -> None:
+    payload = {"id": "oid", "client_order_id": "vt-exact", "symbol": "AAPL",
+               "side": "buy", "type": "market", "time_in_force": "day", "qty": "1",
+               "notional": None, "limit_price": None, "filled_qty": "0", "status": "new",
+               "submitted_at": "2026-08-25T00:00:00Z"}
+
+    class _Client:
+        def get_order_by_client_id(self, client_id):
+            assert client_id == "vt-exact"
+            return SimpleNamespace(**payload)
+
+    monkeypatch.setattr(alpaca_sdk, "_trading_client", lambda cfg: _Client())
+    monkeypatch.setattr(alpaca_sdk.tap_forward, "tap_enabled", lambda: False)
+    direct = alpaca_sdk.get_order_by_client_order_id(
+        alpaca_sdk.AlpacaConfig(profile="paper"), client_order_id="vt-exact")
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(alpaca_sdk.tap_forward, "tap_enabled", lambda: True)
+    monkeypatch.setattr(alpaca_sdk.tap_forward, "forward",
+                        lambda target, method, body, headers:
+                        captured.update(target=target, method=method) or {"ok": True, "body": payload})
+    tap = alpaca_sdk.get_order_by_client_order_id(
+        alpaca_sdk.AlpacaConfig(profile="paper"), client_order_id="vt-exact")
+
+    assert direct == tap and direct["order"]["client_order_id"] == "vt-exact"
+    assert captured["method"] == "GET" and "client_order_id=vt-exact" in captured["target"]
 
 
 def test_gate_blocks_oversized_order(monkeypatch) -> None:

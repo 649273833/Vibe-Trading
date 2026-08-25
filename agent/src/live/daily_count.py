@@ -35,6 +35,10 @@ class DailyOrderLockUnavailable(RuntimeError):
     """Raised when another process holds the broker's order permit lock."""
 
 
+class DailyCountError(RuntimeError):
+    """Raised when action-ID accounting cannot be trusted or persisted."""
+
+
 def _counter_path(broker: str):
     return broker_dir(broker) / _COUNTER_FILENAME
 
@@ -120,15 +124,67 @@ def read_daily_count(broker: str) -> int:
         return 0
 
 
-def increment_daily_count(broker: str) -> int:
+def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     """Persist ``broker``'s incremented count for today (atomic). Returns new count."""
     today = _utc_today()
-    count = read_daily_count(broker) + 1
+    if action_id is not None and not (1 <= len(action_id) <= 128):
+        raise DailyCountError("action_id must contain 1-128 characters")
+    try:
+        action_ids = _read_action_ids(broker)
+    except DailyCountError:
+        if action_id is not None:
+            raise
+        action_ids = []
+    count = read_daily_count(broker)
+    if action_id is not None and action_id in action_ids:
+        return count
+    count += 1
+    if action_id is not None:
+        action_ids.append(action_id)
     path = _counter_path(broker)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(
         f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     )
-    tmp.write_text(json.dumps({"date": today, "count": count}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    payload = json.dumps({"date": today, "count": count, "action_ids": action_ids}, ensure_ascii=False)
+    try:
+        with tmp.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.replace(path)
+        if os.name != "nt":
+            descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    except Exception as exc:
+        try:
+            tmp.unlink()
+        except OSError as cleanup_exc:
+            exc.add_note(f"temporary count cleanup also failed: {cleanup_exc}")
+        raise DailyCountError("daily order count could not be persisted") from exc
     return count
+
+
+def _read_action_ids(broker: str) -> list[str]:
+    path = _counter_path(broker)
+    if not path.is_file():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DailyCountError("daily order count cannot be read") from exc
+    if not isinstance(raw, dict) or raw.get("date") != _utc_today():
+        return []
+    count, values = raw.get("count"), raw.get("action_ids", [])
+    if (
+        isinstance(count, bool) or not isinstance(count, int) or count < 0
+        or not isinstance(values, list)
+        or any(not isinstance(value, str) or not value for value in values)
+        or len(set(values)) != len(values)
+        or len(values) > count
+    ):
+        raise DailyCountError("daily order count has an invalid schema")
+    return values

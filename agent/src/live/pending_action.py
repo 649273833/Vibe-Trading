@@ -44,20 +44,38 @@ class PendingOrderRequest(BaseModel):
         return self
 
 
+class RecoveredOrderEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    broker_order_id: str = Field(min_length=1)
+    client_order_id: str = Field(min_length=1, max_length=48)
+    symbol: str = Field(min_length=1)
+    side: Literal["buy", "sell"]
+    order_type: Literal["market", "limit"]
+    time_in_force: Literal["day", "gtc"]
+    quantity: float | int | None
+    notional: float | int | None
+    limit_price: float | int | None
+    filled_qty: float | int
+    order_status: str = Field(min_length=1)
+    submitted_at: str = Field(min_length=1)
+
+
 class PendingAction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     schema_version: Literal[1]
     broker: Literal["alpaca"]
     action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
-    phase: Literal["pending_write"]
+    phase: Literal["pending_write", "resolved_needs_revalidation"]
     kind: Literal["place_order"]
     created_at: datetime
     client_order_id: str = Field(min_length=1, max_length=48)
-    broker_order_id: None = None
+    broker_order_id: str | None = None
     request: PendingOrderRequest
     pre_position_qty: float | int | None
     remediation_attempts: Literal[0]
+    resolution: RecoveredOrderEvidence | None = None
 
     @model_validator(mode="after")
     def validate_evidence(self) -> Self:
@@ -67,6 +85,16 @@ class PendingAction(BaseModel):
             self.pre_position_qty
         ):
             raise ValueError("pre-position quantity must be finite")
+        if self.phase == "pending_write" and (
+            self.broker_order_id is not None or self.resolution is not None
+        ):
+            raise ValueError("pending write cannot contain resolved evidence")
+        if self.phase == "resolved_needs_revalidation" and (
+            self.resolution is None
+            or self.broker_order_id != self.resolution.broker_order_id
+            or self.client_order_id != self.resolution.client_order_id
+        ):
+            raise ValueError("resolved phase requires matching exact evidence")
         return self
 
 
@@ -125,6 +153,30 @@ def save_pending_action(action: PendingAction) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.exists() or path.is_symlink():
         raise PendingActionError("a pending broker action already exists")
+    _write_action(path, action)
+
+
+def transition_to_revalidation(
+    action: PendingAction, evidence: Mapping[str, object]
+) -> PendingAction:
+    """Durably retain exact working-order truth for later policy revalidation."""
+    resolution = RecoveredOrderEvidence.model_validate(evidence)
+    updated = PendingAction.model_validate(
+        {
+            **action.model_dump(mode="python"),
+            "phase": "resolved_needs_revalidation",
+            "broker_order_id": resolution.broker_order_id,
+            "resolution": resolution,
+        }
+    )
+    current = load_pending_action(action.broker)
+    if current is None or current.action_id != action.action_id:
+        raise PendingActionError("pending action changed before transition")
+    _write_action(pending_action_path(action.broker), updated)
+    return updated
+
+
+def _write_action(path: Path, action: PendingAction) -> None:
     payload = json.dumps(
         action.model_dump(mode="json"),
         allow_nan=False,

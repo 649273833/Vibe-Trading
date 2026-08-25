@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import src.live.paths as live_paths
-from src.live.daily_count import daily_order_lock
+from src.live.daily_count import daily_order_lock, increment_daily_count, read_daily_count
 
 pytestmark = pytest.mark.unit
 
@@ -54,3 +55,15 @@ def test_daily_order_lock_is_cross_process(
 
     assert blocked.stdout.strip() == "blocked"
     assert acquired.stdout.strip() == "acquired"
+
+
+def test_action_id_increment_is_durable_and_deduplicated(tmp_path, monkeypatch) -> None:
+    runtime_root = tmp_path / ".vibe-trading"
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: runtime_root)
+
+    assert increment_daily_count("alpaca", action_id="act_one") == 1
+    assert increment_daily_count("alpaca", action_id="act_one") == 1
+    assert increment_daily_count("alpaca", action_id="act_two") == 2
+    assert read_daily_count("alpaca") == 2
+    payload = json.loads((runtime_root / "live" / "alpaca" / "trade_counter.json").read_text())
+    assert payload["action_ids"] == ["act_one", "act_two"]

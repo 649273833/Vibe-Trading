@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Mapping
+from urllib.parse import urlencode
 
 from src.config.paths import get_runtime_root
 from src.trading import tap_forward
@@ -364,6 +365,33 @@ def get_open_orders(config: AlpacaConfig | None = None, *, include_executions: b
     return result
 
 
+def get_order_by_client_order_id(
+    config: AlpacaConfig | None = None, *, client_order_id: str
+) -> dict[str, Any]:
+    """Read one order by the caller-owned exact Alpaca client order ID."""
+    cfg = config or load_config()
+    client_id = str(client_order_id or "").strip()
+    if not (1 <= len(client_id) <= 48):
+        return {"status": "error", "error": "client_order_id must contain 1-48 characters"}
+    try:
+        if tap_forward.tap_enabled():
+            query = urlencode({"client_order_id": client_id})
+            order = _read_via_tap(f"{cfg.host}/v2/orders:by_client_order_id?{query}")
+        else:
+            order = _trading_client(cfg).get_order_by_client_id(client_id)
+    except Exception as exc:  # noqa: BLE001 - read failure is insufficient evidence
+        return {"status": "error", "error": str(exc)}
+    item = _order_to_dict(order)
+    return {"status": "ok", "profile": cfg.profile, "is_paper": cfg.is_paper, "order": {
+        "broker_order_id": item["order_id"], "client_order_id": item["client_order_id"],
+        "symbol": item["symbol"], "side": item["side"], "order_type": item["order_type"],
+        "time_in_force": item["time_in_force"], "quantity": item["quantity"],
+        "notional": item["notional"], "limit_price": item["limit_price"],
+        "filled_qty": item["filled_qty"], "order_status": item["status"],
+        "submitted_at": item["submitted_at"],
+    }}
+
+
 def get_quote(symbol: str, *, config: AlpacaConfig | None = None, **_: Any) -> dict[str, Any]:
     """Fetch a latest quote snapshot for ``symbol``."""
     cfg = config or load_config()
@@ -573,6 +601,7 @@ def place_order(
     return {
         "status": "ok",
         "order_id": str(_obj_get(order, "id", "")),
+        "client_order_id": str(_obj_get(order, "client_order_id", "")),
         "symbol": clean_symbol,
         "side": side_token,
         "profile": cfg.profile,
@@ -663,6 +692,7 @@ def _submit_via_tap(
     return {
         "status": "ok",
         "order_id": str(payload.get("id", "")),
+        "client_order_id": str(payload.get("client_order_id", "")),
         "symbol": symbol,
         "side": side,
         "profile": cfg.profile,
@@ -886,17 +916,23 @@ def _position_to_dict(item: Any) -> dict[str, Any]:
 def _order_to_dict(item: Any) -> dict[str, Any]:
     return {
         "order_id": str(_obj_get(item, "id", "")),
+        "client_order_id": str(_obj_get(item, "client_order_id", "")),
         "symbol": _obj_get(item, "symbol"),
-        "side": str(_obj_get(item, "side", "")),
-        "order_type": str(_obj_get(item, "order_type", "") or _obj_get(item, "type", "")),
+        "side": _enum_token(_obj_get(item, "side", "")),
+        "order_type": _enum_token(_obj_get(item, "order_type", "") or _obj_get(item, "type", "")),
+        "time_in_force": _enum_token(_obj_get(item, "time_in_force", "")),
         "quantity": _obj_get(item, "qty"),
         "notional": _obj_get(item, "notional"),
         "filled_qty": _obj_get(item, "filled_qty"),
         "filled_avg_price": _obj_get(item, "filled_avg_price"),
         "limit_price": _obj_get(item, "limit_price"),
-        "status": str(_obj_get(item, "status", "")),
+        "status": _enum_token(_obj_get(item, "status", "")),
         "submitted_at": str(_obj_get(item, "submitted_at", "")),
     }
+
+
+def _enum_token(value: Any) -> str:
+    return str(getattr(value, "value", value)).strip().lower()
 
 
 def _bar_to_dict(item: Any) -> dict[str, Any]:
