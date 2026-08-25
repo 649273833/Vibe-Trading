@@ -1123,6 +1123,9 @@ vibe-trading --swarm-run crypto_trading_desk '{"asset": "ETH-USDT", "timeframe":
 
 # Global macro portfolio allocation
 vibe-trading --swarm-run macro_rates_fx_desk '{"focus": "Fed pivot impact on EM bonds"}'
+
+# Resume a failed or cancelled run while keeping its completed tasks
+vibe-trading --swarm-retry <run_id> --swarm-resume
 ```
 
 ### Cross-Session Memory
