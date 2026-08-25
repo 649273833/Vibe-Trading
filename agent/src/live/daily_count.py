@@ -12,6 +12,7 @@ import json
 import os
 import threading
 from contextlib import contextmanager
+from datetime import date as calendar_date
 from datetime import datetime, timezone
 from typing import BinaryIO, Iterator
 
@@ -136,6 +137,8 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
             raise
         counter_date = None
         action_ids = []
+    if action_id is not None and counter_date is not None and counter_date > today:
+        raise DailyCountError("daily order count date is in the future")
     count = read_daily_count(broker)
     if action_id is not None and action_id in action_ids:
         return count
@@ -145,12 +148,12 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     if action_id is not None:
         action_ids.append(action_id)
     path = _counter_path(broker)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(
         f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     )
     payload = json.dumps({"date": today, "count": count, "action_ids": action_ids}, ensure_ascii=False)
     try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tmp.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(payload + "\n")
             handle.flush()
@@ -182,11 +185,21 @@ def _read_action_ids(broker: str) -> tuple[str | None, list[str]]:
     if not isinstance(raw, dict):
         raise DailyCountError("daily order count has an invalid schema")
     date, count, values = raw.get("date"), raw.get("count"), raw.get("action_ids", [])
+    try:
+        valid_date = (
+            isinstance(date, str)
+            and calendar_date.fromisoformat(date).isoformat() == date
+        )
+    except ValueError:
+        valid_date = False
     if (
-        not isinstance(date, str) or not date
+        not valid_date
         or isinstance(count, bool) or not isinstance(count, int) or count < 0
         or not isinstance(values, list)
-        or any(not isinstance(value, str) or not value for value in values)
+        or any(
+            not isinstance(value, str) or not (1 <= len(value) <= 128)
+            for value in values
+        )
         or len(set(values)) != len(values)
         or len(values) > count
     ):

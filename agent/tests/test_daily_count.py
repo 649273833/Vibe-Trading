@@ -12,7 +12,12 @@ import pytest
 
 import src.live.paths as live_paths
 from src.live import daily_count
-from src.live.daily_count import daily_order_lock, increment_daily_count, read_daily_count
+from src.live.daily_count import (
+    DailyCountError,
+    daily_order_lock,
+    increment_daily_count,
+    read_daily_count,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -87,3 +92,36 @@ def test_action_id_deduplicates_after_utc_rollover(tmp_path, monkeypatch) -> Non
         "count": 1,
         "action_ids": ["act_new"],
     }
+
+
+@pytest.mark.parametrize(
+    ("counter_date", "action_ids"),
+    [
+        ("not-a-date", ["act_recovered"]),
+        ("9999-12-31", ["act_recovered"]),
+        ("2026-08-25", ["x" * 129]),
+    ],
+)
+def test_action_id_accounting_rejects_malformed_evidence(
+    tmp_path, monkeypatch, counter_date, action_ids
+) -> None:
+    runtime_root = tmp_path / ".vibe-trading"
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: runtime_root)
+    path = runtime_root / "live" / "alpaca" / "trade_counter.json"
+    path.parent.mkdir(parents=True)
+    original = json.dumps({"date": counter_date, "count": 1, "action_ids": action_ids})
+    path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(DailyCountError):
+        increment_daily_count("alpaca", action_id="act_recovered")
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_action_id_accounting_wraps_directory_failure(tmp_path, monkeypatch) -> None:
+    runtime_root = tmp_path / ".vibe-trading"
+    runtime_root.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: runtime_root)
+
+    with pytest.raises(DailyCountError):
+        increment_daily_count("alpaca", action_id="act_recovered")
