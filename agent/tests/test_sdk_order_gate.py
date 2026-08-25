@@ -333,6 +333,33 @@ def test_restart_recovers_exact_working_order_once_and_never_resubmits(monkeypat
     assert len(connector.placed) == 1 and connector.lookups == [action.client_order_id] * 2
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("order_status", "mystery"),
+        ("submitted_at", "not-a-time"),
+        ("filled_qty", -1),
+        ("symbol", "MSFT"),
+    ],
+)
+def test_persisted_resolution_revalidates_semantic_evidence(monkeypatch, field, value) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action)
+    _place(connector)
+    path = pending_action_path("alpaca")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["resolution"][field] = value
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_invalid"
+    assert len(connector.placed) == 1
+
+
 @pytest.mark.parametrize("blocker", ["missing_mandate", "expired", "halted"])
 def test_exact_recovery_precedes_current_policy_blockers(monkeypatch, blocker) -> None:
     _patch_gate(monkeypatch, mandate=_mandate())

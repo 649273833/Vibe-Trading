@@ -7,6 +7,7 @@ import math
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal, Mapping, Self
 
@@ -60,6 +61,57 @@ class RecoveredOrderEvidence(BaseModel):
     order_status: str = Field(min_length=1)
     submitted_at: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_order_evidence(self) -> Self:
+        try:
+            quantity = (
+                Decimal(str(self.quantity)) if self.quantity is not None else None
+            )
+            notional = (
+                Decimal(str(self.notional)) if self.notional is not None else None
+            )
+            limit_price = (
+                Decimal(str(self.limit_price)) if self.limit_price is not None else None
+            )
+            filled = Decimal(str(self.filled_qty))
+            submitted = datetime.fromisoformat(self.submitted_at.replace("Z", "+00:00"))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("recovered order evidence is malformed") from exc
+        numerics = [
+            value
+            for value in (quantity, notional, limit_price, filled)
+            if value is not None
+        ]
+        supported = {
+            "accepted",
+            "new",
+            "open",
+            "pending_new",
+            "accepted_for_bidding",
+            "rejected",
+            "canceled",
+            "expired",
+            "partially_filled",
+            "filled",
+        }
+        working = {"accepted", "new", "open", "pending_new", "accepted_for_bidding"}
+        fill_statuses = {"partially_filled", "filled"}
+        if (
+            (quantity is None) == (notional is None)
+            or any(not value.is_finite() for value in numerics)
+            or any(value <= 0 for value in (quantity, notional) if value is not None)
+            or filled < 0
+            or (self.order_type == "limit") != (limit_price is not None)
+            or (limit_price is not None and limit_price <= 0)
+            or submitted.tzinfo is None
+            or self.order_status not in supported
+            or (filled == 0 and self.order_status in fill_statuses)
+            or (filled > 0 and self.order_status in working | {"rejected"})
+            or (quantity is not None and filled > quantity)
+        ):
+            raise ValueError("recovered order evidence is contradictory")
+        return self
+
 
 class PendingAction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -95,6 +147,28 @@ class PendingAction(BaseModel):
             or self.client_order_id != self.resolution.client_order_id
         ):
             raise ValueError("resolved phase requires matching exact evidence")
+        if self.resolution is not None:
+            request = self.request
+            resolution = self.resolution
+            numeric_pairs = (
+                (resolution.quantity, request.quantity),
+                (resolution.notional, request.notional),
+                (resolution.limit_price, request.limit_price),
+            )
+            if (
+                resolution.symbol != request.symbol
+                or resolution.side != request.side
+                or resolution.order_type != request.order_type
+                or resolution.time_in_force != request.time_in_force
+                or any(
+                    actual is None
+                    or expected is None
+                    or Decimal(str(actual)) != Decimal(str(expected))
+                    for actual, expected in numeric_pairs
+                    if actual is not None or expected is not None
+                )
+            ):
+                raise ValueError("resolved evidence contradicts the owned request")
         return self
 
 
