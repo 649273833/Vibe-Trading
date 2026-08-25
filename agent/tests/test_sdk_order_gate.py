@@ -7,16 +7,22 @@ connector module + a stubbed mandate/halt so they need no broker SDK.
 
 from __future__ import annotations
 
+import json
+import sys
 import threading
 from contextlib import nullcontext
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 import src.live.paths as live_paths
 from src.config.accessor import reset_env_config
+from src.live import audit as live_audit
+from src.live import pending_action as pending_state
 from src.live import sdk_order_gate as gate
 from src.live.daily_count import read_daily_count
 from src.live.enforcement import OrderIntent
+from src.live.pending_action import load_pending_action, pending_action_path
 from src.live.mandate.model import (
     AssetClass,
     ConsentMeta,
@@ -26,7 +32,9 @@ from src.live.mandate.model import (
     UniverseConstraint,
 )
 from src.trading import service
+from src.trading.connectors.alpaca import sdk as alpaca_sdk
 from src.trading.connectors.longbridge import credentials as lb_credentials
+from tests.module_os_helpers import patch_module_os
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +50,7 @@ def _isolate_longbridge_credentials(monkeypatch, tmp_path):
         monkeypatch.delenv(env_name, raising=False)
     reset_env_config()
     monkeypatch.setattr(lb_credentials, "get_runtime_root", lambda: tmp_path)
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: tmp_path)
 
 
 class _FakeConnector:
@@ -116,6 +125,14 @@ def _intent(notional=500.0, qty=None, asset=AssetClass.US_EQUITY):
     )
 
 
+def _place(connector, **place_kwargs):
+    return gate.execute_live_order(
+        broker="alpaca", connector_module=connector, config=object(),
+        intent=_intent(),
+        place_kwargs={"symbol": "AAPL", "side": "buy", "notional": 500.0, **place_kwargs},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Gate decisions
 # --------------------------------------------------------------------------- #
@@ -155,6 +172,150 @@ def test_gate_allows_in_bounds_and_places(monkeypatch) -> None:
     assert out["status"] == "ok" and out["order_id"] == "OID-1"
     assert len(conn.placed) == 1  # forwarded to broker
     assert "live_action" in out
+
+
+def test_alpaca_marker_precedes_submit_and_audit_precedes_clear(monkeypatch) -> None:
+    events: list[str] = []
+
+    class _OrderingConnector(_FakeConnector):
+        def place_order(self, config, **kwargs):
+            pending = load_pending_action("alpaca")
+            assert pending is not None and pending.phase == "pending_write"
+            assert pending.client_order_id == kwargs["client_order_id"]
+            events.append("submit")
+            return super().place_order(config, **kwargs)
+
+    _patch_gate(monkeypatch, mandate=_mandate())
+    def audited(*args, **kwargs):
+        record = live_audit.write_live_action(*args, **kwargs)
+        events.append("audit")
+        return record
+
+    monkeypatch.setattr(gate, "write_live_action", audited)
+    real_clear = pending_state.clear_pending_action
+    monkeypatch.setattr(pending_state, "clear_pending_action",
+                        lambda broker, action_id: events.append("clear") or real_clear(broker, action_id))
+
+    connector = _OrderingConnector()
+    first = _place(connector)
+    second = _place(connector)
+
+    assert first["status"] == second["status"] == "ok"
+    assert events == ["submit", "audit", "clear"] * 2
+    assert connector.placed[0]["client_order_id"] != connector.placed[1]["client_order_id"]
+    assert live_audit.audit_ledger_path().is_file()
+    assert load_pending_action("alpaca") is None
+
+
+def test_pending_persist_failure_makes_zero_broker_calls(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _FakeConnector()
+    patch_module_os(
+        monkeypatch, pending_state,
+        fsync=lambda descriptor: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    result = _place(connector)
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "pending_action_persist_failed"
+    assert connector.placed == []
+    assert load_pending_action("alpaca") is None
+
+
+def test_uncertain_submit_survives_restart_and_blocks_new_risk(monkeypatch) -> None:
+    class _TimeoutConnector(_FakeConnector):
+        def place_order(self, config, **kwargs):
+            self.placed.append(kwargs)
+            raise TimeoutError("response lost")
+
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _TimeoutConnector()
+    first = _place(connector, api_key="must-not-persist")
+    restarted = load_pending_action("alpaca")
+    second = _place(connector)
+    raw = pending_action_path("alpaca").read_text(encoding="utf-8")
+
+    assert first["status"] == "error" and first["recovery_pending"] is True
+    assert first["reason_code"] == "pending_action_unresolved"
+    assert restarted is not None and restarted.client_order_id == connector.placed[0]["client_order_id"]
+    assert second["status"] == "blocked" and second["reason_code"] == "pending_action_unresolved"
+    assert len(connector.placed) == 1
+    assert "must-not-persist" not in raw and "api_key" not in raw
+    assert set(json.loads(raw)["request"]) == {
+        "symbol", "side", "quantity", "notional", "order_type", "limit_price", "time_in_force"
+    }
+
+
+def test_corrupt_pending_marker_and_failed_audit_both_fail_closed(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _FakeConnector()
+    monkeypatch.setattr(gate, "write_live_action", lambda *a, **k: None)
+
+    result = _place(connector)
+    assert result["status"] == "ok" and result["recovery_pending"] is True
+    assert len(connector.placed) == 1
+
+    pending_action_path("alpaca").write_text('{"schema_version":999}\n', encoding="utf-8")
+    blocked = _place(connector)
+    assert blocked["status"] == "blocked" and blocked["reason_code"] == "pending_action_invalid"
+    assert len(connector.placed) == 1
+
+
+def test_audit_durability_failure_retains_pending_marker(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "write_live_action", live_audit.write_live_action)
+    connector = _FakeConnector()
+    patch_module_os(monkeypatch, live_audit, fsync=lambda fd: (_ for _ in ()).throw(OSError("disk")))
+
+    result = _place(connector)
+
+    assert result["status"] == "ok" and result["recovery_pending"] is True
+    assert result["reason_code"] == "pending_action_unresolved"
+    assert len(connector.placed) == 1 and load_pending_action("alpaca") is not None
+
+
+def test_external_client_id_reaches_direct_sdk_and_tap(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _Request:
+        def __init__(self, **kwargs):
+            captured["request"] = kwargs
+
+    class _Client:
+        def submit_order(self, *, order_data):
+            return SimpleNamespace(id="oid", status="accepted", filled_qty="0")
+
+    enums = ModuleType("alpaca.trading.enums")
+    enums.OrderSide = SimpleNamespace(BUY="buy", SELL="sell")
+    enums.TimeInForce = SimpleNamespace(DAY="day", GTC="gtc")
+    requests = ModuleType("alpaca.trading.requests")
+    requests.LimitOrderRequest = requests.MarketOrderRequest = _Request
+    monkeypatch.setitem(sys.modules, "alpaca.trading.enums", enums)
+    monkeypatch.setitem(sys.modules, "alpaca.trading.requests", requests)
+    monkeypatch.setattr(alpaca_sdk, "_trading_client", lambda cfg: _Client())
+    monkeypatch.setattr(alpaca_sdk.tap_forward, "tap_enabled", lambda: False)
+
+    direct = alpaca_sdk.place_order(
+        alpaca_sdk.AlpacaConfig(profile="paper"), symbol="AAPL", side="buy",
+        quantity=1, client_order_id="vt-direct",
+    )
+    assert direct["status"] == "ok" and captured["request"]["client_order_id"] == "vt-direct"
+    alpaca_sdk.place_order(alpaca_sdk.AlpacaConfig(profile="paper"),
+                           symbol="AAPL", side="buy", quantity=1)
+    assert "client_order_id" not in captured["request"]
+
+    monkeypatch.setattr(alpaca_sdk.tap_forward, "tap_enabled", lambda: True)
+    monkeypatch.setattr(
+        alpaca_sdk.tap_forward, "forward",
+        lambda target, method, body, headers: captured.update(tap=json.loads(body))
+        or {"ok": True, "body": {"id": "tap-oid", "status": "accepted"}},
+    )
+    tap = alpaca_sdk.place_order(
+        alpaca_sdk.AlpacaConfig(profile="paper"), symbol="AAPL", side="buy",
+        quantity=1, client_order_id="vt-tap",
+    )
+    assert tap["status"] == "ok" and captured["tap"]["client_order_id"] == "vt-tap"
 
 
 def test_gate_blocks_oversized_order(monkeypatch) -> None:
@@ -291,6 +452,8 @@ def test_gate_count_consumed_only_on_success(monkeypatch) -> None:
     )
     assert out["status"] == "error"
     assert increments == []  # failed placement must not consume a daily count
+    assert out["recovery_pending"] is True
+    assert load_pending_action("alpaca") is not None
 
 
 def test_concurrent_orders_share_one_daily_cap_permit(

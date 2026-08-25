@@ -436,6 +436,7 @@ def place_order(
     order_type: str = "market",
     limit_price: float | None = None,
     time_in_force: str = "day",
+    client_order_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit an order to the configured Alpaca account.
 
@@ -454,6 +455,7 @@ def place_order(
         order_type: ``market`` or ``limit``.
         limit_price: Required when ``order_type`` is ``limit``.
         time_in_force: ``day`` or ``gtc``.
+        client_order_id: Optional caller-owned exact order identity.
 
     Returns:
         On success ``{"status": "ok", "order_id", "symbol", "side", "profile",
@@ -479,6 +481,10 @@ def place_order(
     tif_token = str(time_in_force or "").strip().lower()
     if tif_token not in ("day", "gtc"):
         return {"status": "error", "error": "time_in_force must be 'day' or 'gtc'"}
+
+    client_id = str(client_order_id).strip() if client_order_id is not None else None
+    if client_id is not None and not (1 <= len(client_id) <= 48):
+        return {"status": "error", "error": "client_order_id must contain 1-48 characters"}
 
     has_qty = quantity is not None
     has_notional = notional is not None
@@ -524,6 +530,7 @@ def place_order(
             order_type=type_token,
             limit_price=limit_value,
             time_in_force=tif_token,
+            client_order_id=client_id,
         )
 
     try:
@@ -537,6 +544,7 @@ def place_order(
         order_side = OrderSide.BUY if side_token == "buy" else OrderSide.SELL
         tif = TimeInForce.DAY if tif_token == "day" else TimeInForce.GTC
         amount = {"qty": qty_value} if has_qty else {"notional": notional_value}
+        identity = {"client_order_id": client_id} if client_id is not None else {}
 
         if type_token == "limit":
             req = LimitOrderRequest(
@@ -545,6 +553,7 @@ def place_order(
                 time_in_force=tif,
                 limit_price=limit_value,
                 **amount,
+                **identity,
             )
         else:
             req = MarketOrderRequest(
@@ -552,6 +561,7 @@ def place_order(
                 side=order_side,
                 time_in_force=tif,
                 **amount,
+                **identity,
             )
 
         order = client.submit_order(order_data=req)
@@ -587,6 +597,7 @@ def _submit_via_tap(
     order_type: str,
     limit_price: float | None,
     time_in_force: str,
+    client_order_id: str | None,
 ) -> dict[str, Any]:
     """Place the order through the TAP proxy instead of the Alpaca SDK.
 
@@ -617,12 +628,14 @@ def _submit_via_tap(
     # forwarded the order but the agent saw a timeout) is deduplicated by Alpaca
     # — a duplicate id is rejected, never double-placed. Trade-off: two
     # intentionally-identical orders collide; vary any field for a real duplicate.
-    order["client_order_id"] = "tap-" + hashlib.sha256(
-        "|".join(
-            str(x)
-            for x in (cfg.profile, symbol, side, quantity, notional, order_type, limit_price, time_in_force)
-        ).encode()
-    ).hexdigest()[:24]
+    order["client_order_id"] = client_order_id or (
+        "tap-" + hashlib.sha256(
+            "|".join(
+                str(x)
+                for x in (cfg.profile, symbol, side, quantity, notional, order_type, limit_price, time_in_force)
+            ).encode()
+        ).hexdigest()[:24]
+    )
 
     cred_headers = _tap_cred_headers()
     target = f"{cfg.host}/v2/orders"

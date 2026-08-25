@@ -27,6 +27,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from src.live import pending_action
 from src.live.audit import LiveActionEvent, write_live_action
 from src.live.daily_count import (
     DailyOrderLockUnavailable,
@@ -122,6 +123,22 @@ def execute_live_order(
 
     try:
         with daily_order_lock(broker):
+            if broker == "alpaca":
+                try:
+                    unresolved = pending_action.load_pending_action(broker)
+                except pending_action.PendingActionError:
+                    return _deny(
+                        broker, session_id,
+                        "pending broker action is invalid and requires recovery",
+                        ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
+                        intent=intent, reason_code="pending_action_invalid",
+                    )
+                if unresolved is not None:
+                    return _deny(
+                        broker, session_id, "pending broker action requires recovery",
+                        ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
+                        intent=intent, reason_code="pending_action_unresolved",
+                    )
             daily_count = read_daily_count(broker)
             breach = check_mandate(
                 mandate,
@@ -142,6 +159,7 @@ def execute_live_order(
                     intent,
                     place_kwargs,
                     mandate,
+                    positions,
                 )
     except DailyOrderLockUnavailable as exc:
         return _deny(
@@ -384,8 +402,25 @@ def _execute_and_audit_live_action(
 # --------------------------------------------------------------------------- #
 
 
-def _allow(broker, session_id, connector_module, config, intent, place_kwargs, mandate) -> dict[str, Any]:
+def _allow(broker, session_id, connector_module, config, intent, place_kwargs, mandate, positions) -> dict[str, Any]:
     """Execute the order; consume a count + audit only on a non-error result."""
+    pending = None
+    if broker == "alpaca":
+        try:
+            pending = pending_action.new_pending_order(
+                broker, place_kwargs,
+                pre_position_qty=_pre_position_qty(positions, intent.symbol),
+            )
+            pending_action.save_pending_action(pending)
+        except Exception as exc:  # noqa: BLE001 - missing evidence forbids the write
+            logger.warning("pending action write failed for %s: %s", broker, exc)
+            return _deny(
+                broker, session_id, "pending broker action could not be persisted",
+                ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
+                intent=intent, reason_code="pending_action_persist_failed",
+            )
+        place_kwargs = {**place_kwargs, "client_order_id": pending.client_order_id}
+
     try:
         result = connector_module.place_order(config, **place_kwargs)
     except Exception as exc:  # noqa: BLE001 - a connector raise must not escape the gate
@@ -417,7 +452,8 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
             intent=intent,
             broker_request=dict(place_kwargs),
             broker_response=result if isinstance(result, dict) else {"raw": result},
-            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked},
+            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked,
+                           **({"reason_code": "pending_action_unresolved"} if pending else {})},
             error=_error_message(result),
         )
     else:
@@ -435,10 +471,25 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
         )
     if isinstance(result, dict) and record is not None:
         result = {**result, LIVE_ACTION_RESULT_KEY: record}
+    if pending is not None:
+        cleared = False
+        if not is_error and record is not None:
+            try:
+                pending_action.clear_pending_action(broker, pending.action_id)
+                cleared = True
+            except Exception as exc:  # noqa: BLE001 - retain the recovery block
+                logger.warning("pending action clear failed for %s: %s", broker, exc)
+        if not cleared:
+            result = {
+                **(result if isinstance(result, dict) else {"status": "error"}),
+                "client_order_id": pending.client_order_id,
+                "recovery_pending": True,
+                "reason_code": "pending_action_unresolved",
+            }
     return result if isinstance(result, dict) else {"status": "error", "error": "non-dict broker result"}
 
 
-def _deny(broker, session_id, reason, checked, mandate, *, intent, reauth=False) -> dict[str, Any]:
+def _deny(broker, session_id, reason, checked, mandate, *, intent, reauth=False, reason_code=None) -> dict[str, Any]:
     """Audit + return a refusal for a pre-check / structural DENY."""
     record = _audit(
         broker,
@@ -449,10 +500,14 @@ def _deny(broker, session_id, reason, checked, mandate, *, intent, reauth=False)
         intent=intent,
         broker_request=None,
         broker_response=None,
-        gate_decision={"allowed": False, "decision": _DECISION_DENY, "checked_limits": checked},
+        gate_decision={"allowed": False, "decision": _DECISION_DENY, "checked_limits": checked,
+                       **({"reason_code": reason_code} if reason_code else {})},
         error=reason,
     )
-    return _refusal(broker, decision=_DECISION_DENY, reason=reason, reauth=reauth, record=record)
+    result = _refusal(broker, decision=_DECISION_DENY, reason=reason, reauth=reauth, record=record)
+    if reason_code:
+        result["reason_code"] = reason_code
+    return result
 
 
 def _deny_breach(broker, session_id, breach, mandate, intent, reauth) -> dict[str, Any]:
@@ -631,6 +686,24 @@ def _safe_read(connector_module: Any, fn_name: str, config: Any) -> object:
     return result
 
 
+def _pre_position_qty(positions: object, symbol: str) -> float | None:
+    rows = positions.get("positions", positions.get("data")) if isinstance(positions, dict) else positions
+    if not isinstance(rows, list):
+        return None
+    target = str(symbol or "").strip().upper()
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("symbol") or "").strip().upper() != target:
+            continue
+        try:
+            quantity = float(row.get("quantity", row.get("qty")))
+        except (TypeError, ValueError):
+            return None
+        if str(row.get("side") or "").strip().lower() in {"short", "sell"} and quantity > 0:
+            quantity = -quantity
+        return quantity
+    return 0.0
+
+
 # --------------------------------------------------------------------------- #
 # Audit + misc
 # --------------------------------------------------------------------------- #
@@ -651,6 +724,7 @@ def _audit(
         broker_response=broker_response,
         gate_decision=gate_decision,
         error=error,
+        require_durable=broker == "alpaca",
     )
 
 
@@ -667,6 +741,7 @@ def _audit_action(
     broker_response,
     gate_decision,
     error=None,
+    require_durable=False,
 ) -> dict | None:
     consent = mandate.consent if mandate is not None else None
     try:
@@ -685,9 +760,9 @@ def _audit_action(
             error=error,
         )
         try:
-            return write_live_action(event, event_callback=None, trace_writer=None)
+            return write_live_action(event, event_callback=None, trace_writer=None, require_durable=require_durable)
         except TypeError:
-            return write_live_action(event)
+            return None if require_durable else write_live_action(event)
     except Exception as exc:  # auditing must never block a decision
         logger.warning("live-action audit write failed (%s): %s", kind, exc)
         return None
