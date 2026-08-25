@@ -510,6 +510,24 @@ def test_fractional_fill_preserves_exact_position_decimals(monkeypatch) -> None:
     assert live_halt.halt_flag_set("alpaca") is False
 
 
+def test_exact_fill_recovery_remains_available_while_halted(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _LostResponseConnector(positions={"status": "ok", "positions": []})
+    _place(connector, quantity=10, notional=None)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action, status="filled", filled_qty="10")
+    connector._positions = {
+        "status": "ok", "positions": [{"symbol": "AAPL", "quantity": "10"}]
+    }
+    monkeypatch.setattr(gate, "halt_flag_set", lambda broker: True)
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_resolved_fill"
+    assert load_pending_action("alpaca") is None
+    assert len(connector.placed) == 1
+
+
 def test_quantity_submit_requires_unambiguous_pre_position(monkeypatch) -> None:
     _patch_gate(monkeypatch, mandate=_mandate())
     connector = _LostResponseConnector(
@@ -596,6 +614,7 @@ def test_attributed_fill_survives_audit_failure_and_replays_without_submit(monke
 
     assert interrupted["reason_code"] == "pending_action_unresolved"
     assert persisted.phase == "resolved_fill_pending_audit"
+    assert persisted.resolution.filled_qty == "10"
     assert persisted.position_resolution is not None
     assert replay["reason_code"] == "pending_action_resolved_fill"
     assert load_pending_action("alpaca") is None and counted == {action.action_id}

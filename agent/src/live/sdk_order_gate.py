@@ -774,7 +774,7 @@ def _validate_recovery_evidence(action, response) -> dict[str, Any] | None:
             actual, wanted = _exact_decimal(order.get(key)), _exact_decimal(getattr(request, key))
             if actual != wanted:
                 return None
-            normalized[key] = float(actual) if actual is not None else None
+            normalized[key] = format(actual, "f") if actual is not None else None
         filled = _exact_decimal(order.get("filled_qty"))
     except (InvalidOperation, ValueError):
         return None
@@ -783,7 +783,7 @@ def _validate_recovery_evidence(action, response) -> dict[str, Any] | None:
                  "rejected", "canceled", "expired", "partially_filled", "filled"}
     if submitted.tzinfo is None or filled is None or filled < 0 or status not in supported:
         return None
-    normalized.update(broker_order_id=str(order["broker_order_id"]), filled_qty=float(filled),
+    normalized.update(broker_order_id=str(order["broker_order_id"]), filled_qty=format(filled, "f"),
                       order_status=status, submitted_at=submitted.isoformat())
     return normalized
 

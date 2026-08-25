@@ -54,10 +54,10 @@ class RecoveredOrderEvidence(BaseModel):
     side: Literal["buy", "sell"]
     order_type: Literal["market", "limit"]
     time_in_force: Literal["day", "gtc"]
-    quantity: float | int | None
-    notional: float | int | None
-    limit_price: float | int | None
-    filled_qty: float | int
+    quantity: str | float | int | None
+    notional: str | float | int | None
+    limit_price: str | float | int | None
+    filled_qty: str | float | int
     order_status: str = Field(min_length=1)
     submitted_at: str = Field(min_length=1)
 
