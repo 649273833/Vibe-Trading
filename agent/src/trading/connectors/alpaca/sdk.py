@@ -847,7 +847,11 @@ def _obj_get(obj: Any, name: str, default: Any = None) -> Any:
 
 
 def _position_to_dict(item: Any) -> dict[str, Any]:
-    side = str(_obj_get(item, "side", ""))
+    # alpaca-py's Position.side is a (str, Enum) member whose str() is
+    # "PositionSide.SHORT", not "short" — read .value so the direct-SDK path
+    # emits the same lowercase token the TAP JSON path does.
+    side_raw = _obj_get(item, "side", "")
+    side = str(getattr(side_raw, "value", side_raw)).strip().lower()
     quantity = _obj_get(item, "qty")
     if side == "short" and quantity is not None:
         # Alpaca reports qty as an absolute magnitude and carries direction in

@@ -9,6 +9,7 @@ exposure toward zero. The connector now negates qty for short positions.
 
 from __future__ import annotations
 
+from enum import Enum
 from types import SimpleNamespace
 
 import pytest
@@ -43,4 +44,17 @@ def test_object_positions_get_the_same_sign() -> None:
 
 def test_gate_reads_alpaca_short_as_negative_exposure() -> None:
     row = _position_to_dict({"symbol": "AAPL", "side": "short", "qty": "400", "market_value": "-50000"})
+    assert _position_signed_market_value(row) == -50000.0
+
+
+def test_sdk_enum_side_is_normalized_and_signed() -> None:
+    # The direct-SDK path yields alpaca-py Position objects whose side is a
+    # (str, Enum) member; str() of such a member is "PositionSide.SHORT".
+    class PositionSide(str, Enum):
+        SHORT = "short"
+
+    item = SimpleNamespace(symbol="AAPL", side=PositionSide.SHORT, qty="400", market_value="-50000")
+    row = _position_to_dict(item)
+    assert row["side"] == "short"
+    assert row["quantity"] == -400.0
     assert _position_signed_market_value(row) == -50000.0
