@@ -482,6 +482,54 @@ def test_exact_quantity_fill_requires_matching_signed_position(
     assert len(connector.placed) == 1 and live_halt.halt_flag_set("alpaca") is False
 
 
+def test_fractional_fill_preserves_exact_position_decimals(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _LostResponseConnector(
+        positions={
+            "status": "ok",
+            "positions": [{
+                "symbol": "AAPL",
+                "quantity": "0.123456789123456789",
+                "market_value": "12.3456789123456789",
+                "side": "long",
+            }],
+        }
+    )
+    _place(connector, quantity=0.1, notional=None)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action, status="filled", filled_qty="0.1")
+    connector._positions = {
+        "status": "ok",
+        "positions": [{"symbol": "AAPL", "quantity": "0.223456789123456789"}],
+    }
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_resolved_fill"
+    assert load_pending_action("alpaca") is None
+    assert live_halt.halt_flag_set("alpaca") is False
+
+
+def test_quantity_submit_requires_unambiguous_pre_position(monkeypatch) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _LostResponseConnector(
+        positions={
+            "status": "ok",
+            "positions": [
+                {"symbol": "AAPL", "quantity": 1, "market_value": 100},
+                {"symbol": "AAPL", "quantity": 2, "market_value": 200},
+            ],
+        }
+    )
+
+    result = _place(connector, quantity=10, notional=None)
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "pending_position_evidence_unavailable"
+    assert connector.placed == []
+    assert load_pending_action("alpaca") is None
+
+
 @pytest.mark.parametrize(
     ("quantity", "filled", "after"),
     [(100, 101, 126), (100, 30, 54), (100, 0, 25), (None, 5, 5)],
@@ -540,11 +588,15 @@ def test_attributed_fill_survives_audit_failure_and_replays_without_submit(monke
 
     interrupted = _place(connector)
     persisted = load_pending_action("alpaca")
+    connector._positions = {
+        "status": "ok", "positions": [{"symbol": "AAPL", "quantity": 999}]
+    }
     monkeypatch.setattr(gate, "write_live_action", lambda *args, **kwargs: {"audited": True})
     replay = _place(connector)
 
     assert interrupted["reason_code"] == "pending_action_unresolved"
     assert persisted.phase == "resolved_fill_pending_audit"
+    assert persisted.position_resolution is not None
     assert replay["reason_code"] == "pending_action_resolved_fill"
     assert load_pending_action("alpaca") is None and counted == {action.action_id}
     assert len(connector.placed) == 1

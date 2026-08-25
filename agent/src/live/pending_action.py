@@ -113,6 +113,31 @@ class RecoveredOrderEvidence(BaseModel):
         return self
 
 
+class RecoveredPositionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    pre_position_qty: str
+    current_position_qty: str
+    attributed_filled_qty: str
+
+    @model_validator(mode="after")
+    def validate_quantities(self) -> Self:
+        try:
+            values = [
+                Decimal(value)
+                for value in (
+                    self.pre_position_qty,
+                    self.current_position_qty,
+                    self.attributed_filled_qty,
+                )
+            ]
+        except InvalidOperation as exc:
+            raise ValueError("position evidence must be exact decimals") from exc
+        if any(not value.is_finite() for value in values) or values[2] <= 0:
+            raise ValueError("position evidence must be finite with a positive fill")
+        return self
+
+
 class PendingAction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -127,20 +152,26 @@ class PendingAction(BaseModel):
     client_order_id: str = Field(min_length=1, max_length=48)
     broker_order_id: str | None = None
     request: PendingOrderRequest
-    pre_position_qty: float | int | None
+    pre_position_qty: str | float | int | None
     remediation_attempts: Literal[0]
     resolution: RecoveredOrderEvidence | None = None
+    position_resolution: RecoveredPositionEvidence | None = None
 
     @model_validator(mode="after")
     def validate_evidence(self) -> Self:
         if self.created_at.tzinfo is None:
             raise ValueError("created_at requires a timezone")
-        if self.pre_position_qty is not None and not math.isfinite(
-            self.pre_position_qty
-        ):
-            raise ValueError("pre-position quantity must be finite")
+        if self.pre_position_qty is not None:
+            try:
+                pre_position = Decimal(str(self.pre_position_qty))
+            except InvalidOperation as exc:
+                raise ValueError("pre-position quantity must be exact") from exc
+            if not pre_position.is_finite():
+                raise ValueError("pre-position quantity must be finite")
         if self.phase == "pending_write" and (
-            self.broker_order_id is not None or self.resolution is not None
+            self.broker_order_id is not None
+            or self.resolution is not None
+            or self.position_resolution is not None
         ):
             raise ValueError("pending write cannot contain resolved evidence")
         if self.phase != "pending_write" and (
@@ -171,6 +202,31 @@ class PendingAction(BaseModel):
                 )
             ):
                 raise ValueError("resolved evidence contradicts the owned request")
+        if (
+            self.phase == "resolved_fill_pending_audit"
+            and self.position_resolution is None
+        ):
+            raise ValueError("fill resolution requires exact position evidence")
+        if self.position_resolution is not None:
+            if self.resolution is None or self.pre_position_qty is None:
+                raise ValueError(
+                    "position resolution requires order and pre-position evidence"
+                )
+            before = Decimal(self.position_resolution.pre_position_qty)
+            after = Decimal(self.position_resolution.current_position_qty)
+            attributed = Decimal(self.position_resolution.attributed_filled_qty)
+            filled = Decimal(str(self.resolution.filled_qty))
+            expected = (
+                before + attributed
+                if self.request.side == "buy"
+                else before - attributed
+            )
+            if (
+                before != Decimal(str(self.pre_position_qty))
+                or attributed != filled
+                or after != expected
+            ):
+                raise ValueError("position resolution contradicts the owned order")
         return self
 
 
@@ -178,7 +234,7 @@ def new_pending_order(
     broker: str,
     request: Mapping[str, object],
     *,
-    pre_position_qty: float | None,
+    pre_position_qty: str | float | int | None,
 ) -> PendingAction:
     """Build the redaction-safe marker written immediately before submission."""
     key = _broker_key(broker)
@@ -240,24 +296,39 @@ def transition_to_revalidation(
 
 
 def transition_to_fill_resolution(
-    action: PendingAction, evidence: Mapping[str, object]
+    action: PendingAction,
+    evidence: Mapping[str, object],
+    position_evidence: Mapping[str, object],
 ) -> PendingAction:
     """Durably retain an attributed fill before its audit/terminal transition."""
-    return _transition(action, evidence, "resolved_fill_pending_audit")
+    return _transition(
+        action,
+        evidence,
+        "resolved_fill_pending_audit",
+        position_evidence=position_evidence,
+    )
 
 
 def _transition(
     action: PendingAction,
     evidence: Mapping[str, object],
     phase: Literal["resolved_fill_pending_audit", "resolved_needs_revalidation"],
+    *,
+    position_evidence: Mapping[str, object] | None = None,
 ) -> PendingAction:
     resolution = RecoveredOrderEvidence.model_validate(evidence)
+    position_resolution = (
+        RecoveredPositionEvidence.model_validate(position_evidence)
+        if position_evidence is not None
+        else action.position_resolution
+    )
     updated = PendingAction.model_validate(
         {
             **action.model_dump(mode="python"),
             "phase": phase,
             "broker_order_id": resolution.broker_order_id,
             "resolution": resolution,
+            "position_resolution": position_resolution,
         }
     )
     current = load_pending_action(action.broker)

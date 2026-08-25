@@ -435,10 +435,18 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
     """Execute the order; consume a count + audit only on a non-error result."""
     pending = None
     if broker == "alpaca":
+        pre_position_qty = _pre_position_qty(positions, intent.symbol)
+        if place_kwargs.get("quantity") is not None and pre_position_qty is None:
+            return _deny(
+                broker, session_id, "exact pre-position evidence is unavailable",
+                ["mandate", "expiry", "halt_flag", "pending_action", "position"],
+                mandate, intent=intent,
+                reason_code="pending_position_evidence_unavailable",
+            )
         try:
             pending = pending_action.new_pending_order(
                 broker, place_kwargs,
-                pre_position_qty=_pre_position_qty(positions, intent.symbol),
+                pre_position_qty=pre_position_qty,
             )
             pending_action.save_pending_action(pending)
         except Exception as exc:  # noqa: BLE001 - missing evidence forbids the write
@@ -613,12 +621,25 @@ def _recover_correlated_fill(
     broker, session_id, connector, config, mandate, action, evidence, checked
 ):
     """Attribute an exact quantity fill to the signed broker position delta."""
-    positions = _safe_read(connector, "get_positions", config)
     request_qty = _exact_decimal(action.request.quantity)
-    filled = _exact_decimal(evidence["filled_qty"])
-    before = _exact_decimal(action.pre_position_qty)
-    after = _exact_position_qty(positions, action.request.symbol)
     status = evidence["order_status"]
+    persisted = action.position_resolution
+    same_resolution = (
+        action.phase == "resolved_fill_pending_audit"
+        and action.resolution
+        == pending_action.RecoveredOrderEvidence.model_validate(evidence)
+        and persisted is not None
+    )
+    if same_resolution:
+        positions = None
+        before = _exact_decimal(persisted.pre_position_qty)
+        after = _exact_decimal(persisted.current_position_qty)
+        filled = _exact_decimal(persisted.attributed_filled_qty)
+    else:
+        positions = _safe_read(connector, "get_positions", config)
+        before = _exact_decimal(action.pre_position_qty)
+        after = _exact_position_qty(positions, action.request.symbol)
+        filled = _exact_decimal(evidence["filled_qty"])
     coherent_size = (
         request_qty is not None
         and filled is not None
@@ -637,20 +658,21 @@ def _recover_correlated_fill(
             "exact fill does not match durable quantity and signed position evidence",
             checked,
         )
-    try:
-        action = pending_action.transition_to_fill_resolution(action, evidence)
-    except Exception as exc:  # noqa: BLE001 - original marker remains fail-closed
-        logger.warning("fill resolution persistence failed for %s: %s", broker, exc)
-        return _recovery_refusal(broker, "fill resolution was not durable")
-
-    broker_response = {
-        "order": evidence,
-        "position_evidence": {
-            "pre_position_qty": float(before),
-            "current_position_qty": float(after),
-            "attributed_filled_qty": float(filled),
-        },
+    position_evidence = {
+        "pre_position_qty": format(before, "f"),
+        "current_position_qty": format(after, "f"),
+        "attributed_filled_qty": format(filled, "f"),
     }
+    if not same_resolution:
+        try:
+            action = pending_action.transition_to_fill_resolution(
+                action, evidence, position_evidence
+            )
+        except Exception as exc:  # noqa: BLE001 - original marker remains fail-closed
+            logger.warning("fill resolution persistence failed for %s: %s", broker, exc)
+            return _recovery_refusal(broker, "fill resolution was not durable")
+
+    broker_response = {"order": evidence, "position_evidence": position_evidence}
     record = _audit(
         broker, session_id, kind="order_placed", outcome="filled", mandate=mandate,
         intent=None, broker_request=action.request.model_dump(mode="json"),
@@ -713,13 +735,20 @@ def _exact_position_qty(positions, symbol) -> Decimal | None:
     if len(matches) != 1:
         return None
     row = matches[0]
+    exact_value = row.get("exact_quantity")
     try:
-        quantity = _exact_decimal(row.get("quantity", row.get("qty")))
+        quantity = _exact_decimal(
+            exact_value if exact_value is not None else row.get("quantity", row.get("qty"))
+        )
     except InvalidOperation:
         return None
     if quantity is None:
         return None
-    if str(row.get("side") or "").strip().lower() in {"short", "sell"} and quantity > 0:
+    if (
+        exact_value is None
+        and str(row.get("side") or "").strip().lower() in {"short", "sell"}
+        and quantity > 0
+    ):
         quantity = -quantity
     return quantity
 
@@ -975,22 +1004,9 @@ def _safe_read(connector_module: Any, fn_name: str, config: Any) -> object:
     return result
 
 
-def _pre_position_qty(positions: object, symbol: str) -> float | None:
-    rows = positions.get("positions", positions.get("data")) if isinstance(positions, dict) else positions
-    if not isinstance(rows, list):
-        return None
-    target = str(symbol or "").strip().upper()
-    for row in rows:
-        if not isinstance(row, dict) or str(row.get("symbol") or "").strip().upper() != target:
-            continue
-        try:
-            quantity = float(row.get("quantity", row.get("qty")))
-        except (TypeError, ValueError):
-            return None
-        if str(row.get("side") or "").strip().lower() in {"short", "sell"} and quantity > 0:
-            quantity = -quantity
-        return quantity
-    return 0.0
+def _pre_position_qty(positions: object, symbol: str) -> str | None:
+    quantity = _exact_position_qty(positions, symbol)
+    return format(quantity, "f") if quantity is not None else None
 
 
 # --------------------------------------------------------------------------- #

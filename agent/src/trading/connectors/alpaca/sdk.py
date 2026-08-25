@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Mapping
@@ -896,15 +897,18 @@ def _position_to_dict(item: Any) -> dict[str, Any]:
     side_raw = _obj_get(item, "side", "")
     side = str(getattr(side_raw, "value", side_raw)).strip().lower()
     quantity = _obj_get(item, "qty")
+    exact_quantity = Decimal(str(quantity)) if quantity is not None else None
     if side == "short" and quantity is not None:
         # Alpaca reports qty as an absolute magnitude and carries direction in
         # side. The mandate gate (like the tiger connector) reads quantity as
         # signed, so an unsigned short would book as positive exposure.
         quantity = -float(quantity)
+        exact_quantity = -abs(exact_quantity)
     return {
         "symbol": _obj_get(item, "symbol"),
         "side": side,
         "quantity": quantity,
+        "exact_quantity": format(exact_quantity, "f") if exact_quantity is not None else None,
         "average_cost": _obj_get(item, "avg_entry_price"),
         "market_value": _obj_get(item, "market_value"),
         "current_price": _obj_get(item, "current_price"),
