@@ -247,6 +247,32 @@ def test_uncertain_submit_survives_restart_and_blocks_new_risk(monkeypatch) -> N
     }
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"status": "ok", "order_id": ""},
+        {"status": "ok", "order_id": "broker-1", "client_order_id": "other"},
+        {},
+        None,
+    ],
+)
+def test_incomplete_or_mismatched_ack_retains_marker(monkeypatch, response) -> None:
+    class _IncompleteAckConnector(_FakeConnector):
+        def place_order(self, config, **kwargs):
+            self.placed.append(kwargs)
+            return response
+
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _IncompleteAckConnector()
+
+    result = _place(connector)
+
+    assert result["recovery_pending"] is True
+    assert result["reason_code"] == "pending_action_unresolved"
+    assert load_pending_action("alpaca") is not None
+    assert len(connector.placed) == 1
+
+
 def test_corrupt_pending_marker_and_failed_audit_both_fail_closed(monkeypatch) -> None:
     _patch_gate(monkeypatch, mandate=_mandate())
     connector = _FakeConnector()

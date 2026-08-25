@@ -473,7 +473,12 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
         result = {**result, LIVE_ACTION_RESULT_KEY: record}
     if pending is not None:
         cleared = False
-        if not is_error and record is not None:
+        exact_ack = (
+            isinstance(result, dict)
+            and result.get("client_order_id") == pending.client_order_id
+            and bool(result.get("order_id"))
+        )
+        if not is_error and exact_ack and record is not None:
             try:
                 pending_action.clear_pending_action(broker, pending.action_id)
                 cleared = True
