@@ -130,14 +130,17 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     if action_id is not None and not (1 <= len(action_id) <= 128):
         raise DailyCountError("action_id must contain 1-128 characters")
     try:
-        action_ids = _read_action_ids(broker)
+        counter_date, action_ids = _read_action_ids(broker)
     except DailyCountError:
         if action_id is not None:
             raise
+        counter_date = None
         action_ids = []
     count = read_daily_count(broker)
     if action_id is not None and action_id in action_ids:
         return count
+    if counter_date != today:
+        action_ids = []
     count += 1
     if action_id is not None:
         action_ids.append(action_id)
@@ -168,23 +171,24 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     return count
 
 
-def _read_action_ids(broker: str) -> list[str]:
+def _read_action_ids(broker: str) -> tuple[str | None, list[str]]:
     path = _counter_path(broker)
     if not path.is_file():
-        return []
+        return None, []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise DailyCountError("daily order count cannot be read") from exc
-    if not isinstance(raw, dict) or raw.get("date") != _utc_today():
-        return []
-    count, values = raw.get("count"), raw.get("action_ids", [])
+    if not isinstance(raw, dict):
+        raise DailyCountError("daily order count has an invalid schema")
+    date, count, values = raw.get("date"), raw.get("count"), raw.get("action_ids", [])
     if (
-        isinstance(count, bool) or not isinstance(count, int) or count < 0
+        not isinstance(date, str) or not date
+        or isinstance(count, bool) or not isinstance(count, int) or count < 0
         or not isinstance(values, list)
         or any(not isinstance(value, str) or not value for value in values)
         or len(set(values)) != len(values)
         or len(values) > count
     ):
         raise DailyCountError("daily order count has an invalid schema")
-    return values
+    return date, values

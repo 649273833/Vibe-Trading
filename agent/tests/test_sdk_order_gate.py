@@ -333,8 +333,32 @@ def test_restart_recovers_exact_working_order_once_and_never_resubmits(monkeypat
     assert len(connector.placed) == 1 and connector.lookups == [action.client_order_id] * 2
 
 
+@pytest.mark.parametrize("blocker", ["missing_mandate", "expired", "halted"])
+def test_exact_recovery_precedes_current_policy_blockers(monkeypatch, blocker) -> None:
+    _patch_gate(monkeypatch, mandate=_mandate())
+    connector = _LostResponseConnector()
+    _place(connector)
+    action = load_pending_action("alpaca")
+    connector.lookup_result = _exact_order(action, status="canceled")
+    connector.get_positions = lambda config: pytest.fail("recovery read positions")
+    connector.get_account_snapshot = lambda config: pytest.fail("recovery read account")
+    if blocker == "missing_mandate":
+        monkeypatch.setattr(gate, "load_mandate", lambda broker: None)
+    elif blocker == "expired":
+        monkeypatch.setattr(gate, "_is_expired", lambda mandate: True)
+    else:
+        monkeypatch.setattr(gate, "halt_flag_set", lambda broker: True)
+
+    result = _place(connector)
+
+    assert result["reason_code"] == "pending_action_resolved_terminal"
+    assert load_pending_action("alpaca") is None
+    assert len(connector.placed) == 1
+    assert connector.lookups == [action.client_order_id]
+
+
 @pytest.mark.parametrize("change", [None, {"symbol": "MSFT"}, {"client_order_id": "manual"},
-                                     {"order_status": "mystery"}])
+                                      {"order_status": "mystery"}])
 def test_recovery_insufficient_or_mismatched_evidence_stays_blocked(monkeypatch, change) -> None:
     counted: list[str] = []
     _patch_gate(monkeypatch, mandate=_mandate())

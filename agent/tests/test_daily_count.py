@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import src.live.paths as live_paths
+from src.live import daily_count
 from src.live.daily_count import daily_order_lock, increment_daily_count, read_daily_count
 
 pytestmark = pytest.mark.unit
@@ -67,3 +68,22 @@ def test_action_id_increment_is_durable_and_deduplicated(tmp_path, monkeypatch) 
     assert read_daily_count("alpaca") == 2
     payload = json.loads((runtime_root / "live" / "alpaca" / "trade_counter.json").read_text())
     assert payload["action_ids"] == ["act_one", "act_two"]
+
+
+def test_action_id_deduplicates_after_utc_rollover(tmp_path, monkeypatch) -> None:
+    runtime_root = tmp_path / ".vibe-trading"
+    current_day = ["2026-08-25"]
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: runtime_root)
+    monkeypatch.setattr(daily_count, "_utc_today", lambda: current_day[0])
+
+    assert increment_daily_count("alpaca", action_id="act_recovered") == 1
+    current_day[0] = "2026-08-26"
+    assert increment_daily_count("alpaca", action_id="act_recovered") == 0
+    assert read_daily_count("alpaca") == 0
+    assert increment_daily_count("alpaca", action_id="act_new") == 1
+    payload = json.loads((runtime_root / "live" / "alpaca" / "trade_counter.json").read_text())
+    assert payload == {
+        "date": "2026-08-26",
+        "count": 1,
+        "action_ids": ["act_new"],
+    }

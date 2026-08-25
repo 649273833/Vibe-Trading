@@ -89,6 +89,20 @@ def execute_live_order(
     broker = (broker or "").strip().lower()
 
     mandate = load_mandate(broker)
+    if broker == "alpaca":
+        try:
+            with daily_order_lock(broker):
+                recovery = _pending_recovery_result(
+                    broker, session_id, connector_module, config, mandate
+                )
+        except DailyOrderLockUnavailable as exc:
+            return _deny(
+                broker, session_id, str(exc),
+                ["pending_action", "daily_order_lock"], mandate, intent=None,
+            )
+        if recovery is not None:
+            return recovery
+
     if mandate is None or mandate.schema_version != MANDATE_SCHEMA_VERSION:
         return _deny(broker, session_id, "no valid mandate on file", ["mandate"], mandate, intent=None)
 
@@ -126,25 +140,11 @@ def execute_live_order(
     try:
         with daily_order_lock(broker):
             if broker == "alpaca":
-                try:
-                    unresolved = pending_action.load_pending_action(broker)
-                except pending_action.PendingActionError:
-                    return _deny(
-                        broker, session_id,
-                        "pending broker action is invalid and requires recovery",
-                        ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
-                        intent=intent, reason_code="pending_action_invalid",
-                    )
-                if unresolved is not None:
-                    if unresolved.phase == "resolved_needs_revalidation":
-                        return _deny(
-                            broker, session_id, "recovered broker order requires policy revalidation",
-                            ["mandate", "expiry", "halt_flag", "pending_action"], mandate,
-                            intent=intent, reason_code="pending_action_needs_revalidation",
-                        )
-                    return _recover_pending_order(
-                        broker, session_id, connector_module, config, mandate, unresolved
-                    )
+                recovery = _pending_recovery_result(
+                    broker, session_id, connector_module, config, mandate
+                )
+                if recovery is not None:
+                    return recovery
             daily_count = read_daily_count(broker)
             breach = check_mandate(
                 mandate,
@@ -179,6 +179,29 @@ def execute_live_order(
 
     reauth = breach.kind not in (BREACH_KIND_UNIVERSE, BREACH_KIND_INSTRUMENT)
     return _deny_breach(broker, session_id, breach, mandate, intent, reauth)
+
+
+def _pending_recovery_result(broker, session_id, connector, config, mandate):
+    """Recover an existing marker under the caller-held broker lock."""
+    try:
+        unresolved = pending_action.load_pending_action(broker)
+    except pending_action.PendingActionError:
+        return _deny(
+            broker, session_id, "pending broker action is invalid and requires recovery",
+            ["pending_action", "exact_broker_evidence"], mandate,
+            intent=None, reason_code="pending_action_invalid",
+        )
+    if unresolved is None:
+        return None
+    if unresolved.phase == "resolved_needs_revalidation":
+        return _deny(
+            broker, session_id, "recovered broker order requires policy revalidation",
+            ["pending_action", "exact_broker_evidence"], mandate,
+            intent=None, reason_code="pending_action_needs_revalidation",
+        )
+    return _recover_pending_order(
+        broker, session_id, connector, config, mandate, unresolved
+    )
 
 
 def execute_live_action(
