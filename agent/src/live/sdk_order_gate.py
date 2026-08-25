@@ -45,7 +45,7 @@ from src.live.enforcement import (
     instrument_asset_class,
     last_price_usd,
 )
-from src.live.halt import halt_flag_set
+from src.live.halt import halt_flag_set, trip_halt
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION, Mandate
 from src.live.mandate.store import load_mandate
 
@@ -556,15 +556,23 @@ def _recover_pending_order(broker, session_id, connector, config, mandate, actio
     filled = Decimal(str(evidence["filled_qty"]))
     working = {"accepted", "new", "open", "pending_new", "accepted_for_bidding"}
     terminal = {"rejected", "canceled", "expired"}
-    if ((status in working or status in terminal) and filled != 0) or (
-        status in {"partially_filled", "filled"} and filled <= 0
+    fill_statuses = {"partially_filled", "filled"}
+    if (filled == 0 and status in fill_statuses) or (
+        filled > 0 and status not in fill_statuses | {"canceled", "expired"}
     ):
-        return unresolved("broker status contradicts filled quantity")
+        return _halt_fill_recovery(
+            broker, session_id, mandate, action, evidence, None,
+            "broker status contradicts filled quantity", checked,
+        )
     if status != "rejected":
         try:
             increment_daily_count(broker, action.action_id)
         except DailyCountError:
             return unresolved("recovered order could not be durably accounted")
+    if filled > 0:
+        return _recover_correlated_fill(
+            broker, session_id, connector, config, mandate, action, evidence, checked
+        )
 
     record = _audit(
         broker, session_id,
@@ -599,6 +607,121 @@ def _recover_pending_order(broker, session_id, connector, config, mandate, actio
             reason_code="pending_action_resolved_terminal", recovery_pending=False,
         )
     return _recovery_refusal(broker, "exact fill requires position attribution", record)
+
+
+def _recover_correlated_fill(
+    broker, session_id, connector, config, mandate, action, evidence, checked
+):
+    """Attribute an exact quantity fill to the signed broker position delta."""
+    positions = _safe_read(connector, "get_positions", config)
+    request_qty = _exact_decimal(action.request.quantity)
+    filled = _exact_decimal(evidence["filled_qty"])
+    before = _exact_decimal(action.pre_position_qty)
+    after = _exact_position_qty(positions, action.request.symbol)
+    status = evidence["order_status"]
+    coherent_size = (
+        request_qty is not None
+        and filled is not None
+        and 0 < filled <= request_qty
+        and before is not None
+        and after is not None
+        and (status != "filled" or filled == request_qty)
+        and (status not in {"partially_filled", "canceled", "expired"} or filled < request_qty)
+    )
+    expected_after = None
+    if coherent_size:
+        expected_after = before + filled if action.request.side == "buy" else before - filled
+    if not coherent_size or after != expected_after:
+        return _halt_fill_recovery(
+            broker, session_id, mandate, action, evidence, positions,
+            "exact fill does not match durable quantity and signed position evidence",
+            checked,
+        )
+    try:
+        action = pending_action.transition_to_fill_resolution(action, evidence)
+    except Exception as exc:  # noqa: BLE001 - original marker remains fail-closed
+        logger.warning("fill resolution persistence failed for %s: %s", broker, exc)
+        return _recovery_refusal(broker, "fill resolution was not durable")
+
+    broker_response = {
+        "order": evidence,
+        "position_evidence": {
+            "pre_position_qty": float(before),
+            "current_position_qty": float(after),
+            "attributed_filled_qty": float(filled),
+        },
+    }
+    record = _audit(
+        broker, session_id, kind="order_placed", outcome="filled", mandate=mandate,
+        intent=None, broker_request=action.request.model_dump(mode="json"),
+        broker_response=broker_response,
+        gate_decision={"allowed": False, "decision": _DECISION_DENY,
+                       "checked_limits": checked + ["signed_position_delta"],
+                       "reason_code": "exact_fill_attributed", "action_id": action.action_id},
+    )
+    if record is None:
+        return _recovery_refusal(broker, "fill attribution audit was not durable")
+    if status == "partially_filled":
+        try:
+            pending_action.transition_to_revalidation(action, evidence)
+        except Exception as exc:  # noqa: BLE001 - retain exact evidence
+            logger.warning("fill recovery transition failed for %s: %s", broker, exc)
+            return _recovery_refusal(broker, "fill transition was not durable", record)
+        return _recovery_refusal(
+            broker, "working partial fill requires policy revalidation", record,
+            reason_code="pending_action_needs_revalidation",
+        )
+    try:
+        pending_action.clear_pending_action(broker, action.action_id)
+    except Exception as exc:  # noqa: BLE001 - retain exact evidence
+        logger.warning("fill recovery clear failed for %s: %s", broker, exc)
+        return _recovery_refusal(broker, "resolved fill could not be cleared", record)
+    return _recovery_refusal(
+        broker, "exact terminal fill recovered", record,
+        reason_code="pending_action_resolved_fill", recovery_pending=False,
+    )
+
+
+def _halt_fill_recovery(broker, session_id, mandate, action, evidence, positions, reason, checked):
+    try:
+        trip_halt(by="file", reason=reason, broker=broker)
+    except Exception as exc:  # noqa: BLE001 - marker remains the fail-closed gate
+        logger.error("fill recovery could not persist broker halt for %s: %s", broker, exc)
+    record = _audit(
+        broker, session_id, kind="halt_tripped", outcome="blocked", mandate=mandate,
+        intent=None, broker_request=action.request.model_dump(mode="json"),
+        broker_response={"order": evidence, "positions": positions},
+        gate_decision={"allowed": False, "decision": _DECISION_DENY,
+                       "checked_limits": checked + ["signed_position_delta"],
+                       "reason_code": "pending_action_fill_inconsistent",
+                       "action_id": action.action_id}, error=reason,
+    )
+    return _recovery_refusal(
+        broker, reason, record, reason_code="pending_action_fill_inconsistent"
+    )
+
+
+def _exact_position_qty(positions, symbol) -> Decimal | None:
+    rows = positions.get("positions", positions.get("data")) if isinstance(positions, dict) else positions
+    if not isinstance(rows, list):
+        return None
+    target = str(symbol).strip().upper()
+    matches = [row for row in rows if isinstance(row, dict)
+               and str(row.get("symbol") or "").strip().upper() == target]
+    if not matches:
+        return Decimal(0)
+    if len(matches) != 1:
+        return None
+    row = matches[0]
+    try:
+        quantity = _exact_decimal(row.get("quantity", row.get("qty")))
+    except InvalidOperation:
+        return None
+    if quantity is None:
+        return None
+    if str(row.get("side") or "").strip().lower() in {"short", "sell"} and quantity > 0:
+        quantity = -quantity
+    return quantity
 
 
 def _validate_recovery_evidence(action, response) -> dict[str, Any] | None:

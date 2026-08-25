@@ -119,7 +119,9 @@ class PendingAction(BaseModel):
     schema_version: Literal[1]
     broker: Literal["alpaca"]
     action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
-    phase: Literal["pending_write", "resolved_needs_revalidation"]
+    phase: Literal[
+        "pending_write", "resolved_fill_pending_audit", "resolved_needs_revalidation"
+    ]
     kind: Literal["place_order"]
     created_at: datetime
     client_order_id: str = Field(min_length=1, max_length=48)
@@ -141,7 +143,7 @@ class PendingAction(BaseModel):
             self.broker_order_id is not None or self.resolution is not None
         ):
             raise ValueError("pending write cannot contain resolved evidence")
-        if self.phase == "resolved_needs_revalidation" and (
+        if self.phase != "pending_write" and (
             self.resolution is None
             or self.broker_order_id != self.resolution.broker_order_id
             or self.client_order_id != self.resolution.client_order_id
@@ -234,11 +236,26 @@ def transition_to_revalidation(
     action: PendingAction, evidence: Mapping[str, object]
 ) -> PendingAction:
     """Durably retain exact working-order truth for later policy revalidation."""
+    return _transition(action, evidence, "resolved_needs_revalidation")
+
+
+def transition_to_fill_resolution(
+    action: PendingAction, evidence: Mapping[str, object]
+) -> PendingAction:
+    """Durably retain an attributed fill before its audit/terminal transition."""
+    return _transition(action, evidence, "resolved_fill_pending_audit")
+
+
+def _transition(
+    action: PendingAction,
+    evidence: Mapping[str, object],
+    phase: Literal["resolved_fill_pending_audit", "resolved_needs_revalidation"],
+) -> PendingAction:
     resolution = RecoveredOrderEvidence.model_validate(evidence)
     updated = PendingAction.model_validate(
         {
             **action.model_dump(mode="python"),
-            "phase": "resolved_needs_revalidation",
+            "phase": phase,
             "broker_order_id": resolution.broker_order_id,
             "resolution": resolution,
         }
