@@ -609,6 +609,9 @@ def test_attributed_fill_survives_audit_failure_and_replays_without_submit(monke
     connector._positions = {
         "status": "ok", "positions": [{"symbol": "AAPL", "quantity": 999}]
     }
+    connector.lookup_result = _exact_order(action, status="filled", filled_qty="11")
+    contradictory = _place(connector)
+    connector.lookup_result = _exact_order(action, status="filled", filled_qty="10")
     monkeypatch.setattr(gate, "write_live_action", lambda *args, **kwargs: {"audited": True})
     replay = _place(connector)
 
@@ -616,10 +619,11 @@ def test_attributed_fill_survives_audit_failure_and_replays_without_submit(monke
     assert persisted.phase == "resolved_fill_pending_audit"
     assert persisted.resolution.filled_qty == "10"
     assert persisted.position_resolution is not None
+    assert contradictory["reason_code"] == "pending_action_fill_inconsistent"
     assert replay["reason_code"] == "pending_action_resolved_fill"
     assert load_pending_action("alpaca") is None and counted == {action.action_id}
     assert len(connector.placed) == 1
-    assert connector.lookups == [action.client_order_id] * 2
+    assert connector.lookups == [action.client_order_id] * 3
 
 
 def test_corrupt_pending_marker_and_failed_audit_both_fail_closed(monkeypatch) -> None:

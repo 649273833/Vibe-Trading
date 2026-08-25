@@ -626,8 +626,8 @@ def _recover_correlated_fill(
     persisted = action.position_resolution
     same_resolution = (
         action.phase == "resolved_fill_pending_audit"
-        and action.resolution
-        == pending_action.RecoveredOrderEvidence.model_validate(evidence)
+        and action.resolution is not None
+        and action.resolution.model_dump(mode="json") == evidence
         and persisted is not None
     )
     if same_resolution:
