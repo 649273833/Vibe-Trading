@@ -349,6 +349,8 @@ The Web UI adds a read-only **Portfolio** page that aggregates holdings across t
 | **Immutable snapshots** | Each refresh is stored in `~/.vibe-trading/portfolio/portfolio.sqlite3`; credential-free settings live in `~/.vibe-trading/portfolio.json` and `connections.json`. |
 | **Export & analysis** | CSV export, plus a sanitized `portfolio_summary` agent tool whose `risk_xray_args` pass straight into `portfolio_risk_xray`. The same snapshot prints in the terminal with `vibe-trading portfolio show` (`refresh` / `sources` alongside). |
 
+Broker-reported source currencies are preserved during valuation: HKD account totals and positions, including Futu `HK.*` holdings, are converted with the snapshot USD/HKD rate before USD and CNY values are displayed. Older snapshots remain stored, but value history compares only snapshots produced by the current valuation methodology to avoid false gains or losses after a valuation fix.
+
 Read-only connectors you install yourself stay outside the checkout, in `~/.vibe-trading/connectors/<name>/`: a `connector.json` manifest plus an `adapter.py` implementing `check_status` / `get_account_snapshot` / `get_positions`. A manifest declaring any write capability is rejected.
 
 ```bash
