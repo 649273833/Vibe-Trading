@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -57,6 +58,29 @@ def _number(value: Decimal) -> float:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_callback_port_available(port: int) -> None:
+    """Fail cleanly before an embedded OAuth callback server tries to bind."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        raise RuntimeError(
+            f"OAuth callback port {port} is already in use; close the old authorization flow and retry"
+        ) from exc
+
+
+def _contains_system_exit(error: BaseException) -> bool:
+    """Return whether an exception or nested exception group contains SystemExit."""
+    if isinstance(error, SystemExit):
+        return True
+    nested = getattr(error, "exceptions", ())
+    return any(
+        _contains_system_exit(item)
+        for item in nested
+        if isinstance(item, BaseException)
+    )
 
 
 def _quote_price(payload: dict[str, Any]) -> Decimal | None:
@@ -403,8 +427,47 @@ class PortfolioService:
             RuntimeError: If the source is unknown, does not use OAuth, or its
                 MCP server is not configured.
         """
-        from src.config.loader import load_agent_config
+        from src.config.accessor import get_env_config
         from src.tools.mcp import MCPServerAdapter
+
+        source, profile, server = self.reconnect_target(source_id)
+        authorize_timeout = float(
+            get_env_config().agent_tuning.vibe_live_authorize_timeout_s or 300
+        )
+        if hasattr(server, "model_copy"):
+            updates = {}
+            if float(server.init_timeout or 0) < authorize_timeout:
+                updates["init_timeout"] = authorize_timeout
+            if float(server.tool_timeout or 0) < authorize_timeout:
+                updates["tool_timeout"] = authorize_timeout
+            if updates:
+                server = server.model_copy(update=updates)
+        callback_port = server.auth.callback_port if server.auth is not None else None
+        if callback_port is not None:
+            _ensure_callback_port_available(callback_port)
+        try:
+            tools = MCPServerAdapter(
+                profile.connector,
+                server,
+                max_list_tools_attempts=1,
+                interactive_oauth=True,
+            ).discover_tools()
+        except BaseException as exc:
+            if not _contains_system_exit(exc):
+                raise
+            raise RuntimeError(
+                "OAuth callback startup failed; authorization stopped safely"
+            ) from exc
+        return {
+            "status": "ok",
+            "authorized": True,
+            "source_id": source.id,
+            "enabled_read_tools": [item.remote_name for item in tools],
+        }
+
+    def reconnect_target(self, source_id: str):
+        """Validate and return the local-only configuration for an OAuth source."""
+        from src.config.loader import load_agent_config
 
         source = next(
             (
@@ -422,18 +485,11 @@ class PortfolioService:
         server = (load_agent_config().mcp_servers or {}).get(profile.connector)
         if server is None:
             raise RuntimeError(f"the {profile.connector} MCP connection is not configured")
-        tools = MCPServerAdapter(
-            profile.connector,
-            server,
-            max_list_tools_attempts=1,
-            interactive_oauth=True,
-        ).discover_tools()
-        return {
-            "status": "ok",
-            "authorized": True,
-            "source_id": source.id,
-            "enabled_read_tools": [item.remote_name for item in tools],
-        }
+        if server.auth is None:
+            raise RuntimeError(
+                f"the {profile.connector} MCP connection does not configure OAuth"
+            )
+        return source, profile, server
 
     def history(self, limit: int = 180) -> list[dict[str, Any]]:
         """Return the value series built only from complete snapshots.

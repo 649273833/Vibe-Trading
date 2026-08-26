@@ -159,6 +159,15 @@ export interface PortfolioRefreshState {
   brokers?: Record<string, { status: "idle" | "pending" | "refreshing" | "ok" | "error"; error?: string | null }>;
 }
 
+export interface PortfolioReconnectState {
+  running: boolean;
+  source_id: string | null;
+  status: "idle" | "authorizing" | "authorized" | "error" | "timeout";
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface PortfolioSourceSettings {
   connection_id: string;
   label: string;
@@ -322,7 +331,9 @@ export const api = {
   refreshPortfolio: () => request<{ status: string; snapshot: PortfolioSnapshot }>("/api/portfolio/refresh", { method: "POST" }),
   getPortfolioRefreshStatus: () => request<{ status: string; refresh: PortfolioRefreshState }>("/api/portfolio/refresh-status"),
   reconnectPortfolioSource: (sourceId: string) =>
-    request<{ status: string; authorized: boolean }>(`/api/portfolio/sources/${encodeURIComponent(sourceId)}/reconnect`, { method: "POST" }),
+    request<{ status: string; reconnect: PortfolioReconnectState }>(`/api/portfolio/sources/${encodeURIComponent(sourceId)}/reconnect`, { method: "POST" }),
+  getPortfolioReconnectStatus: () =>
+    request<{ status: string; reconnect: PortfolioReconnectState }>("/api/portfolio/reconnect-status"),
   getPortfolioSettings: () => request<PortfolioSettingsResponse>("/api/portfolio/settings"),
   updatePortfolioSettings: (settings: PortfolioSettings) =>
     request<PortfolioSettingsResponse>("/api/portfolio/settings", {
