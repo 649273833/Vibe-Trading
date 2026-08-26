@@ -10,7 +10,6 @@ of import order.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Type
 
 from backtest.loaders.base import NoAvailableSourceError
@@ -252,8 +251,14 @@ def refresh_source_order_overrides() -> None:
     restores the default chain.
     """
     global _LAST_ORDER_ENV_SNAPSHOT
+    # Config-layer read (ci_env_var_gate: no raw os.getenv outside src/config/).
+    # get_env_value passes through to os.getenv un-cached, so hot-apply still
+    # only needs the os.environ sync the Settings PUT performs. Imported here,
+    # not at module top, matching the other loaders' accessor usage.
+    from src.config.accessor import get_env_value
+
     snapshot = {
-        source_order_env_var(market): os.getenv(source_order_env_var(market), "")
+        source_order_env_var(market): get_env_value(source_order_env_var(market), "")
         for market in _DEFAULT_CHAINS
     }
     if snapshot == _LAST_ORDER_ENV_SNAPSHOT:
