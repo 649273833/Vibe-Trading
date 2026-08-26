@@ -34,6 +34,7 @@ from src.trading.types import TradingProfile
 # the market suffix: ``AAPL`` alone is read as an A-share code, ``AAPL.US`` is
 # not (see ``src.market_data._SOURCE_PATTERNS``).
 _RISK_XRAY_MAX_SYMBOLS = 50
+PORTFOLIO_VALUATION_VERSION = 2
 _LOADER_MARKET_SUFFIXES = frozenset(
     {"US", "HK", "SZ", "SH", "BJ", "KS", "KQ", "NS", "BO", "TO", "V"}
 )
@@ -295,6 +296,7 @@ class PortfolioService:
         identified_usd = priced_usd + cash_usd
         payload = {
             "snapshot_id": uuid.uuid4().hex,
+            "valuation_version": PORTFOLIO_VALUATION_VERSION,
             "created_at": refreshed_at,
             "complete": complete,
             "display_currency": settings.display_currency,
@@ -374,6 +376,8 @@ class PortfolioService:
         snapshot = self.store.latest()
         if snapshot is None:
             return None
+        if snapshot.get("valuation_version") != PORTFOLIO_VALUATION_VERSION:
+            return None
         enabled = {
             source.id for source in self.settings_store.load().sources if source.enabled
         }
@@ -444,7 +448,11 @@ class PortfolioService:
         Returns:
             One row per complete snapshot with its id, timestamp and totals.
         """
-        return self.store.history(limit, complete_only=True)
+        return self.store.history(
+            limit,
+            complete_only=True,
+            valuation_version=PORTFOLIO_VALUATION_VERSION,
+        )
 
     def export_csv(self) -> str:
         """Render the latest snapshot's positions as CSV.
