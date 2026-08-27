@@ -269,6 +269,9 @@ export function SourcePrioritySettings() {
               {t("settings.sourcePriority.howItWorksTitle")}
             </div>
             <p>{t("settings.sourcePriority.howItWorks")}</p>
+            <p className="mt-3 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-warning-foreground">
+              {t("settings.sourcePriority.caliberCaveat")}
+            </p>
             {activeEntry ? (
               <p className="mt-3 break-all font-mono text-xs">
                 {activeEntry.env_var}
