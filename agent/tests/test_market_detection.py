@@ -72,10 +72,10 @@ class TestDetectMarket:
              ("TD.TO", "ca_equity"),
              ("BBD-B.TO", "ca_equity"),
              ("PNG.V", "ca_equity"),
-             # UK / Irish equity (LSE / ISE)
+             # UK equity (LSE)
              ("VOD.L", "uk_equity"),
              ("SHEL.L", "uk_equity"),
-             ("DCC.IL", "uk_equity"),
+             ("BARC.L", "uk_equity"),
             # Crypto
             ("BTC-USDT", "crypto"),
             ("ETH-USDT", "crypto"),
