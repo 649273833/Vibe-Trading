@@ -28,10 +28,10 @@ _SOURCE_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "yahoo"),
     # Canada: Toronto Stock Exchange (TD.TO) / TSX Venture (PNG.V).
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "yahoo"),
-    # UK: London Stock Exchange (VOD.L, SHEL.L) / Irish (DCC.IL). Yahoo serves
-    # both suffixes verbatim; without this they fell through to the tushare
-    # default and were routed to China-market loaders that cannot resolve them.
-    (re.compile(r"^[A-Z0-9&.\-]+\.(L|IL)$", re.I), "yahoo"),
+    # UK: London Stock Exchange (VOD.L, SHEL.L). Yahoo serves the suffix
+    # verbatim; without this they fell through to the tushare default and were
+    # routed to China-market loaders that cannot resolve them.
+    (re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I), "yahoo"),
     # Yahoo futures (GC=F, CL=F) and forex (EURUSD=X) suffix conventions —
     # served verbatim by Yahoo's public chart endpoint (#718). Without these,
     # such symbols fell through to the ``tushare`` default and were routed to

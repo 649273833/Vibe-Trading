@@ -306,7 +306,9 @@ class TestFetch:
 
     def test_uk_symbols_are_supported(self):
         assert _is_supported("VOD.L")
-        assert _is_supported("DCC.IL")
+        assert _is_supported("BARC.L")
+        # Irish ISE is out of scope; .IL must not be claimed.
+        assert not _is_supported("DCC.IL")
         assert not _is_supported("601398.SH")
         good_rows = [_row("2024-01-02", 10, 11, 9, 10.5, 1000)]
 

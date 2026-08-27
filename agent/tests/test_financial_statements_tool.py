@@ -362,7 +362,7 @@ class TestErrorEnvelope:
 
 
 class TestUKYahooStatements:
-    """UK (.L/.IL) routes to Yahoo quoteSummary with flattened raw values."""
+    """UK (.L) routes to Yahoo quoteSummary with flattened raw values."""
 
     _INCOME_PAYLOAD = {
         "incomeStatementHistory": {
@@ -446,9 +446,9 @@ class TestUKYahooStatements:
             return_value=self._INCOME_PAYLOAD,
         ) as mock_qs:
             FinancialStatementsTool().execute(
-                code="DCC.IL", statement="income", period="annual"
+                code="BARC.L", statement="income", period="annual"
             )
-        assert mock_qs.call_args.args == ("DCC.IL", ["incomeStatementHistory"])
+        assert mock_qs.call_args.args == ("BARC.L", ["incomeStatementHistory"])
 
     def test_uk_indicators_flatten_nested_blocks(self) -> None:
         payload = {

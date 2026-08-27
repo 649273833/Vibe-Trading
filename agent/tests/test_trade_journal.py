@@ -121,7 +121,7 @@ def test_normalize_side_rejects_missing_or_unknown(raw: object) -> None:
         ("000001.SZ", "china_a"),
         ("VOD.L", "uk"),
         ("HSBA.L", "uk"),
-        ("DCC.IL", "uk"),
+        ("BARC.L", "uk"),
         ("vod.l", "uk"),
         ("AAPL", "us"),
         ("BTC-USDT", "crypto"),

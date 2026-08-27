@@ -1,4 +1,4 @@
-"""Test UK/Irish equity (LSE .L / ISE .IL) market support end to end.
+"""Test UK equity (LSE .L) market support end to end.
 
 Regression suite for issue #1205: UK symbols used to fall through the
 source/market detection tables to the tushare default and the China
@@ -24,7 +24,7 @@ class TestUKSourceDetection:
         assert detect_source("SHEL.L") == "yahoo"
 
     def test_ise_routes_to_yahoo(self) -> None:
-        assert detect_source("DCC.IL") == "yahoo"
+        assert detect_source("BARC.L") == "yahoo"
 
     def test_lowercase_suffix_routes_to_yahoo(self) -> None:
         assert detect_source("vod.l") == "yahoo"
@@ -36,14 +36,14 @@ class TestUKMarketClassification:
         assert _detect_market("HSBA.L") == "uk_equity"
 
     def test_ise_classifies_as_uk_equity(self) -> None:
-        assert _detect_market("DCC.IL") == "uk_equity"
+        assert _detect_market("BARC.L") == "uk_equity"
 
     def test_lowercase_classifies_as_uk_equity(self) -> None:
         assert _detect_market("shel.l") == "uk_equity"
 
     def test_submarket_detects_uk(self) -> None:
         assert _detect_submarket(["VOD.L", "SHEL.L"]) == "uk"
-        assert _detect_submarket(["DCC.IL"]) == "uk"
+        assert _detect_submarket(["BARC.L"]) == "uk"
 
     def test_submarket_still_detects_other_markets(self) -> None:
         assert _detect_submarket(["AAPL.US"]) == "us"
@@ -57,7 +57,7 @@ class TestUKSettlementCurrency:
         assert code_currency("SHEL.L") == "GBP"
 
     def test_ise_settles_in_gbp(self) -> None:
-        assert code_currency("DCC.IL") == "GBP"
+        assert code_currency("BARC.L") == "GBP"
 
     def test_uk_market_cost_is_separate_from_cad(self) -> None:
         # The composite engine refuses mixed-currency sets; UK must not
@@ -95,7 +95,7 @@ class TestUKBacktestRouting:
         assert engine.market == "uk"
 
     def test_ise_engine_is_global_equity(self) -> None:
-        engine = _create_market_engine("auto", {"initial_cash": 100_000}, ["DCC.IL"])
+        engine = _create_market_engine("auto", {"initial_cash": 100_000}, ["BARC.L"])
         assert isinstance(engine, GlobalEquityEngine)
         assert engine.market == "uk"
 
@@ -142,7 +142,7 @@ class TestGbpPenceNormalization:
 
     def test_pence_symbol_detection(self) -> None:
         assert is_gbp_pence_symbol("VOD.L")
-        assert is_gbp_pence_symbol("DCC.IL")
+        assert is_gbp_pence_symbol("BARC.L")
         assert is_gbp_pence_symbol("vod.l")
         assert not is_gbp_pence_symbol("AAPL.US")
         assert not is_gbp_pence_symbol("0700.HK")

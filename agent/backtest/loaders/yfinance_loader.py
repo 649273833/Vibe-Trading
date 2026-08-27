@@ -330,7 +330,7 @@ class DataLoader:
                     logger.warning("yfinance returned no usable data for %s", symbol)
                     continue
 
-                # Yahoo-family data: .L/.IL UK names quote in GBp (pence).
+                # Yahoo-family data: .L UK names quote in GBp (pence).
                 # Normalize ÷100 so code_currency's GBP matches the values.
                 if is_gbp_pence_symbol(symbol):
                     normalized, _ = scale_pence_to_currency(normalized, "GBp")

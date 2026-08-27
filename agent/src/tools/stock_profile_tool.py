@@ -230,7 +230,7 @@ def _market_for(ticker: str) -> str:
     upper = ticker.strip().upper()
     if upper.endswith(".HK"):
         return "hk"
-    if upper.endswith((".L", ".IL")):
+    if upper.endswith(".L"):
         return "uk"
     return "us"
 
@@ -256,7 +256,7 @@ class StockProfileTool(BaseTool):
                 "description": (
                     "US, HK, or UK/Irish symbol. US uses a bare or .US suffix "
                     "(AAPL or AAPL.US); HK uses a zero-padded .HK code "
-                    "(00700.HK); UK/Irish uses .L or .IL (VOD.L)."
+                    "(00700.HK); UK uses the .L suffix (VOD.L)."
                 ),
             },
             "sections": {

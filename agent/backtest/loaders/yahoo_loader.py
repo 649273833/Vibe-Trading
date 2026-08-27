@@ -54,14 +54,14 @@ def _is_supported(code: str) -> bool:
     Covers US/HK/India/Korea/Canada/Vietnam/UK equities plus Yahoo's own
     futures (``GC=F``) and forex (``EURUSD=X``) suffix conventions, which the
     public chart endpoint serves verbatim (the code is used as-is in the
-    request URL, no conversion) (#718). UK ``.L``/``.IL`` comes in GBp and is
+    request URL, no conversion) (#718). UK ``.L`` quotes in GBp and is
     normalized to GBP at fetch time (#1206).
     """
     upper = code.strip().upper()
     return upper.endswith(
         (
             ".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", ".VN",
-            ".L", ".IL", "=F", "=X",
+            ".L", "=F", "=X",
         )
     )
 

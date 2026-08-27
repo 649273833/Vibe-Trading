@@ -21,7 +21,7 @@ The tool selects the right Yahoo quoteSummary modules, unwraps Yahoo
 
 Name | Type | Required | Description
 ---- | ---- | -------- | -----------
-ticker | str | Y | US (`AAPL` or `AAPL.US`), HK (`00700.HK`, zero-padded), or UK/Irish (`VOD.L`, `DCC.IL`) symbol.
+ticker | str | Y | US (`AAPL` or `AAPL.US`), HK (`00700.HK`, zero-padded), or UK LSE (`VOD.L`) symbol.
 sections | list[str] | N | Which sections to return (one or more of the section names below). Defaults to all sections. Unknown names return an error envelope.
 
 Section name → underlying Yahoo module:
@@ -49,7 +49,7 @@ On success:
  "data": {"ticker": "<input>", "sections": {"<name>": <shaped>}}}
 ```
 
-`market` is `hk` when the ticker ends `.HK`, `uk` when it ends `.L`/`.IL`,
+`market` is `hk` when the ticker ends `.HK`, `uk` when it ends `.L`,
 else `us`. Scalar sections
 (`key_stats`, `financials`) shape to a flat dict; list sections
 (`earnings_trend`, `institution_ownership`, `insider_holders`,

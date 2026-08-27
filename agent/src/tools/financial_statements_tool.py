@@ -291,7 +291,7 @@ def _fetch_eastmoney_statement(
 
 
 # Yahoo quoteSummary module + result-key per (statement, cadence). UK
-# (.L/.IL) names have no Eastmoney or SEC filing pipeline; Yahoo's
+# (.L) names have no Eastmoney or SEC filing pipeline; Yahoo's
 # crumb-gated quoteSummary serves annual and quarterly histories for
 # LSE/ISE tickers (UK parity, #1206).
 _YAHOO_STATEMENT_MODULES: dict[tuple[str, str], tuple[str, str]] = {
@@ -328,10 +328,10 @@ def _yahoo_value(value: Any) -> Any:
 def _fetch_yahoo_statement(
     code: str, *, statement: str, period: str
 ) -> dict[str, Any]:
-    """Fetch one UK (.L/.IL) statement/indicators from Yahoo quoteSummary.
+    """Fetch one UK (.L) statement/indicators from Yahoo quoteSummary.
 
     Args:
-        code: UK symbol (e.g. ``"VOD.L"`` or ``"DCC.IL"``).
+        code: UK symbol (e.g. ``"VOD.L"``).
         statement: One of :data:`_VALID_STATEMENTS`.
         period: ``"annual"`` or ``"quarter"`` — selects the corresponding
             history module; both exist for LSE/ISE tickers.
@@ -674,7 +674,7 @@ def _classify_market(code: str) -> str | None:
         return "us"
     if suffix == "HK":
         return "hk"
-    if suffix in ("L", "IL"):
+    if suffix == "L":
         # London Stock Exchange / Irish Stock Exchange (#1206).
         return "uk"
     return None
@@ -688,7 +688,7 @@ class FinancialStatementsTool(BaseTool):
         "Fetch a single stock's financial statements: balance sheet, income "
         "statement, cash-flow statement, or key per-period indicators (margins, "
         "ROE, EPS, etc.). Markets: A-share (.SH/.SZ/.BJ), US (.US), "
-        "Hong Kong (.HK) and UK/Irish (.L/.IL). US uses SEC EDGAR companyfacts; "
+        "Hong Kong (.HK) and UK LSE (.L). US uses SEC EDGAR companyfacts; "
         "A-share and HK use Eastmoney; UK uses Yahoo quoteSummary (annual "
         "history). Reports come back newest-first as flat per-period rows. Use "
         'this to read fundamentals before building a valuation or screen. Example: '
@@ -768,7 +768,7 @@ class FinancialStatementsTool(BaseTool):
         market = _classify_market(code)
         if market is None:
             return _error(
-                "code must carry a supported suffix: .SH/.SZ/.BJ, .US, .HK, or .L/.IL"
+                "code must carry a supported suffix: .SH/.SZ/.BJ, .US, .HK, or .L"
             )
 
         if market == "us":
