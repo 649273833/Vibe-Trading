@@ -437,3 +437,58 @@ def test_error_envelope_flatten_is_not_a_success(live_runtime: Path) -> None:
             "error": "connection reset while cancelling NVDA",
         }
     ]
+
+
+def test_nested_broker_error_cancel_is_not_a_success(live_runtime: Path) -> None:
+    # MCP transport succeeded but the broker rejected inside its own payload
+    # ({"status": "ok", "data": {"status": "error", ...}}): the order stays
+    # live, so it must NOT be recorded as cancelled.
+    broker = _Broker(open_orders=[{"order_id": "o1"}, {"order_id": "o2"}], positions=[])
+    real_submit = broker.submit
+
+    def submit(request: dict[str, Any]) -> dict[str, Any]:
+        if request.get("order_id") == "o1":
+            return {
+                "status": "ok",
+                "data": {"status": "error", "error": "broker rejected o1"},
+            }
+        return real_submit(request)
+
+    report = flatten.flatten_and_cancel(
+        "robinhood", submit, broker.read_positions, broker.read_open_orders
+    )
+    assert report["cancelled_order_ids"] == ["o2"]  # only the accepted one
+    assert {
+        "phase": "cancel",
+        "order_id": "o1",
+        "error": "broker rejected o1",
+    } in report["errors"]
+    assert report["side_effects_attempted"] is True  # submitted, just rejected
+
+
+def test_nested_broker_error_flatten_is_not_a_success(live_runtime: Path) -> None:
+    broker = _Broker(open_orders=[], positions=[{"symbol": "NVDA", "qty": 3}])
+    real_submit = broker.submit
+
+    def submit(request: dict[str, Any]) -> dict[str, Any]:
+        if request.get("symbol") == "NVDA":
+            return {
+                "status": "ok",
+                "data": {"ok": False, "message": "insufficient buying power"},
+            }
+        return real_submit(request)
+
+    report = flatten.flatten_and_cancel(
+        "robinhood",
+        submit,
+        broker.read_positions,
+        broker.read_open_orders,
+        allow_flatten=True,
+    )
+    assert report["flatten_orders_submitted"] == []
+    assert {
+        "phase": "flatten",
+        "symbol": "NVDA",
+        "error": "insufficient buying power",
+    } in report["errors"]
+    assert report["side_effects_attempted"] is True

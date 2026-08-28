@@ -245,3 +245,53 @@ def test_side_effect_attempted_latches_even_with_read_error(
     # Restart: the on-disk latch suppresses the duplicate close.
     asyncio.run(_build_runner(live_root, fired, _flatten).run_once())
     assert fired == [BROKER]
+
+
+# ---------------------------------------------------------------------------
+# Inter-process claim protocol (#1244 hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_claim_is_exclusive_and_releasable(live_root: Path) -> None:
+    assert sweep_latch.claim_sweep(BROKER) is True  # first wins
+    assert sweep_latch.claim_sweep(BROKER) is False  # second cannot claim
+    sweep_latch.release_claim(BROKER)
+    assert sweep_latch.claim_sweep(BROKER) is True  # claimable again
+    sweep_latch.release_claim(BROKER)
+
+
+def test_runner_skips_when_claim_held_by_other_process(live_root: Path) -> None:
+    # A second runner for the same broker must not sweep concurrently
+    # (check-then-act would let both pass sweep_already_fired and duplicate
+    # market closes). The held claim forces this process to skip + audit.
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    assert sweep_latch.claim_sweep(BROKER) is True  # "other" process holds it
+    fired: list[str] = []
+    asyncio.run(_build_runner(live_root, fired).run_once())
+    assert fired == []  # never swept
+    assert not sweep_latch.latch_path(BROKER).exists()
+    sweep_latch.release_claim(BROKER)
+
+
+def test_runner_claims_and_releases_around_sweep(live_root: Path) -> None:
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    fired: list[str] = []
+    asyncio.run(_build_runner(live_root, fired).run_once())
+    assert fired == [BROKER]
+    # The claim must be released after the sweep (crash-free path), so a
+    # later re-check can claim again.
+    assert not sweep_latch.claim_path(BROKER).exists()
+
+
+def test_runner_claim_released_after_read_failure(live_root: Path) -> None:
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    fired: list[str] = []
+
+    def _flatten(broker, submit, read_positions, read_open_orders):
+        fired.append(broker)
+        return {"errors": [{"phase": "read_positions", "error": "read failed"}]}
+
+    asyncio.run(_build_runner(live_root, fired, _flatten).run_once())
+    assert fired == [BROKER]
+    assert not sweep_latch.claim_path(BROKER).exists()
+    assert not sweep_latch.latch_path(BROKER).exists()

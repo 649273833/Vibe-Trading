@@ -403,9 +403,27 @@ def _error_envelope_message(response: Any) -> str | None:
     dict is not proof the broker accepted the request. Treating that
     envelope as success would audit a resting order as cancelled while it
     stays live, which is the failure the sweep exists to prevent.
+
+    A *nested* broker-level failure is just as dangerous: the MCP transport
+    succeeded, but the connector/broker rejected the order inside its own
+    payload (``{"status": "ok", "data": {"status": "error", ...}}`` or
+    ``{"status": "ok", "data": {"ok": False, ...}}``). Only the top level was
+    checked before, so such a rejection was recorded as accepted and the
+    sweep latched with a live order still resting.
     """
-    if isinstance(response, dict) and response.get("status") == "error":
-        return str(response.get("error") or "broker returned an error envelope")
+    if isinstance(response, dict):
+        if response.get("status") == "error":
+            return str(response.get("error") or "broker returned an error envelope")
+        data = response.get("data")
+        if isinstance(data, dict):
+            if data.get("status") == "error":
+                return str(data.get("error") or "broker returned an error envelope")
+            if data.get("ok") is False:
+                return str(
+                    data.get("error")
+                    or data.get("message")
+                    or "broker rejected the request"
+                )
     return None
 
 

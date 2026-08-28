@@ -32,11 +32,64 @@ from src.live.halt import broker_halt_path, halt_path, read_halt
 from src.live.paths import broker_dir
 
 _LATCH_FILENAME = "FLATTEN_FIRED"
+_CLAIM_FILENAME = "FLATTEN_CLAIM"
 
 
 def latch_path(broker: str) -> Path:
     """Return the per-broker sweep latch path (not created here)."""
     return broker_dir(broker) / _LATCH_FILENAME
+
+
+def claim_path(broker: str) -> Path:
+    """Return the per-broker sweep-claim path (holds the inter-process claim)."""
+    return broker_dir(broker) / _CLAIM_FILENAME
+
+
+def claim_sweep(broker: str) -> bool:
+    """Atomically claim the sweep for ``broker`` — exclusive between processes.
+
+    ``O_CREAT | O_EXCL`` guarantees a single winner even when two runner
+    processes start simultaneously: the loser of the race sees the claim file
+    and must NOT sweep (the duplicate-close hazard the latch exists to
+    prevent). The claim covers the whole check -> sweep -> durable-record
+    window. A claim left behind by a crash means the episode's outcome is
+    *unknowable*: re-sweeping could duplicate a close, so the runner skips and
+    surfaces the claim for operator resolution (documented recovery).
+
+    Returns:
+        ``True`` if this process now owns the sweep; ``False`` when a claim
+        already exists (another runner active, or a crashed prior run).
+    """
+    path = claim_path(broker)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    "pid": os.getpid(),
+                },
+                f,
+            )
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise  # claim could not be recorded; caller decides (fail-closed)
+    return True
+
+
+def release_claim(broker: str) -> None:
+    """Drop this process's sweep claim (no-op when the file is absent)."""
+    try:
+        claim_path(broker).unlink()
+    except OSError:
+        pass
 
 
 def _halt_episode(broker: str) -> str | None:
