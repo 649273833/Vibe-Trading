@@ -610,7 +610,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>19 个模块 289 个经测试的函数，四条通路皆可调用</sub></summary>
+<summary><b>Quant Library</b> <sub>23 个模块 306 个经测试的函数，四条通路皆可调用</sub></summary>
 
 `src/quantlib` 为 agent 需要的每一块金融数学各提供**一份**经测试的实现。skill 现在是
 **import** 这些函数，而不再把公式抄在 markdown 代码块里——如果你在某个 `SKILL.md`
@@ -628,6 +628,10 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | `factormodel` · `eventstudy` | 因子回归、事件研究 |
 | `multipletesting` · `crossvalidation` | 去偏显著性、purged CV |
 | `impact` | 市场冲击模型 |
+| `volatility` | Heston (1993) 随机波动率定价 |
+| `portfolio` | 分层风险平价（HRP）配置 |
+| `copula` | 高斯与阿基米德 Copula |
+| `microstructure` | VPIN、Roll 价差、Amihud 非流动性、Kyle lambda |
 
 只读工具 `quantlib_call` 用一份契约触达全部函数，因此在 `bash` 被关闭的 CLI、Web UI、
 REST API 与 MCP 上金融数学照样可用。它在结构上**不是 shell**——模块白名单、只按 `__all__` 分派、

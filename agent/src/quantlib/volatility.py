@@ -151,6 +151,14 @@ def heston_price(
     def integrand(u: float) -> float:
         if u == 0.0:
             return 0.0
+        # The sign of this exponent is load-bearing and invisible to the usual
+        # sanity checks. With sigma_v -> 0 the centered CF is real, so
+        # Re[e^{+iuk} phi] == Re[e^{-iuk} phi] and the Black-Scholes limit
+        # passes either way; at-the-money k is 0, so benchmark and put-call
+        # parity checks pass either way too. It only shows up once rho != 0,
+        # where flipping it inverts the volatility skew — a negative rho would
+        # price OTM calls richer than ITM ones. test_volatility pins the skew
+        # direction for exactly this reason.
         # Centered characteristic function for u - i/2
         phi = heston_characteristic_function(
             u=u - 0.5j,
@@ -164,7 +172,7 @@ def heston_price(
             sigma_v=sigma_v,
             rho=rho,
         )
-        val = cmath.exp(-1j * u * k) * phi / (u**2 + 0.25)
+        val = cmath.exp(1j * u * k) * phi / (u**2 + 0.25)
         return float(val.real)
 
     integ, _ = quad(integrand, 0.0, integration_limit, limit=2000)

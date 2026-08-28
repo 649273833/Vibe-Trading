@@ -7,7 +7,7 @@ from src.quantlib.volatility import (
     heston_price,
     heston_feller_condition,
 )
-from src.quantlib.options import bs_price
+from src.quantlib.options import bs_price, implied_volatility
 
 
 class TestHestonModel:
@@ -85,6 +85,43 @@ class TestHestonModel:
         )
         bs = bs_price(S=S0, K=K, T=T, r=r, sigma=vol, option_type="call", q=q)
         assert pytest.approx(h_price, abs=1e-3) == bs
+
+    def test_negative_rho_produces_a_downward_sloping_skew(self):
+        """A leverage-effect correlation must make low strikes the expensive ones.
+
+        This is the only property in this file that can see the sign of the
+        Lewis integrand's ``e^{iuk}`` factor. With ``sigma_v -> 0`` the centered
+        characteristic function is real, so the Black-Scholes limit is identical
+        under either sign; at the money ``k`` is zero, so the benchmark and the
+        put-call parity check are identical too. Flipping the sign inverts the
+        skew and nothing else in the suite moves.
+        """
+        S0, T, r, q = 100.0, 1.0, 0.02, 0.01
+        kappa, theta, sigma_v, v0 = 3.0, 0.04, 0.2, 0.04
+
+        def iv(K: float, rho: float) -> float:
+            price = heston_price(
+                S0, K, T, r, v0, kappa, theta, sigma_v, rho, option_type="call", q=q
+            )
+            return implied_volatility(price, S0, K, T, r, "call", q=q)
+
+        low, high = 80.0, 120.0
+        assert iv(low, -0.6) > iv(high, -0.6), "rho < 0 must give a negative skew"
+        assert iv(low, 0.6) < iv(high, 0.6), "rho > 0 must give a positive skew"
+        # Symmetric parameters: flipping rho must mirror the smile, not shift it.
+        assert iv(low, -0.6) == pytest.approx(iv(high, 0.6), abs=2e-3)
+
+    def test_negative_rho_cheapens_out_of_the_money_calls(self):
+        """The price-level consequence of the skew, checked without inverting IV."""
+        S0, K, T, r, q = 100.0, 120.0, 1.0, 0.02, 0.01
+        kappa, theta, sigma_v, v0 = 3.0, 0.04, 0.2, 0.04
+
+        def price(rho: float) -> float:
+            return heston_price(
+                S0, K, T, r, v0, kappa, theta, sigma_v, rho, option_type="call", q=q
+            )
+
+        assert price(-0.6) < price(0.0) < price(0.6)
 
     def test_invalid_parameters_raise(self):
         with pytest.raises(ValueError):
