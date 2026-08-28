@@ -642,14 +642,31 @@ class LiveRunner:
                 # Unknown failure: cancel/flatten side effects may have begun
                 # and are not retryable — latch so a restart does not replay.
                 self._flatten_fired = True
-                mark_sweep_fired(self.broker)
-                logger.exception("preemptive flatten failed for %s", self.broker)
-                self._audit(
-                    kind="breach",
-                    outcome="error",
-                    intent="preemptive halt sweep failed — not retried (no-retry §8.5)",
-                    error=str(exc),
-                )
+                try:
+                    mark_sweep_fired(self.broker)
+                except Exception as persist_exc:  # noqa: BLE001 — double failure
+                    # Both the sweep AND the durable latch write failed: the
+                    # in-memory flag still shields this process, and the
+                    # operator must know a restart may replay.
+                    logger.exception(
+                        "durable sweep latch write failed for %s while the sweep "
+                        "itself failed — restart may replay; verify broker state",
+                        self.broker,
+                    )
+                    self._audit(
+                        kind="breach",
+                        outcome="error",
+                        intent="durable sweep latch write failed during sweep failure — restart may replay; verify broker state",
+                        error=f"sweep: {exc}; latch: {persist_exc}",
+                    )
+                else:
+                    logger.exception("preemptive flatten failed for %s", self.broker)
+                    self._audit(
+                        kind="breach",
+                        outcome="error",
+                        intent="preemptive halt sweep failed — not retried (no-retry §8.5)",
+                        error=str(exc),
+                    )
                 return
             report = report or {}
             read_errors = [

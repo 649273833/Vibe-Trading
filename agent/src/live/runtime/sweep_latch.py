@@ -111,6 +111,54 @@ def release_claim(broker: str, episode: str) -> None:
         pass
 
 
+def _sentinel_identity(path: Path, payload: dict[str, Any]) -> tuple[int, str] | None:
+    """Return ``(instant_ns, identity)`` for one halt sentinel, or ``None``.
+
+    ``tripped_at`` is the identity when the sentinel carries a parseable one;
+    a hand-touched/malformed sentinel falls back to its file mtime (which
+    still changes on every fresh ``touch``). Ranking by mtime alone is not
+    safe — two sentinels written within one filesystem timestamp quantum
+    share an mtime — so ``tripped_at`` wins whenever present.
+    """
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        return None
+    tripped_at = payload.get("tripped_at")
+    if tripped_at:
+        try:
+            trip = datetime.fromisoformat(str(tripped_at))
+            if trip.tzinfo is None:
+                trip = trip.replace(tzinfo=timezone.utc)
+            return int(trip.timestamp() * 1_000_000_000), str(tripped_at)
+        except ValueError:
+            pass
+    return mtime_ns, f"mtime:{mtime_ns}"
+
+
+def _active_episodes(broker: str) -> list[str]:
+    """Return the identity of EVERY currently tripped halt episode.
+
+    Both the per-broker and the global sentinel can be tripped at the same
+    time, and both are live until their sentinel is cleared. Recording the
+    sweep as fired only for its *newest* episode leaves the other active one
+    unrecorded: clearing the recorded halt would re-fire the sweep while the
+    other halt is still tripped. Both identities must therefore be latched
+    together.
+    """
+    identities: list[str] = []
+    for path, payload in (
+        (broker_halt_path(broker), read_halt(broker)),
+        (halt_path(), read_halt()),
+    ):
+        if payload is None:
+            continue
+        resolved = _sentinel_identity(path, payload)
+        if resolved is not None:
+            identities.append(resolved[1])
+    return identities
+
+
 def _halt_episode(broker: str) -> str | None:
     """Return the identity of the *newest* tripped halt episode, if any.
 
@@ -118,13 +166,7 @@ def _halt_episode(broker: str) -> str | None:
     times. The global HALT is authoritative (``halt_flag_set`` halts every
     channel), but a stale per-broker episode must not suppress the sweep for
     a newer global trip — nor an older global trip override a newer
-    per-broker one. The newest sentinel therefore wins, ranked by its
-    explicit ``tripped_at`` payload when it carries one; the file mtime is
-    used only as the fallback for hand-touched/malformed sentinels without
-    a parseable ``tripped_at``. Ranking by mtime alone is not safe: two
-    sentinels written within one filesystem timestamp quantum share an
-    mtime, and the order would silently follow directory iteration instead
-    of trip time.
+    per-broker one. The newest sentinel therefore wins.
     """
     candidates: list[tuple[int, str]] = []
     for path, payload in (
@@ -133,25 +175,9 @@ def _halt_episode(broker: str) -> str | None:
     ):
         if payload is None:
             continue
-        try:
-            mtime_ns = path.stat().st_mtime_ns
-        except OSError:
-            continue
-        tripped_at = payload.get("tripped_at")
-        if tripped_at:
-            try:
-                trip = datetime.fromisoformat(str(tripped_at))
-                if trip.tzinfo is None:
-                    trip = trip.replace(tzinfo=timezone.utc)
-                instant_ns = int(trip.timestamp() * 1_000_000_000)
-                identity = str(tripped_at)
-            except ValueError:
-                instant_ns = mtime_ns
-                identity = f"mtime:{mtime_ns}"
-        else:
-            instant_ns = mtime_ns
-            identity = f"mtime:{mtime_ns}"
-        candidates.append((instant_ns, identity))
+        resolved = _sentinel_identity(path, payload)
+        if resolved is not None:
+            candidates.append(resolved)
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
@@ -175,16 +201,23 @@ def sweep_already_fired(broker: str) -> bool:
 
 
 def mark_sweep_fired(broker: str) -> None:
-    """Record that the sweep fired for the current halt episode.
+    """Record that the sweep fired for the currently tripped halt episodes.
 
     Atomic write (same-directory temp file + ``os.replace``), same contract
     as the HALT sentinel. A no-op when no halt is tripped, since there is no
     episode to bind the record to. The record accumulates every episode the
     sweep has fired for on this broker (``episodes``), so clearing one halt
     never re-fires the sweep for an older episode that was already swept.
+
+    Both the per-broker and the global sentinel may be tripped at the same
+    time: the sweep covers the halt state as a whole, so EVERY currently
+    active episode identity is recorded together. Recording only the newest
+    would leave the older still-active halt unrecorded — clearing the newer
+    would then re-fire the sweep while the other halt remains tripped
+    (redundant no-op re-sweep and audit noise).
     """
-    episode = _halt_episode(broker)
-    if episode is None:
+    active = _active_episodes(broker)
+    if not active:
         return
     path = latch_path(broker)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,9 +231,13 @@ def mark_sweep_fired(broker: str) -> None:
     except (OSError, json.JSONDecodeError):
         pass
     episodes = record.setdefault("episodes", [])
-    if episode not in episodes:
-        episodes.append(episode)
-        record["episode"] = episode  # legacy field kept pointing at the latest
+    to_write = bool(episodes)
+    for episode in active:
+        if episode not in episodes:
+            episodes.append(episode)
+            to_write = True
+    if to_write:
+        record["episode"] = _halt_episode(broker)  # legacy field = newest
         record["fired_at"] = datetime.now(timezone.utc).isoformat()
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".flatten-fired-")
         try:

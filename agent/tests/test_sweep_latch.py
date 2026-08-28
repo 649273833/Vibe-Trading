@@ -317,3 +317,44 @@ def test_runner_claim_released_after_read_failure(live_root: Path) -> None:
     ep = sweep_latch.halt_episode(BROKER)
     assert not sweep_latch.claim_path(BROKER, ep).exists()
     assert not sweep_latch.latch_path(BROKER).exists()
+
+
+def test_mark_records_both_active_episodes_older_global_newer_broker(
+    live_root: Path,
+) -> None:
+    # Reviewer residual A: the sweep covers the halt state as a whole — with
+    # an older global AND a newer broker halt both active, clearing the
+    # broker halt must NOT re-fire the sweep while the (still active, older)
+    # global halt remains tripped. mark_sweep_fired must record BOTH
+    # episodes.
+    _trip_with_timestamp(None, "2026-08-27T01:00:00+00:00")  # global, older
+    _trip_with_timestamp(BROKER, "2026-08-27T10:00:00+00:00")  # broker, newer
+    sweep_latch.mark_sweep_fired(BROKER)
+    assert sweep_latch.sweep_already_fired(BROKER) is True
+
+    clear_halt(BROKER)  # newer (broker) halt cleared
+    assert sweep_latch.sweep_already_fired(BROKER) is True  # global still recorded
+
+
+def test_double_failure_latch_write_does_not_escape_run_once(
+    live_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Reviewer residual B: sweep raises AND the durable latch write raises.
+    # Neither exception may escape run_once — the tick must still complete
+    # with the halted outcome and an audit trail.
+    from src.live.runtime import runner as runner_mod
+
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    fired: list[str] = []
+
+    def _flatten(broker, submit, read_positions, read_open_orders):
+        fired.append(broker)
+        raise RuntimeError("sweep exploded")
+
+    def _broken_mark(broker):
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(runner_mod, "mark_sweep_fired", _broken_mark)
+    result = asyncio.run(_build_runner(live_root, fired, _flatten).run_once())
+    assert result["outcome"] == "halted"  # did not escape
+    assert fired == [BROKER]
