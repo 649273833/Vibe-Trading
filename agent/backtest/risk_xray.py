@@ -87,7 +87,7 @@ def compute_risk_xray(
     closes: pd.DataFrame,
     weights: Mapping[str, float],
     *,
-    periods_per_year: int = PERIODS_PER_YEAR,
+    periods_per_year: int | None = PERIODS_PER_YEAR,
     var_levels: Sequence[float] = VAR_LEVELS,
     min_history: int = MIN_HISTORY_DAYS,
 ) -> dict[str, Any]:
@@ -97,7 +97,9 @@ def compute_risk_xray(
         closes: Close-price panel, one column per symbol, sorted by date.
         weights: Symbol → weight. Renormalized to 1.0 with a warning when the
             sum differs; must be long-only and reference existing columns.
-        periods_per_year: Annualization factor for the bar interval.
+        periods_per_year: Annualization factor for the bar interval; ``None``
+            falls back to span-derived calendar annualization (mirrors
+            ``calc_metrics``) — the runner's cross-market convention.
         var_levels: Tail levels for historical VaR / expected shortfall.
         min_history: Minimum valid bars a symbol must have to be included.
 
@@ -187,17 +189,43 @@ def _concentration(w: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _volatility(port: pd.Series, ppy: int) -> dict[str, Any]:
+def _volatility(port: pd.Series, ppy: int | None) -> dict[str, Any]:
     vol = float(port.std(ddof=1)) if len(port) > 1 else None
     downside = port[port < 0]
     downside_dev = float(downside.std(ddof=1)) if len(downside) > 1 else None
+    annualize = _annualize_factor(ppy, port.index)
     return {
         "daily_vol": _finite(vol),
-        "annualized_vol": _finite(vol * math.sqrt(ppy)) if vol is not None else None,
+        "annualized_vol": _finite(vol * annualize) if vol is not None else None,
         "downside_deviation_annualized": (
-            _finite(downside_dev * math.sqrt(ppy)) if downside_dev is not None else None
+            _finite(downside_dev * annualize) if downside_dev is not None else None
         ),
     }
+
+
+def _annualize_factor(ppy: int | None, index: Any = None) -> float:
+    """Return the annualization factor ``sqrt(periods_per_year)``.
+
+    ``ppy is None`` means the caller deliberately declined to specify a
+    per-market bar count — the runner's cross-market convention
+    (``bars_per_year=None``). Follow the same span-derived convention as
+    ``calc_metrics`` / ``run_validation`` / options metrics: effective bars
+    per year = observed bars per elapsed calendar year, so the x-ray's
+    annualized volatility agrees with the Sharpe metrics in the same run
+    card (a fixed 365 would sit ~18% higher for a 252-trading-day daily
+    series). Degenerate/empty indexes fall back to the default 252.
+    """
+    if ppy is not None:
+        return math.sqrt(float(ppy))
+    try:
+        first, last = index[0], index[-1]
+        diff = last - first
+        calendar_days = diff.days if hasattr(diff, "days") else 0
+        years = calendar_days / 365.25 if calendar_days > 0 else 1.0
+        bpy = int(len(index) / years) if years > 0 else 252
+    except (IndexError, TypeError):
+        bpy = 252
+    return math.sqrt(float(bpy))
 
 
 def _drawdown(port: pd.Series) -> dict[str, Any]:

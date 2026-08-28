@@ -672,7 +672,7 @@ class BaseEngine(ABC):
         loader: Any,
         signal_engine: Any,
         run_dir: Path,
-        bars_per_year: int = 252,
+        bars_per_year: int | None = 252,
     ) -> Dict[str, Any]:
         """Full backtest pipeline.
 
