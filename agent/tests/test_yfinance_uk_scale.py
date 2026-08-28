@@ -1,6 +1,6 @@
 """yfinance loader scales GBp-quoted UK (.L/.IL) prices to GBP.
 
-Yahoo-family data serves LSE/ISE UK names in pence (VOD.L ~117p); the loader
+Yahoo-family data serves LSE UK names in pence (VOD.L ~117p); the loader
 must normalize ÷100 so ``code_currency``'s GBP matches the values (#1206).
 """
 from __future__ import annotations
