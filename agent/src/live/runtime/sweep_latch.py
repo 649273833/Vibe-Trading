@@ -8,12 +8,15 @@ from long to net short. This module records the sweep's firing on disk, bound
 to the halt *episode* that caused it.
 
 The latch lives next to the per-broker HALT sentinel at
-``<runtime_root>/live/<broker>/FLATTEN_FIRED`` and carries the episode identity
-of the halt that was tripped when the sweep fired: the sentinel's ``tripped_at``
-when it has one, otherwise the sentinel file's mtime. A later trip writes a new
-sentinel (fresh ``tripped_at`` / fresh mtime), so a stale latch from a previous
-episode never suppresses a new one; clearing HALT and re-tripping therefore
-re-arms the sweep without anyone deleting the latch.
+``<runtime_root>/live/<broker>/FLATTEN_FIRED`` and carries the identity of
+every halt *episode* the sweep has fired for: the sentinel's ``tripped_at``
+when it has one, otherwise the sentinel file's mtime. A later trip writes a
+new sentinel (fresh ``tripped_at`` / fresh mtime), so a stale latch from a
+previous episode never suppresses a new one; clearing HALT and re-tripping
+therefore re-arms the sweep without anyone deleting the latch. When the
+per-broker and the global HALTs are both tripped, the *newest* sentinel wins
+the current-episode lookup — the global HALT is authoritative
+(``halt_flag_set`` halts every channel), but only for its own, newer episode.
 """
 
 from __future__ import annotations
@@ -37,28 +40,49 @@ def latch_path(broker: str) -> Path:
 
 
 def _halt_episode(broker: str) -> str | None:
-    """Return the identity of the currently tripped halt episode, if any.
+    """Return the identity of the *newest* tripped halt episode, if any.
 
-    The per-broker sentinel wins when both exist, mirroring how a targeted
-    halt is the one this broker's runner reacts to. ``tripped_at`` is the
-    identity when the sentinel carries it; a hand-touched sentinel with no
-    readable payload falls back to the file mtime, which still changes on
-    every fresh ``touch``.
+    Both the per-broker and the global sentinel can be tripped, at different
+    times. The global HALT is authoritative (``halt_flag_set`` halts every
+    channel), but a stale per-broker episode must not suppress the sweep for
+    a newer global trip — nor an older global trip override a newer
+    per-broker one. The newest sentinel therefore wins, ranked by its
+    explicit ``tripped_at`` payload when it carries one; the file mtime is
+    used only as the fallback for hand-touched/malformed sentinels without
+    a parseable ``tripped_at``. Ranking by mtime alone is not safe: two
+    sentinels written within one filesystem timestamp quantum share an
+    mtime, and the order would silently follow directory iteration instead
+    of trip time.
     """
+    candidates: list[tuple[int, str]] = []
     for path, payload in (
         (broker_halt_path(broker), read_halt(broker)),
         (halt_path(), read_halt()),
     ):
         if payload is None:
             continue
-        tripped_at = payload.get("tripped_at")
-        if tripped_at:
-            return str(tripped_at)
         try:
-            return f"mtime:{path.stat().st_mtime_ns}"
+            mtime_ns = path.stat().st_mtime_ns
         except OSError:
             continue
-    return None
+        tripped_at = payload.get("tripped_at")
+        if tripped_at:
+            try:
+                trip = datetime.fromisoformat(str(tripped_at))
+                if trip.tzinfo is None:
+                    trip = trip.replace(tzinfo=timezone.utc)
+                instant_ns = int(trip.timestamp() * 1_000_000_000)
+                identity = str(tripped_at)
+            except ValueError:
+                instant_ns = mtime_ns
+                identity = f"mtime:{mtime_ns}"
+        else:
+            instant_ns = mtime_ns
+            identity = f"mtime:{mtime_ns}"
+        candidates.append((instant_ns, identity))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def sweep_already_fired(broker: str) -> bool:
@@ -70,7 +94,12 @@ def sweep_already_fired(broker: str) -> bool:
         record = json.loads(latch_path(broker).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return isinstance(record, dict) and record.get("episode") == episode
+    if not isinstance(record, dict):
+        return False
+    episodes = record.get("episodes")
+    if isinstance(episodes, list):
+        return episode in episodes
+    return record.get("episode") == episode  # legacy single-episode record
 
 
 def mark_sweep_fired(broker: str) -> None:
@@ -78,24 +107,36 @@ def mark_sweep_fired(broker: str) -> None:
 
     Atomic write (same-directory temp file + ``os.replace``), same contract
     as the HALT sentinel. A no-op when no halt is tripped, since there is no
-    episode to bind the record to.
+    episode to bind the record to. The record accumulates every episode the
+    sweep has fired for on this broker (``episodes``), so clearing one halt
+    never re-fires the sweep for an older episode that was already swept.
     """
     episode = _halt_episode(broker)
     if episode is None:
         return
-    record: dict[str, Any] = {
-        "episode": episode,
-        "fired_at": datetime.now(timezone.utc).isoformat(),
-    }
     path = latch_path(broker)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".flatten-fired-")
+    record: dict[str, Any] = {}
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(record, f)
-        os.replace(tmp, path)
-    finally:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict) and isinstance(existing.get("episodes"), list):
+            record = existing
+        elif isinstance(existing, dict) and existing.get("episode"):
+            record = {"episodes": [existing["episode"]]}
+    except (OSError, json.JSONDecodeError):
+        pass
+    episodes = record.setdefault("episodes", [])
+    if episode not in episodes:
+        episodes.append(episode)
+        record["episode"] = episode  # legacy field kept pointing at the latest
+        record["fired_at"] = datetime.now(timezone.utc).isoformat()
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".flatten-fired-")
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(record, f)
+            os.replace(tmp, path)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
