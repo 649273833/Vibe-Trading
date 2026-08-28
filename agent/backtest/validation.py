@@ -20,6 +20,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
+from backtest.metrics import effective_bars_per_year
 from backtest.models import TradeRecord
 
 
@@ -285,27 +286,6 @@ def walk_forward_analysis(
     }
 
 
-def _effective_bars_per_year(equity_curve: pd.Series) -> int:
-    """Derive an effective bars-per-year from the equity span.
-
-    Used when the runner declines to specify per-market bar counts
-    (``bars_per_year=None``, the cross-market calendar-day convention):
-    the observed number of bars per elapsed calendar year, falling back to
-    the default 252 for degenerate spans (empty/single-bar curves).
-    """
-    n = len(equity_curve)
-    if n < 2:
-        return 252
-    try:
-        first, last = equity_curve.index[0], equity_curve.index[-1]
-        diff = last - first
-        calendar_days = diff.days if hasattr(diff, "days") else 0
-        years = calendar_days / 365.25 if calendar_days > 0 else 1.0
-    except (IndexError, TypeError):
-        return 252
-    return int(n / years) if years > 0 else 252
-
-
 # ─── Runner integration ───
 
 
@@ -336,12 +316,12 @@ def run_validation(
     v_cfg = config.get("validation", {})
     results: Dict[str, Any] = {}
 
-    # Cross-market convention (runner.py passes bars_per_year=None): derive
-    # the effective bars per year from the observed calendar span, mirroring
-    # calc_metrics — otherwise _sharpe's np.sqrt(bars_per_year) raises
-    # TypeError for every validation-enabled cross-market run.
+    # Cross-market convention (runner.py passes bars_per_year=None): resolve
+    # it through the shared span-derived factor — otherwise _sharpe's
+    # np.sqrt(bars_per_year) raises TypeError for every validation-enabled
+    # cross-market run.
     if bars_per_year is None:
-        bars_per_year = _effective_bars_per_year(equity_curve)
+        bars_per_year = effective_bars_per_year(equity_curve.index)
 
     if "monte_carlo" in v_cfg:
         mc_cfg = v_cfg["monte_carlo"] if isinstance(v_cfg["monte_carlo"], dict) else {}

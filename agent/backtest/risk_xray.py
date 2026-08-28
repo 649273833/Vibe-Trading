@@ -26,6 +26,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from backtest.metrics import effective_bars_per_year
 from backtest.validation import _json_safe
 
 MIN_HISTORY_DAYS = 30
@@ -203,29 +204,19 @@ def _volatility(port: pd.Series, ppy: int | None) -> dict[str, Any]:
     }
 
 
-def _annualize_factor(ppy: int | None, index: Any = None) -> float:
+def _annualize_factor(ppy: int | None, index: Any) -> float:
     """Return the annualization factor ``sqrt(periods_per_year)``.
 
     ``ppy is None`` means the caller deliberately declined to specify a
     per-market bar count — the runner's cross-market convention
-    (``bars_per_year=None``). Follow the same span-derived convention as
-    ``calc_metrics`` / ``run_validation`` / options metrics: effective bars
-    per year = observed bars per elapsed calendar year, so the x-ray's
-    annualized volatility agrees with the Sharpe metrics in the same run
-    card (a fixed 365 would sit ~18% higher for a 252-trading-day daily
-    series). Degenerate/empty indexes fall back to the default 252.
+    (``bars_per_year=None``). Resolving it through the shared
+    ``effective_bars_per_year`` is what keeps the x-ray's annualized
+    volatility on the same footing as the Sharpe in the same run card (a
+    fixed 365 would sit ~18% higher for a 252-trading-day daily series).
     """
     if ppy is not None:
         return math.sqrt(float(ppy))
-    try:
-        first, last = index[0], index[-1]
-        diff = last - first
-        calendar_days = diff.days if hasattr(diff, "days") else 0
-        years = calendar_days / 365.25 if calendar_days > 0 else 1.0
-        bpy = int(len(index) / years) if years > 0 else 252
-    except (IndexError, TypeError):
-        bpy = 252
-    return math.sqrt(float(bpy))
+    return math.sqrt(float(effective_bars_per_year(index)))
 
 
 def _drawdown(port: pd.Series) -> dict[str, Any]:

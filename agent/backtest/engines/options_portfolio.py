@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from backtest.metrics import effective_bars_per_year
 from src.quantlib.options import bs_greeks, bs_price, normalise_option_type
 
 
@@ -573,19 +574,12 @@ def _calc_options_metrics(
     equity_vals = pd.to_numeric(equity, errors="coerce").astype(float)
     path_is_finite = bool(n and np.isfinite(equity_vals.to_numpy()).all())
 
-    # Cross-market convention (runner.py passes bars_per_year=None): derive
-    # the effective bars per year from the observed calendar span, mirroring
-    # calc_metrics. Without this, every None comparison below (<= 0 / > 0)
-    # raises TypeError instead of returning metrics.
+    # Cross-market convention (runner.py passes bars_per_year=None): resolve
+    # it through the shared span-derived factor. Without this, every None
+    # comparison below (<= 0 / > 0) raises TypeError instead of returning
+    # metrics.
     if bars_per_year is None:
-        if n >= 2:
-            first, last = equity_vals.index[0], equity_vals.index[-1]
-            diff = last - first
-            calendar_days = diff.days if hasattr(diff, "days") else 0
-            years = calendar_days / 365.25 if calendar_days > 0 else 1.0
-            bars_per_year = int(n / years) if years > 0 else 252
-        else:
-            bars_per_year = 252
+        bars_per_year = effective_bars_per_year(equity_vals.index)
 
     final_raw: float | None = None
     final_value: float | None = None
