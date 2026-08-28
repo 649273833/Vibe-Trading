@@ -253,11 +253,27 @@ def test_side_effect_attempted_latches_even_with_read_error(
 
 
 def test_claim_is_exclusive_and_releasable(live_root: Path) -> None:
-    assert sweep_latch.claim_sweep(BROKER) is True  # first wins
-    assert sweep_latch.claim_sweep(BROKER) is False  # second cannot claim
-    sweep_latch.release_claim(BROKER)
-    assert sweep_latch.claim_sweep(BROKER) is True  # claimable again
-    sweep_latch.release_claim(BROKER)
+    ep = "2026-08-27T01:00:00+00:00"
+    assert sweep_latch.claim_sweep(BROKER, ep) is True  # first wins
+    assert sweep_latch.claim_sweep(BROKER, ep) is False  # second cannot claim
+    sweep_latch.release_claim(BROKER, ep)
+    assert sweep_latch.claim_sweep(BROKER, ep) is True  # claimable again
+    sweep_latch.release_claim(BROKER, ep)
+
+
+def test_orphan_claim_does_not_block_future_episode(live_root: Path) -> None:
+    # Crash mid-sweep leaves a claim for episode 1 (never released). An
+    # episode-keyed claim must NOT block episode 2: each trip gets its own
+    # claim namespace, so a new halt still sweeps.
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    ep1 = sweep_latch.halt_episode(BROKER)
+    assert sweep_latch.claim_sweep(BROKER, ep1) is True  # crashed: never released
+    clear_halt(BROKER)
+    _trip_with_timestamp(BROKER, "2026-08-27T10:00:00+00:00")
+    ep2 = sweep_latch.halt_episode(BROKER)
+    assert ep2 != ep1
+    assert sweep_latch.claim_sweep(BROKER, ep2) is True  # new episode claimable
+    sweep_latch.release_claim(BROKER, ep2)
 
 
 def test_runner_skips_when_claim_held_by_other_process(live_root: Path) -> None:
@@ -265,12 +281,16 @@ def test_runner_skips_when_claim_held_by_other_process(live_root: Path) -> None:
     # (check-then-act would let both pass sweep_already_fired and duplicate
     # market closes). The held claim forces this process to skip + audit.
     _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
-    assert sweep_latch.claim_sweep(BROKER) is True  # "other" process holds it
+    ep = sweep_latch.halt_episode(BROKER)
+    assert sweep_latch.claim_sweep(BROKER, ep) is True  # "other" process holds it
     fired: list[str] = []
     asyncio.run(_build_runner(live_root, fired).run_once())
     assert fired == []  # never swept
     assert not sweep_latch.latch_path(BROKER).exists()
-    sweep_latch.release_claim(BROKER)
+    # The other process's claim must remain untouched (the runner must never
+    # release a claim it does not own).
+    assert sweep_latch.claim_path(BROKER, "2026-08-27T01:00:00+00:00").exists()
+    sweep_latch.release_claim(BROKER, ep)
 
 
 def test_runner_claims_and_releases_around_sweep(live_root: Path) -> None:
@@ -280,7 +300,8 @@ def test_runner_claims_and_releases_around_sweep(live_root: Path) -> None:
     assert fired == [BROKER]
     # The claim must be released after the sweep (crash-free path), so a
     # later re-check can claim again.
-    assert not sweep_latch.claim_path(BROKER).exists()
+    ep = sweep_latch.halt_episode(BROKER)
+    assert not sweep_latch.claim_path(BROKER, ep).exists()
 
 
 def test_runner_claim_released_after_read_failure(live_root: Path) -> None:
@@ -293,5 +314,6 @@ def test_runner_claim_released_after_read_failure(live_root: Path) -> None:
 
     asyncio.run(_build_runner(live_root, fired, _flatten).run_once())
     assert fired == [BROKER]
-    assert not sweep_latch.claim_path(BROKER).exists()
+    ep = sweep_latch.halt_episode(BROKER)
+    assert not sweep_latch.claim_path(BROKER, ep).exists()
     assert not sweep_latch.latch_path(BROKER).exists()

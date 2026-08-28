@@ -48,6 +48,7 @@ from src.live.runtime.flatten import flatten_and_cancel
 from src.live.runtime.jobstore import JobStore
 from src.live.runtime.sweep_latch import (
     claim_sweep,
+    halt_episode,
     mark_sweep_fired,
     release_claim,
     sweep_already_fired,
@@ -610,9 +611,11 @@ class LiveRunner:
         if sweep_already_fired(self.broker):
             self._flatten_fired = True
             return
-        if not claim_sweep(self.broker):
-            # Another process holds the claim (or a crash left it behind):
-            # the outcome is unknowable — re-sweeping could duplicate a close.
+        if not claim_sweep(self.broker, halt_episode(self.broker) or "unknown"):
+            # Another process holds this episode's claim (or a crash left it
+            # behind): the outcome is unknowable — re-sweeping could duplicate
+            # a close. Claims are episode-keyed, so this never blocks a future
+            # trip of the same broker.
             self._flatten_fired = True
             logger.warning(
                 "preemptive sweep already claimed for %s — skipping (another "
@@ -698,7 +701,7 @@ class LiveRunner:
                     error=str(exc),
                 )
         finally:
-            release_claim(self.broker)
+            release_claim(self.broker, halt_episode(self.broker) or "unknown")
 
     def _no_mandate_result(self) -> dict[str, Any]:
         """Audit + return the result when no valid mandate is on file."""

@@ -21,6 +21,7 @@ the current-episode lookup — the global HALT is authoritative
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -40,27 +41,44 @@ def latch_path(broker: str) -> Path:
     return broker_dir(broker) / _LATCH_FILENAME
 
 
-def claim_path(broker: str) -> Path:
-    """Return the per-broker sweep-claim path (holds the inter-process claim)."""
-    return broker_dir(broker) / _CLAIM_FILENAME
+def halt_episode(broker: str) -> str | None:
+    """Return the identity of the newest tripped halt episode (public alias)."""
+    return _halt_episode(broker)
 
 
-def claim_sweep(broker: str) -> bool:
-    """Atomically claim the sweep for ``broker`` — exclusive between processes.
+def _claim_filename(episode: str) -> str:
+    digest = hashlib.sha256(episode.encode("utf-8")).hexdigest()[:16]
+    return f"{_CLAIM_FILENAME}-{digest}"
 
-    ``O_CREAT | O_EXCL`` guarantees a single winner even when two runner
-    processes start simultaneously: the loser of the race sees the claim file
-    and must NOT sweep (the duplicate-close hazard the latch exists to
-    prevent). The claim covers the whole check -> sweep -> durable-record
-    window. A claim left behind by a crash means the episode's outcome is
+
+def claim_path(broker: str, episode: str) -> Path:
+    """Return the per-broker, per-episode sweep-claim path.
+
+    Claims are keyed by halt episode, so an orphaned claim from a crash can
+    only ever block its OWN episode — never a future trip of the same broker
+    (each new halt episode gets its own claim namespace).
+    """
+    return broker_dir(broker) / _claim_filename(episode)
+
+
+def claim_sweep(broker: str, episode: str) -> bool:
+    """Atomically claim the sweep for ``broker``'s ``episode`` — exclusive between processes.
+
+    ``O_CREAT | O_EXCL`` guarantees a single winner even when two runners
+    start simultaneously for the same episode: the loser of the race sees the
+    claim file and must NOT sweep (the duplicate-close hazard the latch exists
+    to prevent). The claim covers the whole check -> sweep -> durable-record
+    window. A claim left behind by a crash means that episode's outcome is
     *unknowable*: re-sweeping could duplicate a close, so the runner skips and
-    surfaces the claim for operator resolution (documented recovery).
+    surfaces the claim for operator resolution. Because the claim is bound to
+    the episode, a stale claim never blocks a later episode.
 
     Returns:
         ``True`` if this process now owns the sweep; ``False`` when a claim
-        already exists (another runner active, or a crashed prior run).
+        already exists for the same episode (another runner active, or a
+        crashed prior run).
     """
-    path = claim_path(broker)
+    path = claim_path(broker, episode)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -71,6 +89,7 @@ def claim_sweep(broker: str) -> bool:
             json.dump(
                 {
                     "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    "episode": episode,
                     "pid": os.getpid(),
                 },
                 f,
@@ -84,10 +103,10 @@ def claim_sweep(broker: str) -> bool:
     return True
 
 
-def release_claim(broker: str) -> None:
-    """Drop this process's sweep claim (no-op when the file is absent)."""
+def release_claim(broker: str, episode: str) -> None:
+    """Drop this process's sweep claim for ``episode`` (no-op when absent)."""
     try:
-        claim_path(broker).unlink()
+        claim_path(broker, episode).unlink()
     except OSError:
         pass
 
