@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from backtest.engines.base import evaluation_start_index
 from src.quantlib.options import bs_greeks, bs_price, normalise_option_type
 
 
@@ -231,6 +232,12 @@ def run_options_backtest(
     for df in data_map.values():
         all_dates.update(df.index)
     dates = sorted(all_dates)
+
+    # Warm-up bars primed the signal engine above; from here they do not exist,
+    # so nothing they contain reaches a fill, the equity curve or a metric.
+    warmup_end = evaluation_start_index(config, pd.DatetimeIndex(dates))
+    if warmup_end:
+        dates = dates[warmup_end:]
 
     # Index signals by date
     signal_by_date: Dict[str, List[Dict[str, Any]]] = {}
