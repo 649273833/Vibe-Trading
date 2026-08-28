@@ -618,7 +618,7 @@ Barras intradía: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 métricas + comparació
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>286 funciones probadas en 19 módulos, invocables desde cualquier transporte</sub></summary>
+<summary><b>Quant Library</b> <sub>306 funciones probadas en 23 módulos, invocables desde cualquier transporte</sub></summary>
 
 `src/quantlib` contiene una implementación probada de cada pieza de matemática
 financiera que el agente necesita. Las skills **importan** estas funciones en
@@ -637,6 +637,10 @@ una fórmula de pricing viviendo en un `SKILL.md`, eso es un bug, no un patrón.
 | `factormodel` · `eventstudy` | Regresiones de factores, estudios de eventos |
 | `multipletesting` · `crossvalidation` | Significancia deflacionada, CV purgada |
 | `impact` | Modelos de impacto de mercado |
+| `volatility` | Valoración con volatilidad estocástica de Heston (1993) |
+| `portfolio` | Asignación por Paridad de Riesgo Jerárquica (HRP) |
+| `copula` | Cópulas gaussianas y arquimedianas |
+| `microstructure` | VPIN, spread de Roll, iliquidez de Amihud, lambda de Kyle |
 
 La herramienta de solo lectura `quantlib_call` da acceso a todo esto mediante un
 único contrato, de modo que la matemática financiera funciona en la CLI, la Web

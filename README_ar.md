@@ -613,7 +613,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>286 دالة مختبَرة عبر 19 وحدة، قابلة للاستدعاء من كل المسارات</sub></summary>
+<summary><b>Quant Library</b> <sub>306 دالة مختبَرة عبر 23 وحدة، قابلة للاستدعاء من كل المسارات</sub></summary>
 
 يحتفظ `src/quantlib` بتنفيذ مختبَر **واحد فقط** لكل قطعة من الرياضيات المالية التي
 يحتاجها الـ agent. صارت الـ skills **تستورد** هذه الدوال بدلاً من حمل الصيغ داخل كتل
@@ -631,6 +631,10 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | `factormodel` · `eventstudy` | انحدارات العوامل، ودراسات الأحداث |
 | `multipletesting` · `crossvalidation` | ضبط الدلالة المتعددة، وpurged CV |
 | `impact` | نماذج أثر السوق |
+| `volatility` | تسعير التقلب العشوائي وفق Heston (1993) |
+| `portfolio` | توزيع تكافؤ المخاطر الهرمي (HRP) |
+| `copula` | روابط غاوسية وأرخميدية |
+| `microstructure` | VPIN ومدى Roll وانعدام سيولة Amihud ولامدا Kyle |
 
 تصل الأداة `quantlib_call` للقراءة فقط إلى كل ذلك عبر عقد واحد، فتعمل الرياضيات المالية
 على CLI وWeb UI وREST API وMCP حيث يكون `bash` مُقفلاً. وهي بنيوياً **ليست** shell — قائمة وحدات

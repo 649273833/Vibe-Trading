@@ -619,7 +619,7 @@ Intraday bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 metrics + benchmark compar
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>286 tested functions across 19 modules, callable from every transport</sub></summary>
+<summary><b>Quant Library</b> <sub>306 tested functions across 23 modules, callable from every transport</sub></summary>
 
 `src/quantlib` holds one tested implementation of each piece of finance math the
 agent needs. Skills **import** these rather than carrying formulas inside
@@ -638,6 +638,10 @@ that is a bug, not a pattern.
 | `factormodel` · `eventstudy` | Factor regressions, event studies |
 | `multipletesting` · `crossvalidation` | Deflated significance, purged CV |
 | `impact` | Market-impact models |
+| `volatility` | Heston (1993) stochastic-volatility pricing |
+| `portfolio` | Hierarchical Risk Parity allocation |
+| `copula` | Gaussian and Archimedean copulas |
+| `microstructure` | VPIN, Roll spread, Amihud illiquidity, Kyle's lambda |
 
 The read-only `quantlib_call` tool reaches all of it through one contract, so the
 finance math works on the CLI, the Web UI, the REST API and MCP — including

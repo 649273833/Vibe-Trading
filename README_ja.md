@@ -613,7 +613,7 @@ Intraday bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 metrics + benchmark compar
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>19 モジュール・286 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
+<summary><b>Quant Library</b> <sub>23 モジュール・306 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
 
 `src/quantlib` は、agent が必要とする金融数学のそれぞれについて、テスト済みの実装を
 **1 つだけ**保持します。skill はこれらを **import** するようになり、markdown コード
@@ -632,6 +632,10 @@ Intraday bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 metrics + benchmark compar
 | `factormodel` · `eventstudy` | ファクター回帰、イベントスタディ |
 | `multipletesting` · `crossvalidation` | 多重検定調整、purged CV |
 | `impact` | マーケットインパクトモデル |
+| `volatility` | Heston (1993) 確率的ボラティリティ価格付け |
+| `portfolio` | 階層的リスクパリティ（HRP）配分 |
+| `copula` | ガウス・アルキメデス型コピュラ |
+| `microstructure` | VPIN、Roll スプレッド、Amihud 非流動性、Kyle ラムダ |
 
 読み取り専用の `quantlib_call` ツールが 1 つの契約で全体に到達するため、`bash` が
 無効化されている CLI・Web UI・REST API・MCP でも金融数学が使えます。構造的に shell では
