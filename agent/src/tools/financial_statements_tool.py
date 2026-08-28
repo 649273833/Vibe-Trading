@@ -293,7 +293,7 @@ def _fetch_eastmoney_statement(
 # Yahoo quoteSummary module + result-key per (statement, cadence). UK
 # (.L) names have no Eastmoney or SEC filing pipeline; Yahoo's
 # crumb-gated quoteSummary serves annual and quarterly histories for
-# LSE/ISE tickers (UK parity, #1206).
+# LSE tickers (UK parity, #1206).
 _YAHOO_STATEMENT_MODULES: dict[tuple[str, str], tuple[str, str]] = {
     ("balance", "annual"): ("balanceSheetHistory", "balanceSheetStatements"),
     ("balance", "quarter"): ("balanceSheetHistoryQuarterly", "balanceSheetStatements"),
@@ -334,7 +334,7 @@ def _fetch_yahoo_statement(
         code: UK symbol (e.g. ``"VOD.L"``).
         statement: One of :data:`_VALID_STATEMENTS`.
         period: ``"annual"`` or ``"quarter"`` — selects the corresponding
-            history module; both exist for LSE/ISE tickers.
+            history module; both exist for LSE tickers.
 
     Returns:
         ``{"periods": [...]}`` on success or ``{"error": ...}`` on failure;
@@ -675,7 +675,7 @@ def _classify_market(code: str) -> str | None:
     if suffix == "HK":
         return "hk"
     if suffix == "L":
-        # London Stock Exchange / Irish Stock Exchange (#1206).
+        # London Stock Exchange (#1206).
         return "uk"
     return None
 

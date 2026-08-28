@@ -35,7 +35,7 @@ _UK_EQUITY_PATTERN = re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I)
 
 
 def is_gbp_pence_symbol(code: str) -> bool:
-    """Return whether a project symbol quotes in GBp (LSE/ISE UK names).
+    """Return whether a project symbol quotes in GBp (LSE names).
 
     Both Yahoo sources (direct chart + yfinance) serve ``.L`` names in pence.
     The engine-side
@@ -55,7 +55,7 @@ def scale_pence_to_currency(
     Args:
         frame: OHLCV frame with float price columns.
         currency: Quote currency declared by the source (e.g. ``"GBp"`` for
-            LSE/ISE pence-quoted names; ``"USD"``/``"EUR"``/``"GBP"`` pass
+            LSE pence-quoted names; ``"USD"``/``"EUR"``/``"GBP"`` pass
             through).
 
     Returns:

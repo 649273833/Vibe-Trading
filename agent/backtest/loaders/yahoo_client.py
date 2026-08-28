@@ -184,7 +184,7 @@ def get_chart(
         is the bar's epoch-second timestamp) — empty when Yahoo reports no
         data — and ``currency`` is the quote currency declared by the chart
         meta (e.g. ``"USD"``, ``"GBP"``, ``"EUR"``, or the pence marker
-        ``"GBp"`` LSE/ISE names quote in). Rows-only callers unpack the tuple.
+        ``"GBp"`` LSE names quote in). Rows-only callers unpack the tuple.
 
     Raises:
         requests.RequestException: On a network/HTTP failure.
@@ -219,7 +219,7 @@ def _parse_chart(payload: Any, yahoo_symbol: str) -> Tuple[List[Dict[str, Any]],
     Returns:
         ``(rows, currency)``: rows as in :func:`get_chart`, plus the quote
         currency declared in the chart meta (``"GBp"`` when the venue quotes
-        UK names in pence — LSE always, ISE for GBp-quoted listings).
+        UK names in pence — LSE always quotes, GBp when chart meta says so).
     """
     chart = (payload or {}).get("chart") or {}
     error = chart.get("error")

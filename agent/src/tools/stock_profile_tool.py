@@ -240,7 +240,7 @@ class StockProfileTool(BaseTool):
 
     name = "get_stock_profile"
     description = (
-        "Fetch a read-only company profile for a US, Hong Kong, or UK/Irish "
+        "Fetch a read-only company profile for a US, Hong Kong, or UK (LSE .L) "
         "listing from Yahoo Finance: valuation key statistics, analyst price "
         "targets and earnings/revenue estimates, institutional and insider "
         "ownership, and the analyst recommendation trend. Use this for "
@@ -254,7 +254,7 @@ class StockProfileTool(BaseTool):
             "ticker": {
                 "type": "string",
                 "description": (
-                    "US, HK, or UK/Irish symbol. US uses a bare or .US suffix "
+                    "US, HK, or UK (LSE .L) symbol. US uses a bare or .US suffix "
                     "(AAPL or AAPL.US); HK uses a zero-padded .HK code "
                     "(00700.HK); UK uses the .L suffix (VOD.L)."
                 ),
