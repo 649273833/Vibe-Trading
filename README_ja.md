@@ -613,7 +613,7 @@ Intraday bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D. 15 metrics + benchmark compar
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>19 モジュール・286 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
+<summary><b>Quant Library</b> <sub>19 モジュール・289 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
 
 `src/quantlib` は、agent が必要とする金融数学のそれぞれについて、テスト済みの実装を
 **1 つだけ**保持します。skill はこれらを **import** するようになり、markdown コード
