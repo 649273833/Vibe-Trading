@@ -611,7 +611,13 @@ class LiveRunner:
         if sweep_already_fired(self.broker):
             self._flatten_fired = True
             return
-        if not claim_sweep(self.broker, halt_episode(self.broker) or "unknown"):
+        # Resolve the episode ONCE: the claim and its release in ``finally``
+        # must refer to the same episode. Re-resolving at release time can
+        # bind to a NEWER episode (halt cleared + re-tripped mid-sweep) and
+        # delete that episode's claim — even a different process's — which
+        # would unprotect a concurrent sweep of the new episode.
+        episode = halt_episode(self.broker) or "unknown"
+        if not claim_sweep(self.broker, episode):
             # Another process holds this episode's claim (or a crash left it
             # behind): the outcome is unknowable — re-sweeping could duplicate
             # a close. Claims are episode-keyed, so this never blocks a future
@@ -718,7 +724,7 @@ class LiveRunner:
                     error=str(exc),
                 )
         finally:
-            release_claim(self.broker, halt_episode(self.broker) or "unknown")
+            release_claim(self.broker, episode)
 
     def _no_mandate_result(self) -> dict[str, Any]:
         """Audit + return the result when no valid mandate is on file."""

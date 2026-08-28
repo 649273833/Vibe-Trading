@@ -358,3 +358,31 @@ def test_double_failure_latch_write_does_not_escape_run_once(
     result = asyncio.run(_build_runner(live_root, fired, _flatten).run_once())
     assert result["outcome"] == "halted"  # did not escape
     assert fired == [BROKER]
+
+
+def test_mid_sweep_retrip_does_not_release_new_episode_claim(
+    live_root: Path,
+) -> None:
+    # A halt is cleared + re-tripped while our sweep is in flight (ep1 ->
+    # ep2), and a second process claims ep2. The ep1 owner's release must
+    # delete only ITS claim — never the ep2 claim (re-resolving the episode
+    # at release time would delete another process's protection and open a
+    # duplicate-close window).
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+    captured: dict[str, str | None] = {}
+
+    def _flatten(broker, submit, read_positions, read_open_orders):
+        clear_halt(BROKER)
+        _trip_with_timestamp(BROKER, "2026-08-27T10:00:00+00:00")
+        ep2 = sweep_latch.halt_episode(BROKER)
+        captured["ep2"] = ep2
+        captured["other_claim"] = sweep_latch.claim_sweep(BROKER, ep2)
+        return {"submitted": [], "errors": []}
+
+    asyncio.run(_build_runner(live_root, [], _flatten).run_once())
+    assert captured["other_claim"] is True
+    # Other process's ep2 claim must survive the ep1 owner's release.
+    assert sweep_latch.claim_path(BROKER, captured["ep2"]).exists()
+    # The ep1 owner's own claim must be gone (released normally).
+    assert not sweep_latch.claim_path(BROKER, "2026-08-27T01:00:00+00:00").exists()
+    sweep_latch.release_claim(BROKER, captured["ep2"])
