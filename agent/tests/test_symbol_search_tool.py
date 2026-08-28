@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+from src.trading import profiles as trading_profiles
+from src.trading import service as trading_service
 from src.tools import symbol_search_tool as ss
 
 
@@ -321,6 +323,60 @@ class TestSymbolSearchSuccess:
         payload = json.loads(out)
         assert payload["data"]["sources"]["eastmoney"] == "ok"
 
+    def test_selected_binance_profile_resolves_exact_pair_without_yahoo_collision(
+        self, monkeypatch
+    ):
+        """Issue #1234: an exchange pair must not resolve to a similarly named asset."""
+        connector_calls: list[tuple[str, str, int]] = []
+
+        def _search_connector(query: str, profile_id: str, *, limit: int, **_):
+            connector_calls.append((query, profile_id, limit))
+            return {
+                "status": "ok",
+                "connector": "binance",
+                "profile_id": profile_id,
+                "instruments": [
+                    {
+                        "symbol": "ETH-USDT",
+                        "native_symbol": "ETH/USDT",
+                        "exchange_symbol": "ETHUSDT",
+                        "market": "crypto",
+                        "type": "cryptocurrency",
+                        "exchange": "BINANCE",
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(
+            trading_profiles,
+            "load_selected_profile_id",
+            lambda: "binance-paper-trade",
+        )
+        monkeypatch.setattr(trading_service, "search_instruments", _search_connector)
+
+        yahoo_collision = [
+            {
+                "symbol": "AETHUSDT-USD",
+                "shortname": "Aave Ethereum USDT USD",
+                "exchange": "CCC",
+                "quoteType": "CRYPTOCURRENCY",
+            }
+        ]
+        with patch.object(
+            ss.eastmoney_client,
+            "get_json",
+            return_value={"QuotationCodeTable": {"Data": []}},
+        ), patch.object(ss.yahoo_client, "search", return_value=yahoo_collision):
+            data = json.loads(
+                ss.SymbolSearchTool().execute(query="ETH-USDT", limit=5)
+            )["data"]
+
+        assert connector_calls == [("ETH-USDT", "binance-paper-trade", 5)]
+        assert data["sources"]["binance"] == "ok"
+        assert [candidate["symbol"] for candidate in data["candidates"]] == [
+            "ETH-USDT"
+        ]
+
 
 class TestSymbolSearchErrors:
     """Error envelopes and per-source resilience."""
@@ -352,6 +408,39 @@ class TestSymbolSearchErrors:
         assert sources["yahoo"] == "ok"
         symbols = {c["symbol"] for c in payload["data"]["candidates"]}
         assert "AAPL.US" in symbols
+
+    def test_binance_pair_lookup_failure_rejects_yahoo_near_match(
+        self, monkeypatch
+    ):
+        """A failed exact-pair lookup must not fall back to a different asset."""
+        monkeypatch.setattr(
+            trading_profiles,
+            "load_selected_profile_id",
+            lambda: "binance-paper-trade",
+        )
+
+        def _fail_connector(*_args, **_kwargs):
+            raise RuntimeError("market catalog unavailable")
+
+        monkeypatch.setattr(trading_service, "search_instruments", _fail_connector)
+        yahoo_collision = [
+            {
+                "symbol": "AETHUSDT-USD",
+                "shortname": "Aave Ethereum USDT USD",
+                "exchange": "CCC",
+                "quoteType": "CRYPTOCURRENCY",
+            }
+        ]
+        with patch.object(ss.yahoo_client, "search", return_value=yahoo_collision):
+            data = json.loads(
+                ss.SymbolSearchTool().execute(query="ETH-USDT", limit=5)
+            )["data"]
+
+        assert data["sources"]["binance"] == (
+            "connector search failed: market catalog unavailable"
+        )
+        assert data["sources"]["eastmoney"].startswith("skipped:")
+        assert data["candidates"] == []
 
     def test_sec_lookup_failure_recorded_not_fatal(self):
         with patch.object(

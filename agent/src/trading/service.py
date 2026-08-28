@@ -228,8 +228,18 @@ def search_instruments(
     include_rates: bool = False,
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Search tradable instruments (eToro Public API)."""
+    """Search the selected connector's own tradable-instrument universe."""
     profile = profile_by_id(profile_id)
+    if profile.connector == "binance" and profile.transport == "broker_sdk":
+        module = _sdk_module(profile.connector)
+        return _with_profile(
+            profile,
+            module.search_instruments(
+                query,
+                config=module.build_config(profile.config, overrides),
+                limit=limit,
+            ),
+        )
     if profile.connector != "etoro":
         return _unsupported_etoro(profile, "instruments.search")
     module = _sdk_module(profile.connector)
