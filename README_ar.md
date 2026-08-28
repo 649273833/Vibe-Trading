@@ -634,7 +634,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | `volatility` | تسعير التقلب العشوائي وفق Heston (1993) |
 | `portfolio` | توزيع تكافؤ المخاطر الهرمي (HRP) |
 | `copula` | روابط غاوسية وأرخميدية |
-| `microstructure` | VPIN ومدى Roll وانعدام سيولة Amihud ولامدا Kyle |
+| `microstructure` | VPIN والفارق السعري لـ Roll وانعدام سيولة Amihud ولامدا Kyle |
 
 تصل الأداة `quantlib_call` للقراءة فقط إلى كل ذلك عبر عقد واحد، فتعمل الرياضيات المالية
 على CLI وWeb UI وREST API وMCP حيث يكون `bash` مُقفلاً. وهي بنيوياً **ليست** shell — قائمة وحدات
