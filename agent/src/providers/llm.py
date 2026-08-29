@@ -570,12 +570,18 @@ if ChatOpenAI is not None:
                 inner = super(ChatOpenAIWithReasoning, cloned)._stream(*args, **kwargs)
             else:
                 inner = self._stream_with_usage_fallback(*args, **kwargs)
-            # The temperature-unsupported error is raised before the first chunk is
-            # produced, so retrying the whole stream cannot duplicate output.
+            # The 400 arrives before the first chunk, so restarting the stream
+            # cannot duplicate output — but that is a property of the provider,
+            # not of this code. Enforce it here instead of assuming it: once a
+            # chunk has been emitted the error is re-raised, because replaying
+            # the stream would emit those chunks a second time.
+            emitted = False
             try:
-                yield from inner
+                for chunk in inner:
+                    emitted = True
+                    yield chunk
             except Exception as exc:  # noqa: BLE001 - retried or re-raised below
-                if not self._remember_temperature_unsupported(exc):
+                if emitted or not self._remember_temperature_unsupported(exc):
                     raise
                 yield from self._stream(*args, **kwargs)
 
@@ -636,13 +642,18 @@ if ChatOpenAI is not None:
                 inner = super(ChatOpenAIWithReasoning, cloned)._astream(*args, **kwargs)
             else:
                 inner = self._astream_with_usage_fallback(*args, **kwargs)
-            # The temperature-unsupported error is raised before the first chunk is
-            # produced, so retrying the whole stream cannot duplicate output.
+            # The 400 arrives before the first chunk, so restarting the stream
+            # cannot duplicate output — but that is a property of the provider,
+            # not of this code. Enforce it here instead of assuming it: once a
+            # chunk has been emitted the error is re-raised, because replaying
+            # the stream would emit those chunks a second time.
+            emitted = False
             try:
                 async for chunk in inner:
+                    emitted = True
                     yield chunk
             except Exception as exc:  # noqa: BLE001 - retried or re-raised below
-                if not self._remember_temperature_unsupported(exc):
+                if emitted or not self._remember_temperature_unsupported(exc):
                     raise
                 async for chunk in self._astream(*args, **kwargs):
                     yield chunk

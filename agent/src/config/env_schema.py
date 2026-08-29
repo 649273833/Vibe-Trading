@@ -139,6 +139,11 @@ class LLMConfig(_EnvBase):
     langchain_provider: str = Field(alias="LANGCHAIN_PROVIDER", default="openai")
     langchain_model_name: str = Field(alias="LANGCHAIN_MODEL_NAME", default="")
     langchain_temperature: float = Field(alias="LANGCHAIN_TEMPERATURE", default=0.0)
+    # The native Anthropic credential. Read through bare ``os.getenv`` in
+    # ``llm.py``, which left it out of this schema — so ``provider doctor`` and
+    # preflight could not tell a missing key from a working one and the failure
+    # surfaced as an opaque 401 at the first call instead (#1223).
+    anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY", default="")
     anthropic_max_tokens: int | None = Field(alias="ANTHROPIC_MAX_TOKENS", default=None, gt=0)
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
