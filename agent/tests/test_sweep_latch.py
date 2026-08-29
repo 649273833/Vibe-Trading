@@ -386,3 +386,62 @@ def test_mid_sweep_retrip_does_not_release_new_episode_claim(
     # The ep1 owner's own claim must be gone (released normally).
     assert not sweep_latch.claim_path(BROKER, "2026-08-27T01:00:00+00:00").exists()
     sweep_latch.release_claim(BROKER, captured["ep2"])
+
+
+def _count_audits(live_root: Path, flatten_fn: Any, ticks: int) -> tuple[int, list[str]]:
+    """Run one runner over ``ticks`` halted ticks; return audit count + kinds."""
+    kinds: list[str] = []
+
+    async def _agent_caller(session_id: str, prompt: str) -> Mapping[str, Any]:
+        return {"status": "success"}
+
+    def _audit(event) -> Mapping[str, Any]:
+        kinds.append(getattr(event, "kind", "?"))
+        return {"audit_id": "a1"}
+
+    runner = LiveRunner(
+        BROKER,
+        agent_caller=_agent_caller,
+        reconcile_fn=lambda *a, **k: None,
+        read_positions=list,
+        read_balance=list,
+        read_open_orders=list,
+        write_audit_fn=_audit,
+        halt_flag_fn=lambda broker: True,
+        submit_fn=lambda request: {"status": "ok"},
+        flatten_fn=flatten_fn,
+        session_id="latch-test",
+    )
+    for _ in range(ticks):
+        asyncio.run(runner.run_once())
+    return len(kinds), kinds
+
+
+def test_flat_book_recheck_audits_once_not_once_per_tick(live_root: Path) -> None:
+    # The no-side-effect branch re-runs every halted tick by design. Its audit
+    # record must not: a channel left halted overnight at a 1-minute tick would
+    # append ~1440 identical records to the hash-chained ledger. One record per
+    # (episode, condition) per runner; the rest is logging.
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+
+    def _flatten(broker, submit, read_positions, read_open_orders):
+        return {"errors": []}  # reads ok, nothing to act on
+
+    total, kinds = _count_audits(live_root, _flatten, ticks=5)
+    # 5 halt_tripped tick records + exactly ONE re-check record.
+    assert total == 6, kinds
+    # A flat book is not a breach.
+    assert "breach" not in kinds, kinds
+
+
+def test_persistent_read_failure_audits_the_breach_once_per_episode(
+    live_root: Path,
+) -> None:
+    _trip_with_timestamp(BROKER, "2026-08-27T01:00:00+00:00")
+
+    def _flatten(broker, submit, read_positions, read_open_orders):
+        return {"errors": [{"phase": "read_positions", "error": "broker read failed"}]}
+
+    total, kinds = _count_audits(live_root, _flatten, ticks=5)
+    assert total == 6, kinds
+    assert kinds.count("breach") == 1, kinds

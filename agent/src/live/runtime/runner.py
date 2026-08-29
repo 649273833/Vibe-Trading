@@ -396,6 +396,9 @@ class LiveRunner:
         #: Set once the preemptive sweep has fired so a tripped channel never
         #: flattens twice across consecutive ticks (no-retry, SPEC §8.5).
         self._flatten_fired = False
+        # (episode, intent) pairs whose no-side-effect sweep outcome this
+        # runner has already audited — see _note_sweep_recheck.
+        self._sweep_recheck_audited: set[tuple[str, str]] = set()
 
     @property
     def runner_id(self) -> str:
@@ -549,16 +552,20 @@ class LiveRunner:
             logger.warning("failed to write heartbeat for %s", self.runner_id, exc_info=True)
 
     def _halted_result(self) -> dict[str, Any]:
-        """Fire the preemptive sweep ONCE, audit, and return for a halted tick.
+        """Fire the preemptive sweep, audit, and return for a halted tick.
 
         This closes Hole #1 (SPEC §7.5 #6): a tripped halt is no longer merely
         cooperative (refuse the next order). The runner cancels every resting
         order and — per the mandate's flatten flag — flattens open positions, via
-        the injected broker submit callable. The sweep runs at most once per
-        runner lifetime (``_flatten_fired`` latch): a halted channel that keeps
-        ticking must not re-submit closes (no-retry, SPEC §8.5). With no broker
-        write surface wired (``submit_fn is None``) the sweep is skipped and the
-        cooperative gate alone blocks future orders.
+        the injected broker submit callable. The sweep submits closes at most
+        once per halt episode (``_flatten_fired`` plus the on-disk latch): a
+        halted channel that keeps ticking must not re-submit closes (no-retry,
+        SPEC §8.5). A sweep that attempted NO broker write — reads failed, or
+        the book was already flat — is not latched and re-checks on the next
+        tick, so a resting order that appears after the first sweep is still
+        cancelled. With no broker write surface wired (``submit_fn is None``)
+        the sweep is skipped and the cooperative gate alone blocks future
+        orders.
         """
         self._run_preemptive_sweep()
         audit_id = self._audit(
@@ -572,6 +579,31 @@ class LiveRunner:
             reason="kill switch tripped",
             audit_id=audit_id,
         ).to_dict()
+
+    def _note_sweep_recheck(self, episode: str, intent: str) -> bool:
+        """Return whether this sweep re-check outcome is new for the episode.
+
+        The no-side-effect branch of :meth:`_run_preemptive_sweep` re-runs on
+        every halted tick by design (a resting order that appears after the
+        first sweep must still be cancelled). Its audit record must not repeat
+        with it: one tick per minute on a channel left halted overnight would
+        append ~1440 records describing the same unchanged condition. The
+        record is therefore written the first time a given ``(episode,
+        intent)`` pair is seen by this runner and suppressed afterwards, while
+        the logger still sees every occurrence.
+
+        Args:
+            episode: Halt-episode identity the sweep is running under.
+            intent: Normalized intent string identifying the condition.
+
+        Returns:
+            ``True`` when the pair has not been audited yet by this runner.
+        """
+        key = (episode, intent)
+        if key in self._sweep_recheck_audited:
+            return False
+        self._sweep_recheck_audited.add(key)
+        return True
 
     def _run_preemptive_sweep(self) -> None:
         """Cancel resting orders + (per mandate) flatten positions, exactly once.
@@ -692,18 +724,29 @@ class LiveRunner:
                 # No cancel or close was attempted → nothing happened that a
                 # later tick (or a restart) must not repeat. Do NOT latch: the
                 # sweep retries for this episode.
+                #
+                # This branch runs on EVERY halted tick, so the audit record is
+                # written once per (episode, condition) per runner instead of
+                # once per tick: a channel left halted overnight would otherwise
+                # append one record per tick to the hash-chained ledger forever.
+                # Every occurrence is still logged. A flat book is also not a
+                # breach — auditing "nothing to act on" as kind=breach/error
+                # made a clean outcome indistinguishable from a real one.
                 if read_errors:
                     detail = "; ".join(str(e.get("error")) for e in read_errors)
+                    kind, outcome = "breach", "error"
                     intent = "preemptive halt sweep read failed — retrying on next tick"
                 else:
                     detail = "no open orders or positions to act on"
+                    kind, outcome = "halt_tripped", "blocked"
                     intent = "preemptive halt sweep found nothing to act on — re-checking on next tick"
-                self._audit(
-                    kind="breach",
-                    outcome="error",
-                    intent=intent,
-                    error=detail,
-                )
+                if self._note_sweep_recheck(episode, intent):
+                    self._audit(
+                        kind=kind,
+                        outcome=outcome,
+                        intent=intent,
+                        error=detail,
+                    )
                 return
             self._flatten_fired = True
             try:
