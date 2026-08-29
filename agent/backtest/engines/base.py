@@ -912,9 +912,20 @@ class BaseEngine(ABC):
             )
             if bench_result is not None:
                 bench_ret = bench_result.ret_series.reindex(dates).fillna(0.0)
+                # The benchmark is fetched over the requested start_date..
+                # end_date, but a declared warm-up boundary makes the EVALUATED
+                # window shorter than that (`dates` is already clipped above).
+                # Grading total_return over the short window against a
+                # benchmark measured over the long one is the mismatched-window
+                # error the warm-up boundary exists to prevent, so re-measure
+                # the benchmark over the same bars. Falls back to the fetched
+                # total only when the overlap is too short to measure.
+                window_ret = bench_result.total_return_over(dates)
                 benchmark_metadata = {
                     "benchmark_ticker": bench_result.ticker,
-                    "benchmark_return": bench_result.total_ret,
+                    "benchmark_return": (
+                        window_ret if window_ret is not None else bench_result.total_ret
+                    ),
                 }
         # ── External benchmark fetch ──────────────────────────────────────────
 
