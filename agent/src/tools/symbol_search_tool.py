@@ -1,7 +1,11 @@
 """Read-only symbol-search tool: resolve a name/ticker to symbols + market.
 
-Backed by three frozen, IP-throttled public-API clients so the agent never
-hits a provider un-throttled and never re-implements transport plumbing:
+Backed by the selected Binance connector for exact crypto pairs plus three
+frozen, IP-throttled public-API clients so the agent never hits a provider
+un-throttled and never re-implements transport plumbing:
+
+* The active Binance profile resolves exact spot-pair spellings against its
+  exchange market catalog. It does not guess asset names from prose.
 
 * :mod:`backtest.loaders.eastmoney_client` — Eastmoney's free suggest endpoint
   matches Chinese/English names and tickers across A-shares (.SH/.SZ/.BJ),
@@ -52,6 +56,25 @@ _EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 # are deliberately left to the normal fan-out.
 _CANADIAN_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)\b", re.IGNORECASE)
 
+# Explicit exchange-pair spellings are not equity/name searches. Restrict the
+# quote leg to assets used by the built-in crypto connectors so an equity such
+# as ``BRK-B`` is never misclassified as a pair.
+_CRYPTO_QUOTE_ASSETS = (
+    "FDUSD",
+    "USDT",
+    "USDC",
+    "BUSD",
+    "TUSD",
+    "BTC",
+    "ETH",
+    "BNB",
+    "USD",
+)
+_CRYPTO_PAIR_RE = re.compile(
+    rf"^([A-Z0-9]{{2,15}})[-/]({'|'.join(_CRYPTO_QUOTE_ASSETS)})$",
+    re.IGNORECASE,
+)
+
 # Eastmoney market-number -> our symbol suffix. Anything else is left unmapped
 # (those candidates are skipped rather than emitted with a wrong suffix).
 _EASTMONEY_SUFFIX_BY_MARKET: Dict[str, str] = {
@@ -101,7 +124,8 @@ class SymbolSearchTool(BaseTool):
         "with their market, in the project's symbol convention (A-shares "
         "600519.SH, Hong Kong 00700.HK, U.S. AAPL.US, Canada TD.TO/PNG.V, plus "
         "crypto/index/FX from "
-        "Yahoo). Searches Eastmoney (China/HK/US names and tickers) and Yahoo "
+        "Yahoo). Exact crypto pairs are checked against the active Binance "
+        "profile; other queries search Eastmoney (China/HK/US names and tickers) and Yahoo "
         "(global) and, for U.S. equities, attaches the SEC CIK. Use this to turn "
         "an ambiguous name into a concrete symbol before calling get_market_data "
         'or get_sec_filings. Example: search_symbol(query="apple", limit=5).'
@@ -154,11 +178,30 @@ class SymbolSearchTool(BaseTool):
         candidates: List[Dict[str, Any]] = []
         sources: Dict[str, str] = {}
 
+        crypto_pair = _canonical_crypto_pair(query)
+        connector_hits, connector_source, connector_status = (
+            _search_selected_connector(query, limit)
+        )
+        if connector_source is not None and connector_status is not None:
+            sources[connector_source] = connector_status
+            candidates.extend(connector_hits)
+
         em_hits, sources["eastmoney"] = _search_eastmoney(query)
         candidates.extend(em_hits)
 
         yh_hits, sources["yahoo"] = _search_yahoo(query)
         candidates.extend(yh_hits)
+
+        if crypto_pair is not None:
+            # A pair query is an exact instrument assertion. Near-string Yahoo
+            # hits such as AETHUSDT-USD are different assets and must not enter
+            # the identity ledger as rival candidates (#1234).
+            candidates = [
+                candidate
+                for candidate in candidates
+                if _canonical_crypto_pair(str(candidate.get("symbol") or ""))
+                == crypto_pair
+            ]
 
         # Canada fail-fast: a Canadian ticker must resolve to the Canadian venue
         # only. Yahoo also returns the US OTC alias of the same company (e.g.
@@ -219,6 +262,85 @@ def _is_canadian_symbol(text: str) -> bool:
     return bool(_CANADIAN_SYMBOL_RE.match((text or "").strip()))
 
 
+def _canonical_crypto_pair(value: str) -> str | None:
+    """Return an explicit crypto pair in canonical ``BASE-QUOTE`` form."""
+    clean = str(value or "").strip().upper()
+    matched = _CRYPTO_PAIR_RE.fullmatch(clean)
+    if matched:
+        return f"{matched.group(1)}-{matched.group(2)}"
+    if clean.isalnum():
+        for quote in _CRYPTO_QUOTE_ASSETS:
+            if clean.endswith(quote) and len(clean) > len(quote) + 1:
+                return f"{clean[: -len(quote)]}-{quote}"
+    return None
+
+
+def _search_selected_connector(
+    query: str,
+    limit: int,
+) -> tuple[List[Dict[str, Any]], str | None, str | None]:
+    """Resolve an explicit pair against the active crypto connector, if supported."""
+    if _canonical_crypto_pair(query) is None:
+        return [], None, None
+
+    # Lazy imports keep the generic symbol tool usable when optional connector
+    # dependencies are absent and avoid loading broker configuration at import.
+    from src.trading import profiles as trading_profiles
+    from src.trading import service as trading_service
+
+    try:
+        profile_id = trading_profiles.load_selected_profile_id()
+        profile = trading_profiles.profile_by_id(profile_id)
+    except (OSError, ValueError) as exc:
+        logger.debug("selected connector lookup failed for %r: %s", query, exc)
+        return [], None, None
+
+    if profile.connector != "binance":
+        return [], None, None
+
+    source = profile.connector
+    try:
+        payload = trading_service.search_instruments(
+            query,
+            profile.id,
+            limit=limit,
+        )
+    except Exception as exc:  # noqa: BLE001 - one search source is non-fatal
+        logger.debug("%s instrument search failed for %r: %s", source, query, exc)
+        return [], source, f"connector search failed: {exc}"
+
+    if not isinstance(payload, dict) or str(payload.get("status")).casefold() != "ok":
+        message = (
+            str(payload.get("error") or payload.get("message") or "unknown error")
+            if isinstance(payload, dict)
+            else "invalid response"
+        )
+        return [], source, f"connector search failed: {message}"
+
+    rows = payload.get("instruments")
+    rows = rows if isinstance(rows, list) else []
+    candidates: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = _canonical_crypto_pair(str(row.get("symbol") or ""))
+        if symbol is None:
+            continue
+        candidates.append(
+            {
+                "symbol": symbol,
+                "name": str(row.get("name") or row.get("native_symbol") or "").strip()
+                or None,
+                "market": "crypto",
+                "type": str(row.get("type") or "cryptocurrency"),
+                "exchange": str(row.get("exchange") or source).upper(),
+                "source": source,
+                "profile_id": profile.id,
+            }
+        )
+    return candidates, source, "ok"
+
+
 def _is_ticker_name_query(query: str) -> bool:
     """Whether *query* is a bare all-caps ticker followed by a name hint.
 
@@ -257,6 +379,8 @@ def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
         ``(candidates, status)`` where ``status`` is ``"ok"`` on success or a
         short error string when the source failed (candidates is then empty).
     """
+    if _canonical_crypto_pair(query) is not None:
+        return [], f"{_SKIPPED}eastmoney has no crypto exchange-pair coverage"
     if _is_canadian_symbol(query):
         logger.info(
             "eastmoney skipped for Canadian symbol %r (no Canada coverage)",
