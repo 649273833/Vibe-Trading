@@ -33,6 +33,7 @@ def test_fetch_scales_lse_pence_to_gbp(monkeypatch: pytest.MonkeyPatch) -> None:
         return _download_frame()
 
     monkeypatch.setattr(yfl, "_download_history", fake_download)
+    monkeypatch.setattr(yfl, "_declared_currency", lambda symbol: "GBp")
 
     result = yfl.DataLoader().fetch(["VOD.L"], "2025-01-01", "2025-01-03")
 
@@ -52,6 +53,7 @@ def test_fetch_scales_other_lse_names(monkeypatch: pytest.MonkeyPatch) -> None:
         return _download_frame()
 
     monkeypatch.setattr(yfl, "_download_history", fake_download)
+    monkeypatch.setattr(yfl, "_declared_currency", lambda symbol: "GBp")
 
     result = yfl.DataLoader().fetch(["BARC.L"], "2025-01-01", "2025-01-03")
 
@@ -140,3 +142,29 @@ def test_fetch_scales_only_on_gbp_pence(monkeypatch: pytest.MonkeyPatch) -> None
 
     frame = result["VOD.L"]
     assert frame["close"].iloc[0] == pytest.approx(1.175)  # still scaled
+
+
+def test_fetch_declared_currency_failure_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CI/reviewer regression: _declared_currency hits the network. When it
+    # fails (offline, metadata 403), the suffix heuristic must NOT kick in —
+    # fail-closed = never assume pence; prices stay unscaled.
+    monkeypatch.delenv("VIBE_TRADING_DATA_CACHE", raising=False)
+
+    def fake_download(tickers, start_date, end_date, interval):
+        assert tickers == ["VOD.L"]
+        return _download_frame()
+
+    monkeypatch.setattr(yfl, "_download_history", fake_download)
+
+    # Real offline behavior: _declared_currency swallows probe failures and
+    # returns None (fail-closed). Simulating the raise would turn it into a
+    # dropped symbol — the production function never raises.
+    monkeypatch.setattr(yfl, "_declared_currency", lambda symbol: None)
+
+    result = yfl.DataLoader().fetch(["VOD.L"], "2025-01-01", "2025-01-03")
+
+    frame = result["VOD.L"]
+    # Fail-closed: no scale. No exception may escape.
+    assert frame["close"].iloc[0] == pytest.approx(117.5)
