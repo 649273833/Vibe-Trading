@@ -42,6 +42,30 @@ _LOADER_MARKET_SUFFIXES = frozenset(
 _NON_EQUITY_ASSET_TYPES = frozenset({"crypto", "stablecoin", "cash"})
 
 
+_AUTH_REQUIRED_MARKERS = (
+    "not_authorized",
+    "not authorized",
+    "authorization required",
+    "oauth authorization required",
+    "invalid_grant",
+    "token expired",
+    "oauth token missing",
+    "connector authorize",
+)
+
+
+def _authorization_required(payload: dict[str, Any]) -> bool:
+    """Return whether a connector failure explicitly asks for OAuth renewal."""
+    status = str(payload.get("status") or "").strip().lower()
+    if status in {"not_authorized", "unauthorized"}:
+        return True
+    message = " ".join(
+        str(payload.get(key) or "")
+        for key in ("error", "error_code", "error_type")
+    ).lower()
+    return any(marker in message for marker in _AUTH_REQUIRED_MARKERS)
+
+
 def _decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     try:
         if value is None or value == "":
@@ -233,10 +257,19 @@ class PortfolioService:
                 if self._progress_callback is not None:
                     self._progress_callback(source.id, "ok", None)
             except Exception as exc:  # read failures are isolated per connector
+                try:
+                    _, failed_profile = self._connection_profile(source)
+                    auth_required = failed_profile.transport == "remote_mcp" and _authorization_required(
+                        {"error": str(exc)}
+                    )
+                except Exception:
+                    auth_required = False
                 results[source.id] = {
                     "status": "error",
                     "error_code": type(exc).__name__,
                     "error": str(exc)[:300],
+                    "failure_kind": "authorization" if auth_required else "transient",
+                    "reconnect_required": auth_required,
                 }
                 if self._progress_callback is not None:
                     self._progress_callback(source.id, "error", str(exc)[:160])
@@ -383,6 +416,8 @@ class PortfolioService:
             "status": "error",
             "error": result.get("error"),
             "error_code": result.get("error_code"),
+            "failure_kind": result.get("failure_kind", "transient"),
+            "reconnect_required": bool(result.get("reconnect_required")),
             "last_success_at": cached["created_at"] if cached is not None else None,
             "total_usd": None,
             "total_cny": None,

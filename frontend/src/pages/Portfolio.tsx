@@ -41,6 +41,10 @@ const HOLDING_COLORS = [
   "#2d9cdb", "#d96c9d", "#7f8c8d", "#b5c83b", "#f05a47",
 ];
 
+// Backend OAuth workers time out after 330 seconds. Keep a slightly longer
+// client-side guard so a lost polling response can never spin forever.
+const PORTFOLIO_RECONNECT_DEADLINE_MS = 360_000;
+
 /**
  * Locale used by every Intl formatter on this page. The formatters live at
  * module scope (chart option builders need them outside React), so they read
@@ -189,8 +193,12 @@ export function Portfolio() {
     setError(null);
     try {
       await api.reconnectPortfolioSource(sourceId);
+      const deadline = Date.now() + PORTFOLIO_RECONNECT_DEADLINE_MS;
       for (;;) {
         await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        if (Date.now() >= deadline) {
+          throw new Error(t("portfolio.page.errorReconnectTimeout"));
+        }
         const result = await api.getPortfolioReconnectStatus();
         if (result.reconnect.running) continue;
         if (result.reconnect.status !== "authorized") {
@@ -400,7 +408,7 @@ export function Portfolio() {
               </div>
               <div className="grid gap-3 lg:grid-cols-3">
                 {snapshot.accounts.map((account) => (
-                  <AccountCard key={account.source_id ?? account.broker} account={account} active={sourceFilter === (account.source_id ?? account.broker)} displayCurrency={displayCurrency} onClick={() => { const id = account.source_id ?? account.broker; setSourceFilter((current) => current === id ? "all" : id); }} onReconnect={account.auth?.method === "OAuth" && account.source_id ? () => void reconnectSource(account.source_id!) : undefined} reconnecting={reconnectingSource === account.source_id} reconnectDisabled={reconnectingSource !== null} />
+                  <AccountCard key={account.source_id ?? account.broker} account={account} active={sourceFilter === (account.source_id ?? account.broker)} displayCurrency={displayCurrency} onClick={() => { const id = account.source_id ?? account.broker; setSourceFilter((current) => current === id ? "all" : id); }} onReconnect={account.reconnect_required && account.source_id ? () => void reconnectSource(account.source_id!) : undefined} onRetry={!account.reconnect_required ? () => void refresh() : undefined} busy={refreshing || reconnectingSource === (account.source_id ?? account.broker)} actionsDisabled={refreshing || reconnectingSource !== null} />
                 ))}
               </div>
             </section>
@@ -499,7 +507,7 @@ function RefreshProgress({ state, settings }: { state: PortfolioRefreshState; se
  * it renders the failure, the error text and the last successful read time
  * instead of a value, so nothing on the card suggests it is part of the total.
  */
-function AccountCard({ account, active, displayCurrency, onClick, onReconnect, reconnecting, reconnectDisabled }: { account: PortfolioAccount; active: boolean; displayCurrency: "USD" | "CNY"; onClick: () => void; onReconnect?: () => void; reconnecting: boolean; reconnectDisabled: boolean }) {
+function AccountCard({ account, active, displayCurrency, onClick, onReconnect, onRetry, busy, actionsDisabled }: { account: PortfolioAccount; active: boolean; displayCurrency: "USD" | "CNY"; onClick: () => void; onReconnect?: () => void; onRetry?: () => void; busy: boolean; actionsDisabled: boolean }) {
   const { t } = useTranslation();
   const failed = account.status === "error";
   return <div role="button" tabIndex={0} onClick={onClick} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClick(); }} className={`cursor-pointer rounded-xl border bg-card p-5 transition ${active ? "border-primary ring-1 ring-primary/20" : "hover:border-primary/40"}`}>
@@ -520,7 +528,8 @@ function AccountCard({ account, active, displayCurrency, onClick, onReconnect, r
       </>
     )}
     {failed && account.error ? <p className="mt-3 line-clamp-2 text-xs text-muted-foreground" title={account.error}>{account.error}</p> : null}
-    {failed && onReconnect ? <button onClick={(event) => { event.stopPropagation(); onReconnect(); }} disabled={reconnectDisabled} className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">{reconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{t("portfolio.accounts.reconnect")}</button> : null}
+    {failed && onReconnect ? <button onClick={(event) => { event.stopPropagation(); onReconnect(); }} disabled={actionsDisabled} className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{t("portfolio.accounts.reconnect")}</button> : null}
+    {failed && onRetry ? <button onClick={(event) => { event.stopPropagation(); onRetry(); }} disabled={actionsDisabled} className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{t("portfolio.accounts.retryRead")}</button> : null}
   </div>;
 }
 

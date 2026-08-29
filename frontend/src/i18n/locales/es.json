@@ -1477,6 +1477,7 @@
       "errorLoad": "Cartera no disponible",
       "errorRefresh": "Fallo al actualizar",
       "errorReconnect": "No se pudo volver a conectar la cuenta",
+      "errorReconnectTimeout": "La autorización del navegador agotó el tiempo. Vuelve a conectar y completa pronto la autorización del bróker.",
       "errorSaveSettings": "No se pudieron guardar los ajustes de la cartera",
       "errorExport": "Fallo al exportar"
     },
@@ -1507,7 +1508,8 @@
       "failed": "No se pudo leer: no cuenta en el total",
       "lastSuccess": "Última lectura correcta {{time}}",
       "noSuccess": "Todavía sin ninguna lectura correcta",
-      "reconnect": "Volver a conectar"
+      "reconnect": "Volver a conectar",
+      "retryRead": "Reintentar lectura"
     },
     "holdings": {
       "title": "Posiciones",

@@ -82,6 +82,8 @@ const snapshotWithFailedSource = {
       status: "error" as const,
       error_code: "ConnectionError",
       error: "Read timed out after 30s",
+      failure_kind: "transient" as const,
+      reconnect_required: false,
       last_success_at: FAILED_LAST_SUCCESS,
     },
   ],
@@ -99,6 +101,8 @@ const snapshotWithFailedOAuth = {
       status: "error" as const,
       error_code: "AuthenticationError",
       error: "OAuth authorization expired",
+      failure_kind: "authorization" as const,
+      reconnect_required: true,
       auth: {
         method: "OAuth",
         renewal: "automatic" as const,
@@ -273,5 +277,36 @@ describe("Portfolio page", () => {
     expect(screen.getByText("$1,000.00")).toBeInTheDocument();
     expect(screen.getByText(i18n.t("portfolio.metrics.excluded", { count: 1 }))).toBeInTheDocument();
     expect(screen.getByText(snapshotWithFailedSource.warnings[0])).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: i18n.t("portfolio.accounts.retryRead") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: i18n.t("portfolio.accounts.reconnect") })).not.toBeInTheDocument();
+  });
+
+  it("offers reconnect only when an OAuth source explicitly needs authorization", async () => {
+    mocked.getPortfolio.mockResolvedValue({
+      status: "ok",
+      snapshot: {
+        ...snapshotWithFailedSource,
+        accounts: [
+          ...snapshot.accounts,
+          {
+            source_id: "ibkr-auth",
+            broker: "ibkr",
+            label: "IBKR authorization",
+            status: "error" as const,
+            error: "OAuth authorization required",
+            failure_kind: "authorization" as const,
+            reconnect_required: true,
+            auth: { method: "OAuth", renewal: "automatic" as const, readonly: true, detail: "" },
+          },
+        ],
+      },
+    });
+    render(<Portfolio />);
+    expect((await screen.findAllByText("IBKR authorization")).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("portfolio.accounts.reconnect") }));
+
+    await waitFor(() => expect(mocked.reconnectPortfolioSource).toHaveBeenCalledWith("ibkr-auth"));
+    expect(screen.queryByRole("button", { name: i18n.t("portfolio.accounts.retryRead") })).not.toBeInTheDocument();
   });
 });

@@ -1477,6 +1477,7 @@
       "errorLoad": "Portfolio nicht verfügbar",
       "errorRefresh": "Aktualisierung fehlgeschlagen",
       "errorReconnect": "Erneutes Verbinden des Kontos fehlgeschlagen",
+      "errorReconnectTimeout": "Die Browser-Autorisierung ist abgelaufen. Verbinden Sie sich erneut und schließen Sie die Broker-Autorisierung zeitnah ab.",
       "errorSaveSettings": "Portfolio-Einstellungen konnten nicht gespeichert werden",
       "errorExport": "Export fehlgeschlagen"
     },
@@ -1507,7 +1508,8 @@
       "failed": "Konnte nicht gelesen werden — nicht in der Summe enthalten",
       "lastSuccess": "Letzter erfolgreicher Abruf {{time}}",
       "noSuccess": "Noch kein erfolgreicher Abruf",
-      "reconnect": "Neu verbinden"
+      "reconnect": "Neu verbinden",
+      "retryRead": "Lesen wiederholen"
     },
     "holdings": {
       "title": "Positionen",
