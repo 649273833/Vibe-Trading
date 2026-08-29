@@ -15,6 +15,7 @@ import math
 import re as _re
 import sys
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -501,6 +502,12 @@ class BaseEngine(ABC):
         # buy-and-hold position, whose weight drifts with price by design.
         self._last_target_weight: Dict[str, float] = {}
         self.dropped_target_adjustments: List[Dict[str, Any]] = []
+        # Opening plans the engine wanted but could not take, keyed
+        # (symbol, reason). A sleeve whose target notional rounds below one
+        # lot trades zero times while the run reports a normal result
+        # (#1235); counting the causes is what makes that visible in the
+        # metrics instead of only to a subclass that overrode the hook.
+        self.plan_rejections: Counter = Counter()
         self._bar_idx: int = 0
         self._active_symbol: str = ""  # set by _rebalance/_close_position for subclass use
 
@@ -689,6 +696,43 @@ class BaseEngine(ABC):
         """Allow engines to update risk state/evidence after a committed delta fill."""
         return None
 
+    #: Rejection causes that mean the engine WANTED a position and could not
+    #: take it. ``no_target_weight`` and ``already_held`` are excluded: they
+    #: mean nothing was wanted, which is not a finding.
+    UNFILLED_PLAN_REASONS = (
+        "no_data",
+        "no_bar",
+        "execution_blocked",
+        "invalid_price",
+        "zero_size",
+    )
+
+    def _plan_rejection_metrics(self) -> Dict[str, Any]:
+        """Summarise opening plans the engine wanted but could not take.
+
+        A rejected plan is invisible in the result otherwise: the run reports a
+        normal equity curve over the symbols that did fill, so a sleeve whose
+        target notional never clears one lot silently drops out of the book and
+        the configuration is graded as if it had never contained that sleeve
+        (#1235). Only the causes that mean "wanted but unfillable" are counted.
+
+        Returns:
+            ``unfilled_plan_rejections`` (total) and
+            ``unfilled_plan_rejections_by_symbol`` (``{symbol: {reason: n}}``),
+            the latter empty when nothing was rejected.
+        """
+        by_symbol: Dict[str, Dict[str, int]] = {}
+        total = 0
+        for (symbol, reason), count in self.plan_rejections.items():
+            if reason not in self.UNFILLED_PLAN_REASONS:
+                continue
+            by_symbol.setdefault(symbol, {})[reason] = count
+            total += count
+        return {
+            "unfilled_plan_rejections": total,
+            "unfilled_plan_rejections_by_symbol": by_symbol,
+        }
+
     def _on_plan_rejected(self, symbol: str, reason: str, timestamp: pd.Timestamp) -> None:
         """Observe a silently rejected opening-order plan.
 
@@ -706,7 +750,7 @@ class BaseEngine(ABC):
                 ``execution_blocked``, ``invalid_price`` or ``zero_size``.
             timestamp: Decision bar timestamp.
         """
-        return None
+        self.plan_rejections[(symbol, reason)] += 1
 
     def execution_open(self, bar: pd.Series) -> float:
         """Return the normal market-fill price for a bar."""
@@ -902,6 +946,7 @@ class BaseEngine(ABC):
             m["excess_return"] = round(
                 m["total_return"] - benchmark_metadata["benchmark_return"], 6
             )
+        m.update(self._plan_rejection_metrics())
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
 

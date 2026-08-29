@@ -201,3 +201,103 @@ def _run_fill_and_reject_scenario(engine):
     # no_data and no_bar via direct calls.
     engine._plan_open_order("B", 0.5, None, _TS, 1_000.0)
     engine._plan_open_order("B", 0.5, frame, pd.Timestamp("2026-01-03"), 1_000.0)
+
+
+# ---------------------------------------------------------------------------
+# Default surfacing: a rejection nobody subclassed for still reaches the run
+# ---------------------------------------------------------------------------
+
+
+class _PlainEngine(BaseEngine):
+    """No _on_plan_rejected override, and a lot rule that truncates to zero."""
+
+    def __init__(self, *, truncate: bool = False):
+        super().__init__(
+            {"initial_cash": 1_000.0, "leverage": 1.0, "position_adjustment": "rebalance"}
+        )
+        self.execute_ok = True
+        self._truncate = truncate
+
+    def can_execute(self, symbol, direction, bar):
+        return self.execute_ok
+
+    def round_size(self, raw_size, price):
+        return 0.0 if self._truncate else round(max(raw_size, 0.0), 6)
+
+    def calc_commission(self, size, price, direction, is_open):
+        return 0.0
+
+    def apply_slippage(self, price, direction):
+        return price
+
+
+def test_wanted_but_unfillable_plans_are_counted_by_default():
+    """A plain engine records the causes without any subclass override."""
+    engine = _PlainEngine(truncate=True)
+    assert engine._plan_open_order("A", 0.5, None, _TS, 1_000.0) is None  # no_data
+    assert (
+        engine._plan_open_order("A", 0.5, _frame(), pd.Timestamp("2026-01-03"), 1_000.0)
+        is None
+    )  # no_bar
+    assert (
+        engine._plan_open_order("A", 0.5, _frame(open_price=0.0), _TS, 1_000.0) is None
+    )  # invalid_price
+    assert engine._plan_open_order("A", 0.5, _frame(), _TS, 1_000.0) is None  # zero_size
+    engine.execute_ok = False
+    assert (
+        engine._plan_open_order("A", 0.5, _frame(), _TS, 1_000.0) is None
+    )  # execution_blocked
+    # Benign causes must not be counted as findings.
+    assert engine._plan_open_order("A", 0.0, _frame(), _TS, 1_000.0) is None
+
+    metrics = engine._plan_rejection_metrics()
+    assert metrics["unfilled_plan_rejections"] == 5
+    assert metrics["unfilled_plan_rejections_by_symbol"] == {
+        "A": {
+            "no_data": 1,
+            "no_bar": 1,
+            "invalid_price": 1,
+            "zero_size": 1,
+            "execution_blocked": 1,
+        }
+    }
+    assert set(metrics["unfilled_plan_rejections_by_symbol"]["A"]) == set(
+        BaseEngine.UNFILLED_PLAN_REASONS
+    )
+
+
+def test_a_clean_run_reports_zero_unfilled_plans():
+    engine = _PlainEngine()
+    assert engine._plan_open_order("A", 0.5, _frame(), _TS, 1_000.0) is not None
+    metrics = engine._plan_rejection_metrics()
+    assert metrics["unfilled_plan_rejections"] == 0
+    assert metrics["unfilled_plan_rejections_by_symbol"] == {}
+
+
+def test_lot_truncated_sleeve_is_named_in_the_metrics():
+    """#1235's motivating case: the sleeve that never fills must be nameable."""
+    engine = _PlainEngine(truncate=True)
+    for _ in range(3):
+        engine._plan_open_order("ES", 0.0005, _frame(), _TS, 1_000.0)
+
+    metrics = engine._plan_rejection_metrics()
+    assert metrics["unfilled_plan_rejections"] == 3
+    assert metrics["unfilled_plan_rejections_by_symbol"] == {"ES": {"zero_size": 3}}
+
+
+def test_an_overriding_subclass_still_gets_the_default_counting():
+    """A subclass that calls super() keeps both the hook and the metrics."""
+
+    class _Both(_PlainEngine):
+        def __init__(self):
+            super().__init__(truncate=True)
+            self.seen = []
+
+        def _on_plan_rejected(self, symbol, reason, timestamp):
+            self.seen.append((symbol, reason))
+            super()._on_plan_rejected(symbol, reason, timestamp)
+
+    engine = _Both()
+    engine._plan_open_order("A", 0.5, _frame(), _TS, 1_000.0)
+    assert engine.seen == [("A", "zero_size")]
+    assert engine._plan_rejection_metrics()["unfilled_plan_rejections"] == 1
