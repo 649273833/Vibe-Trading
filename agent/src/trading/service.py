@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from typing import Any
 
 from src.trading.profiles import list_profiles, profile_by_id
@@ -37,6 +38,39 @@ def _sdk_module(connector: str):
     if path is None:
         raise ValueError(f"no SDK connector module for '{connector}'")
     return importlib.import_module(path)
+
+
+#: Where each SDK connector declares which keys a per-call override may set.
+#: Two spellings exist (Longbridge calls its narrower set an *overlay*); a
+#: module declaring neither gets an EMPTY allowlist, so a connector added
+#: without one drops every override rather than passing them all through.
+_OVERRIDE_ALLOWLIST_ATTRS = ("_OVERRIDE_KEYS", "_OVERLAY_KEYS")
+
+
+def _allowed_override_keys(module: Any) -> frozenset[str]:
+    """Return the keys ``module`` permits a caller-supplied override to set.
+
+    Args:
+        module: A ``src.trading.connectors.<name>.sdk`` module.
+
+    Returns:
+        The connector's declared allowlist, or an empty set when it declares
+        none (fail closed).
+    """
+    # Some connectors (etoro, mt5) only re-export ``build_config`` into their
+    # ``sdk`` module, leaving the allowlist beside the definition. Follow the
+    # function to its defining module before giving up.
+    candidates = [module]
+    builder = getattr(module, "build_config", None)
+    defining = sys.modules.get(getattr(builder, "__module__", ""))
+    if defining is not None and defining is not module:
+        candidates.append(defining)
+    for candidate in candidates:
+        for attr in _OVERRIDE_ALLOWLIST_ATTRS:
+            keys = getattr(candidate, attr, None)
+            if keys:
+                return frozenset(str(key) for key in keys)
+    return frozenset()
 
 
 def _sdk_config(
@@ -90,10 +124,21 @@ def _sdk_config(
     # Resolve only the config class through the connector's existing builder,
     # then construct a fresh instance so credentials cannot be mixed with a
     # different account's legacy JSON file.
-    config_type = type(module.build_config(profile.config, options))
-    payload = {**dict(profile.config), **credentials, **options}
+    #
+    # Per-call overrides must still pass the connector's own allowlist. Every
+    # SDK connector deliberately narrows what a caller may override — OKX and
+    # Binance both exclude ``readonly`` ("always true for this layer") and
+    # ``timeout``; Longbridge's overlay is ``profile``/``region`` only,
+    # precisely so a caller "cannot mix or bypass the shared resolver".
+    # ``build_config`` applies that filter; constructing from a raw merged
+    # mapping would not, and ``overrides`` is the one part of this payload that
+    # reaches us from an MCP tool argument or a REST body.
+    allowed = _allowed_override_keys(module)
+    clean = {key: value for key, value in options.items() if key in allowed and value not in (None, "")}
+    payload = {**dict(profile.config), **credentials, **clean}
     if profile.connector == "longbridge":
         payload["_credential_source"] = "keyring"
+    config_type = type(module.build_config(profile.config, clean))
     return config_type.from_mapping(payload)
 
 

@@ -226,3 +226,86 @@ def test_mcp_connector_discovery_exposes_onboarding_contract_without_values():
         "passphrase",
     ]
     assert "credential_values" not in okx["onboarding"]
+
+
+# ---------------------------------------------------------------------------
+# Per-call overrides must pass the connector's own allowlist (#1250 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _vault_store(tmp_path, connection_id, profile_id):
+    credentials = CredentialStore(_MemoryCredentials())
+    store = ConnectionStore(tmp_path / "connections.json", credential_store=credentials)
+    store.create(connection_id, profile_id, "Test")
+    return store, credentials
+
+
+def test_connection_scoped_overrides_obey_the_connector_allowlist(tmp_path, monkeypatch):
+    """A vault-backed call must not widen what a caller may override.
+
+    Every SDK connector narrows overrides on purpose: OKX and Binance both
+    exclude ``readonly`` ("always true for this layer") and ``timeout``, and
+    Longbridge's overlay is ``profile``/``region`` only so a caller "cannot mix
+    or bypass the shared resolver". ``build_config`` enforces that; a config
+    built from a raw merged mapping would not — and ``overrides`` is the one
+    part of that payload that arrives from an MCP tool argument or REST body.
+    """
+    import src.trading.connections as conns
+    from src.trading import service
+    from src.trading.connectors.okx import sdk as okx_sdk
+    from src.trading.profiles import profile_by_id
+
+    store, credentials = _vault_store(tmp_path, "main-okx", "okx-live-sdk-readonly")
+    credentials.save("main-okx", {"api_key": "k", "api_secret": "s", "passphrase": "p"})
+    monkeypatch.setattr(conns, "ConnectionStore", lambda *a, **k: store)
+
+    profile = profile_by_id("okx-live-sdk-readonly")
+    out_of_allowlist = {"readonly": False, "timeout": 999.0}
+
+    # The connector's own builder drops them...
+    legacy = okx_sdk.build_config(profile.config, out_of_allowlist)
+    assert legacy.readonly is True
+    assert legacy.timeout == 15.0
+
+    # ...and so must the vault-backed path.
+    vaulted = service._sdk_config(
+        profile, okx_sdk, {"connection_id": "main-okx", **out_of_allowlist}
+    )
+    assert vaulted.readonly is True
+    assert vaulted.timeout == 15.0
+    # An allowlisted override still works.
+    assert (
+        service._sdk_config(
+            profile, okx_sdk, {"connection_id": "main-okx", "expected_uid": "uid-1"}
+        ).expected_uid
+        == "uid-1"
+    )
+    # And the vault credentials really were used, or the assertions are vacuous.
+    assert vaulted.api_key == "k"
+
+
+def test_every_sdk_connector_declares_an_override_allowlist():
+    """A connector added without one must fail closed, and be noticed here."""
+    import importlib
+    import pkgutil
+
+    from src.trading import connectors as connectors_pkg
+    from src.trading.service import _allowed_override_keys
+
+    missing = []
+    for info in pkgutil.iter_modules(connectors_pkg.__path__):
+        try:
+            module = importlib.import_module(
+                f"src.trading.connectors.{info.name}.sdk"
+            )
+        except ModuleNotFoundError:
+            continue  # connector without an SDK surface
+        if not hasattr(module, "build_config"):
+            continue  # not a per-call-config connector
+        if not _allowed_override_keys(module):
+            missing.append(info.name)
+    assert missing == [], (
+        f"SDK connectors without an override allowlist: {missing}. "
+        "_allowed_override_keys fails closed, so their per-call overrides are "
+        "silently dropped — declare _OVERRIDE_KEYS."
+    )
