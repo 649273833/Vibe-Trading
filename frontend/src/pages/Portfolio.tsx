@@ -16,6 +16,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { PortfolioSourceEditor } from "@/components/portfolio/PortfolioSourceEditor";
+import { PortfolioCompatibilityBadge } from "@/components/portfolio/PortfolioCompatibilityBadge";
 import {
   api,
   type PortfolioAccount,
@@ -511,8 +512,8 @@ function AccountCard({ account, active, displayCurrency, onClick, onReconnect, o
   const { t } = useTranslation();
   const failed = account.status === "error";
   return <div role="button" tabIndex={0} onClick={onClick} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClick(); }} className={`cursor-pointer rounded-xl border bg-card p-5 transition ${active ? "border-primary ring-1 ring-primary/20" : "hover:border-primary/40"}`}>
-    <div className="flex items-center justify-between">
-      <div><div className="font-medium">{account.label ?? account.broker.toUpperCase()}</div><div className="mt-1 text-xs"><BrokerBadge broker={account.broker} /></div></div>
+    <div className="flex items-center justify-between gap-3">
+      <div><div className="font-medium">{account.label ?? account.broker.toUpperCase()}</div><div className="mt-1 flex flex-wrap items-center gap-2 text-xs"><BrokerBadge broker={account.broker} /><PortfolioCompatibilityBadge compatibility={account.portfolio_compatibility} /></div></div>
       {failed ? <WifiOff className="h-4 w-4 text-danger" /> : <CheckCircle2 className="h-4 w-4 text-positive" />}
     </div>
     {failed ? (

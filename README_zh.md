@@ -352,6 +352,22 @@ Web UI 新增只读的 **持仓** 页面，把你选中的券商连接的持仓�
 | **不可变快照** | 每次刷新都写入 `~/.vibe-trading/portfolio/portfolio.sqlite3`；不含凭证的设置保存在 `~/.vibe-trading/portfolio.json` 与 `connections.json`。 |
 | **导出与分析** | 支持 CSV 导出，并提供脱敏的 `portfolio_summary` agent 工具，其 `risk_xray_args` 可直接传给 `portfolio_risk_xray`。终端里 `vibe-trading portfolio show` 打印同一份快照（另有 `refresh` / `sources`）。 |
 
+### 面向 AI 的连接器接入
+
+内置 SDK 连接器统一公布机器可读的 onboarding 合同：认证类型、所需凭证字段、可选依赖、安装命令以及只读验证操作。MCP 的 `trading_connections` 会返回同一份合同，持仓页的连接中心则据此自动生成通用表单。合同只包含字段名称，永远不包含凭证值。
+
+终端优先的接入方式如下。密钥由本机 CLI 隐藏输入，不要写入 prompt 或命令行参数：
+
+```bash
+vibe-trading connector setup okx-live-sdk-readonly \
+  --connection-id main-okx \
+  --label "Main OKX"
+```
+
+CLI 会把凭证按连接 ID 保存到系统钥匙串，并执行连接器的只读测试。等价的网页流程是：**持仓 → 管理账户 → 打开连接中心 → 选择模板 → 保存到钥匙串 → 测试连接**。MCP 读取工具可以传入 `connection_id`，程序会在本机解析对应凭证，因此密钥不会经过 MCP。现有 `~/.vibe-trading/<connector>.json` 与环境变量配置继续作为兼容回退；一旦某个连接拥有完整的钥匙串凭证，就不会与其他账户的旧配置混用。
+
+不要把券商 API Key 粘贴进 AI 对话。AI 负责选择连接器、安装声明的依赖和解释诊断；密钥只在本机终端隐藏输入或本地连接表单中填写。
+
 你自己安装的只读连接器留在仓库之外的 `~/.vibe-trading/connectors/<name>/`：一个 `connector.json` manifest，加一个实现 `check_status` / `get_account_snapshot` / `get_positions` 的 `adapter.py`。声明了任何写能力的 manifest 会被拒绝。
 
 ```bash

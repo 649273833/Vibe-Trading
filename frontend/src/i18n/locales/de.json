@@ -1552,6 +1552,11 @@
       "live": "Live",
       "paper": "Paper"
     },
+    "compatibility": {
+      "native": "Nativer Adapter",
+      "contractTested": "Vertragstest",
+      "experimental": "Experimentell"
+    },
     "editor": {
       "title": "Portfolio-Konten verwalten",
       "subtitle": "Hier werden nur die Kontoauswahl und Anzeigeeinstellungen gespeichert.",
@@ -1597,12 +1602,17 @@
       "codexBody": "Lassen Sie Codex connector init ausführen, den Leseadapter anhand der offiziellen Dokumentation implementieren, ihn validieren und dann installieren. Das Plugin bleibt außerhalb des Repositorys.",
       "readOnly": "Schreibgeschützt",
       "credentialSaved": "gespeichert",
+      "optional": "(optional)",
+      "authType": "Authentifizierung",
+      "dependency": "Lokale Abhängigkeit",
       "oauthNote": "Nutzt OAuth; bei Bedarf über das erneute Verbinden autorisieren.",
       "localNote": "Die Zugangsdaten verwaltet die vorhandene lokale Connector-Konfiguration.",
       "saveVault": "Im Speicher ablegen",
       "savedVault": "Zugangsdaten im Systemspeicher abgelegt.",
       "test": "Testen",
       "testOk": "{{label}} ist bereit.",
+      "testFailed": "Test für {{label}} fehlgeschlagen: {{error}}",
+      "unknownTestError": "Der Connector hat einen unbekannten Fehler zurückgegeben.",
       "delete": "Löschen",
       "configured": "Erforderliche Zugangsdaten konfiguriert"
     }

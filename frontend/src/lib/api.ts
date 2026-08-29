@@ -84,6 +84,13 @@ export interface PortfolioPosition {
   price_error?: string;
 }
 
+export interface PortfolioConnectorCompatibility {
+  level: "native" | "contract_tested" | "experimental";
+  contract_version: number;
+  asset_scope: string;
+  note: string;
+}
+
 /**
  * One portfolio source as of the last refresh.
  *
@@ -117,6 +124,7 @@ export interface PortfolioAccount {
     readonly: boolean;
     detail: string;
   };
+  portfolio_compatibility?: PortfolioConnectorCompatibility;
 }
 
 export interface PortfolioSnapshot {
@@ -200,6 +208,7 @@ export interface PortfolioSourceCatalogItem {
   credential_fields: CredentialField[];
   credential_status: Record<string, boolean>;
   credentials_configured: boolean;
+  portfolio_compatibility: PortfolioConnectorCompatibility;
 }
 
 export interface CredentialField {
@@ -207,6 +216,17 @@ export interface CredentialField {
   label: string;
   secret: boolean;
   required: boolean;
+}
+
+export interface ConnectorOnboarding {
+  schema_version: number;
+  auth_type: string;
+  credential_fields: CredentialField[];
+  dependency: string | null;
+  install_command: string | null;
+  test_operation: string;
+  setup_hint: string;
+  secret_storage: "os_keyring" | null;
 }
 
 export interface LocalConnection {
@@ -222,6 +242,8 @@ export interface LocalConnection {
   credential_fields: CredentialField[];
   credential_status: Record<string, boolean>;
   credentials_configured: boolean;
+  onboarding?: ConnectorOnboarding;
+  portfolio_compatibility: PortfolioConnectorCompatibility;
 }
 
 export interface ReadonlyConnectionProfile {
@@ -235,7 +257,9 @@ export interface ReadonlyConnectionProfile {
   notes: string;
   local_plugin: boolean;
   credential_fields: CredentialField[];
+  onboarding?: ConnectorOnboarding;
   supports_reconnect: boolean;
+  portfolio_compatibility: PortfolioConnectorCompatibility;
   invalid_plugin?: boolean;
   directory?: string;
   error?: string;
