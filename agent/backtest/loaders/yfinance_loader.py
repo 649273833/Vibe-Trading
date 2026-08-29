@@ -96,6 +96,23 @@ def _to_yfinance_exclusive_end(end_date: str) -> str:
     return (pd.Timestamp(end_date).normalize() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
 
+def _declared_currency(symbol: str) -> Optional[str]:
+    """Return Yahoo's declared currency for ``symbol``, or ``None`` when absent.
+
+    ``yf.Ticker(...).history_metadata`` carries the exchange's declared quote
+    currency. Absence (or any probe failure) MUST NOT be treated as GBp: a
+    missing currency means "do not scale", not "assume pence" — the suffix
+    heuristic alone would wrongly ÷100 every LSE line priced in GBP or USD
+    (e.g. VUSA.L=GBP, VUSD.L=USD).
+    """
+    try:
+        meta = yf.Ticker(symbol).history_metadata
+    except Exception:  # noqa: BLE001 — a metadata probe failure is not data
+        return None
+    currency = meta.get("currency") if isinstance(meta, dict) else None
+    return currency if isinstance(currency, str) and currency else None
+
+
 def _download_history(
     tickers: Union[List[str], str],
     start_date: str,
@@ -330,10 +347,16 @@ class DataLoader:
                     logger.warning("yfinance returned no usable data for %s", symbol)
                     continue
 
-                # Yahoo-family data: .L UK names quote in GBp (pence).
-                # Normalize ÷100 so code_currency's GBP matches the values.
+                # Yahoo-family data: LSE names may quote in GBp (pence) —
+                # normalize ÷100 so code_currency's GBP matches the values.
+                # Scale ONLY on Yahoo's declared currency (GBp/p). A GBP or
+                # USD-priced .L line (VUSA.L=GBP, VUSD.L=USD) must pass
+                # through unscaled; a missing currency means "do not scale"
+                # (fail closed — never assume pence from the suffix).
                 if is_gbp_pence_symbol(symbol):
-                    normalized, _ = scale_pence_to_currency(normalized, "GBp")
+                    declared = _declared_currency(symbol)
+                    if declared in ("GBp", "p"):
+                        normalized, _ = scale_pence_to_currency(normalized, "GBp")
 
                 loader_cache_put(
                     source=self.name,
