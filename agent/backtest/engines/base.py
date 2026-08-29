@@ -689,6 +689,25 @@ class BaseEngine(ABC):
         """Allow engines to update risk state/evidence after a committed delta fill."""
         return None
 
+    def _on_plan_rejected(self, symbol: str, reason: str, timestamp: pd.Timestamp) -> None:
+        """Observe a silently rejected opening-order plan.
+
+        ``_plan_open_order`` returns ``None`` for several distinct reasons —
+        nothing wanted, already held, missing data, missing bar, market rule
+        block, unusable price, or a target too small to fill after lot
+        rounding. Callers only see ``None``, so this hook is the only way for
+        an engine subclass to tell "nothing to do" apart from "wanted but
+        unfillable".
+
+        Args:
+            symbol: Instrument the plan was for.
+            reason: Machine-readable cause: ``no_target_weight``,
+                ``already_held``, ``no_data``, ``no_bar``,
+                ``execution_blocked``, ``invalid_price`` or ``zero_size``.
+            timestamp: Decision bar timestamp.
+        """
+        return None
+
     def execution_open(self, bar: pd.Series) -> float:
         """Return the normal market-fill price for a bar."""
         return float(bar.get("open", bar.get("close", 0)))
@@ -1323,15 +1342,21 @@ class BaseEngine(ABC):
         """Price an opening order without mutating portfolio state."""
         self._active_symbol = symbol
         direction = 1 if target_weight > 1e-9 else (-1 if target_weight < -1e-9 else 0)
-        if (
-            direction == 0
-            or (symbol in self.positions and not allow_existing)
-            or df is None
-            or ts not in df.index
-        ):
+        if direction == 0:
+            self._on_plan_rejected(symbol, "no_target_weight", ts)
+            return None
+        if symbol in self.positions and not allow_existing:
+            self._on_plan_rejected(symbol, "already_held", ts)
+            return None
+        if df is None:
+            self._on_plan_rejected(symbol, "no_data", ts)
+            return None
+        if ts not in df.index:
+            self._on_plan_rejected(symbol, "no_bar", ts)
             return None
         bar = df.loc[ts]
         if not self.can_execute(symbol, direction, bar):
+            self._on_plan_rejected(symbol, "execution_blocked", ts)
             return None
         open_price = self.execution_open(bar)
         if require_positive_price:
@@ -1340,6 +1365,7 @@ class BaseEngine(ABC):
         # negatives are rejected unless this engine opted into non-positive
         # prices, in which case abs()-based sizing/margin below handle them.
         elif open_price == 0 or (open_price < 0 and not self.allow_nonpositive_prices):
+            self._on_plan_rejected(symbol, "invalid_price", ts)
             return None
         price = self.apply_slippage(open_price, direction)
         if require_positive_price:
@@ -1350,6 +1376,7 @@ class BaseEngine(ABC):
             self._calc_raw_size(symbol, target_notional, price), price
         )
         if size <= 0:
+            self._on_plan_rejected(symbol, "zero_size", ts)
             return None
         margin = self._calc_margin(symbol, size, price, leverage)
         commission = self.calc_commission(
