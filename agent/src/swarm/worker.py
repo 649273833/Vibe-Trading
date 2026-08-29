@@ -811,8 +811,17 @@ def _run_worker_impl(
                     retry_delay_s,
                     stream_exc,
                 )
-                time.sleep(retry_delay_s)
-                response = _stream_once()
+                # Wait on the cancel event, not time.sleep: the delay now
+                # escalates to the configured cap (30s by default) and a
+                # provider Retry-After can ask for that much on the first
+                # failure. A blocking sleep would hold a cancelled worker
+                # for the whole delay before the check below sees the flag.
+                if cancel_event is not None:
+                    cancel_event.wait(retry_delay_s)
+                else:
+                    time.sleep(retry_delay_s)
+                if cancel_event is None or not cancel_event.is_set():
+                    response = _stream_once()
             else:
                 stream_failure_streak = 0
 

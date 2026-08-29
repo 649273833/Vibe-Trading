@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import types
 from pathlib import Path
+from time import perf_counter as _perf
 from typing import Any, Callable
 from unittest.mock import patch
 
@@ -372,6 +373,18 @@ def _run_loop(
         max_iterations=3,
         persistent_memory=pm,
     )
+    # The retry delay is served by ``self._cancel_event.wait(...)``, not
+    # ``time.sleep``: the escalated delay reaches 30s by default and Stop must
+    # be observed the moment it is set, not one full delay later. Record that
+    # wait so the assertions below still read as "we waited N seconds".
+    _real_wait = agent._cancel_event.wait
+
+    def _record_wait(timeout=None):  # noqa: ANN001 - test seam
+        if timeout is not None:
+            sleeps.append(timeout)
+        return _real_wait(0)
+
+    monkeypatch.setattr(agent._cancel_event, "wait", _record_wait)
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
     agent.memory.run_dir = str(run_dir)
@@ -459,3 +472,57 @@ def test_vt_stream_retry_max_below_base_raises(monkeypatch: pytest.MonkeyPatch) 
     """VT_STREAM_RETRY_MAX_DELAY_S < VT_STREAM_RETRY_DELAY_S is rejected."""
     with pytest.raises(ValidationError):
         AgentTuningConfig(vt_stream_retry_delay_s=5.0, vt_stream_retry_max_delay_s=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Cancellation during the (now much longer) retry delay
+# ---------------------------------------------------------------------------
+
+
+def test_loop_cancel_during_retry_delay_returns_without_waiting_it_out(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Stop pressed during the backoff must not be held for the whole delay.
+
+    The delay used to be a flat 1.0s constant; it now escalates to the
+    configured cap and a provider Retry-After can ask for the cap on the very
+    first failure. A blocking ``time.sleep`` would make Stop take that long to
+    be observed, and would still issue the retry stream afterwards.
+    """
+    llm = _FlakyLoopLLM([_transient_error()], "Final answer.")
+
+    from src.agent.loop import AgentLoop
+    from src.memory.persistent import PersistentMemory
+    from src.tools import build_registry
+
+    monkeypatch.setattr(loop_mod, "STREAM_RETRY_DELAY_S", 30.0)
+    monkeypatch.setattr(loop_mod, "STREAM_RETRY_MAX_DELAY_S", 30.0)
+    pm = PersistentMemory()
+    agent = AgentLoop(
+        registry=build_registry(persistent_memory=pm, include_shell_tools=False),
+        llm=llm,
+        max_iterations=3,
+        persistent_memory=pm,
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    agent.memory.run_dir = str(run_dir)
+
+    waited: list[float] = []
+    _real_wait = agent._cancel_event.wait
+
+    def _cancel_on_wait(timeout=None):  # noqa: ANN001 - test seam
+        if timeout is not None:
+            waited.append(timeout)
+        agent._cancel_event.set()  # the user presses Stop mid-backoff
+        return _real_wait(0)
+
+    monkeypatch.setattr(agent._cancel_event, "wait", _cancel_on_wait)
+
+    start = _perf()
+    agent.run(user_message="hello")
+    elapsed = _perf() - start
+
+    assert waited == [30.0]  # the escalated delay was asked for
+    assert elapsed < 5.0  # ...but never actually served
+    assert llm.calls == 1  # the doomed retry stream was never issued
