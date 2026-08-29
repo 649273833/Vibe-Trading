@@ -343,7 +343,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 
 ## 💼 Local Multi-Broker Portfolio
 
-The Web UI adds a read-only **Portfolio** page that aggregates holdings across the broker connections you pick. Sources are connection instances of read-only profiles declaring `account.read` and `positions.read` — set them up under **Broker Connectors** in [Detailed Capabilities](#-detailed-capabilities). The IBKR official-MCP profile is not eligible as a source yet.
+The Web UI adds a read-only **Portfolio** page that aggregates holdings across the broker connections you pick. Sources are connection instances of read-only profiles declaring `account.read` and `positions.read` — set them up under **Broker Connectors** in [Detailed Capabilities](#-detailed-capabilities). Eligibility is only the safety gate; the connection center also shows how far each connector has been verified for portfolio valuation.
 
 | Behavior | What you get |
 |----------|--------------|
@@ -353,6 +353,32 @@ The Web UI adds a read-only **Portfolio** page that aggregates holdings across t
 | **Export & analysis** | CSV export, plus a sanitized `portfolio_summary` agent tool whose `risk_xray_args` pass straight into `portfolio_risk_xray`. The same snapshot prints in the terminal with `vibe-trading portfolio show` (`refresh` / `sources` alongside). |
 
 Broker-reported source currencies are preserved during valuation: HKD account totals and positions, including Futu `HK.*` holdings, are converted with the snapshot USD/HKD rate before USD and CNY values are displayed. Older snapshots remain stored, but value history compares only snapshots produced by the current valuation methodology to avoid false gains or losses after a valuation fix.
+
+### Portfolio connector compatibility
+
+| Badge | Meaning |
+|-------|---------|
+| **Native adapter** | Dedicated portfolio normalization and valuation behavior exists for the connector. |
+| **Contract-tested** | Recorded connector-shaped fixtures pass the common account/position contract, but this is not a promise that every broker account variant has been live-tested. |
+| **Experimental** | The profile is structurally read-only and can be selected, but its currencies, account totals, or instrument semantics still need broker-specific verification. |
+
+Every position row must provide a symbol and quantity. Unsupported currencies fail the source explicitly instead of being silently treated as USD. The current valuation core supports USD, HKD and CNY; IBKR, Longbridge and Binance use native handling, while Alpaca and OKX have common-contract coverage. OKX account balance details are adapted into spot holdings alongside any open positions. A new built-in connector or local plugin defaults to **Experimental** until its portfolio contract fixtures are added.
+
+### AI-friendly connector onboarding
+
+Built-in SDK connectors publish one machine-readable onboarding contract: authentication type, required credential fields, optional dependency, install command, and the read-only operation used for verification. `trading_connections` exposes the same contract to MCP clients, while the Portfolio connection center renders it as a generic form. The contract contains field names only — never credential values.
+
+For a terminal-first setup, let the CLI collect secrets locally instead of putting them in a prompt or shell arguments:
+
+```bash
+vibe-trading connector setup okx-live-sdk-readonly \
+  --connection-id main-okx \
+  --label "Main OKX"
+```
+
+The CLI prompts in the local terminal, stores values under that connection id in the OS keyring, and runs the connector's read-only check. The equivalent Web flow is **Portfolio → Manage accounts → Open connection center → choose a template → save to keyring → test connection**. MCP read tools may use `connection_id`; the process resolves its credentials from the vault, so keys never travel through MCP. Existing `~/.vibe-trading/<connector>.json` and environment configurations remain a compatibility fallback until a connection has a complete vault credential set.
+
+Do not paste broker API keys into an AI chat. Let the AI choose the connector, install the declared dependency, and interpret diagnostics; enter secrets only in the local hidden terminal prompt or local connection form.
 
 Read-only connectors you install yourself stay outside the checkout, in `~/.vibe-trading/connectors/<name>/`: a `connector.json` manifest plus an `adapter.py` implementing `check_status` / `get_account_snapshot` / `get_positions`. A manifest declaring any write capability is rejected.
 

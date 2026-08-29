@@ -1550,6 +1550,11 @@
       "live": "ライブ",
       "paper": "ペーパー"
     },
+    "compatibility": {
+      "native": "専用アダプター",
+      "contractTested": "契約テスト済み",
+      "experimental": "実験的"
+    },
     "editor": {
       "title": "ポートフォリオの口座を管理",
       "subtitle": "ここに保存されるのは口座の選択と表示設定だけで、認証情報は保存されません。",
@@ -1595,12 +1600,17 @@
       "codexBody": "Codex に connector init を実行させ、公式ドキュメントから読み取り用アダプターを実装し、validate を通してから install します。プラグインはリポジトリの外に置かれます。",
       "readOnly": "読み取り専用",
       "credentialSaved": "保存済み",
+      "optional": "（任意）",
+      "authType": "認証方式",
+      "dependency": "ローカル依存関係",
       "oauthNote": "OAuth を使用します。必要に応じて再接続で認可してください。",
       "localNote": "認証情報は既存のローカルコネクタ設定が管理します。",
       "saveVault": "資格情報ストアに保存",
       "savedVault": "認証情報を OS の資格情報ストアに保存しました。",
       "test": "接続テスト",
       "testOk": "{{label}} は正常です。",
+      "testFailed": "{{label}} のテストに失敗しました: {{error}}",
+      "unknownTestError": "コネクターが不明なエラーを返しました。",
       "delete": "削除",
       "configured": "必要な認証情報は設定済みです"
     }
