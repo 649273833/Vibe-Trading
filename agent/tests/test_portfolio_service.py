@@ -195,6 +195,8 @@ def test_failed_source_is_excluded_from_totals_and_reports_its_last_success(tmp_
     assert partial["totals"]["cny"] == 0.0
     assert ibkr["status"] == "error"
     assert ibkr["error_code"] == "ConnectionError"
+    assert ibkr["failure_kind"] == "transient"
+    assert ibkr["reconnect_required"] is False
     assert ibkr["total_usd"] is None
     assert ibkr["total_cny"] is None
     assert ibkr["position_count"] == 0
@@ -304,6 +306,54 @@ def test_remote_mcp_sources_are_read_without_an_interactive_oauth_prompt(
         {"interactive_oauth": False},
         {"interactive_oauth": False},
     ]
+
+
+def test_remote_mcp_authorization_failure_is_the_only_reconnectable_failure(
+    tmp_path, monkeypatch
+):
+    settings = PortfolioSettingsStore(tmp_path / "portfolio.json")
+    settings.connection_store.ensure("remote", "alpaca-live-sdk-readonly", "Remote")
+    settings.save(
+        {
+            "display_currency": "USD",
+            "sources": [
+                {"connection_id": "remote", "label": "Remote", "order": 0}
+            ],
+        }
+    )
+    remote = TradingProfile(
+        id="alpaca-live-sdk-readonly",
+        connector="examplebroker",
+        label="Example remote MCP",
+        environment="live",
+        transport="remote_mcp",
+        capabilities=("account.read", "positions.read"),
+        readonly=True,
+    )
+    monkeypatch.setattr(portfolio_service, "profile_by_id", lambda _: remote)
+
+    service = PortfolioService(
+        PortfolioStore(tmp_path / "portfolio.sqlite3"),
+        settings_store=settings,
+        get_account=lambda *args, **kwargs: {
+            "status": "not_authorized",
+            "error": "OAuth authorization required",
+        },
+        get_positions=lambda *args, **kwargs: {"positions": []},
+        get_quote=lambda *args, **kwargs: {},
+        fx_fetcher=lambda: (
+            Decimal("7.2"),
+            Decimal("7.8"),
+            "2026-08-09T00:00:00+00:00",
+        ),
+    )
+
+    snapshot = service.refresh()
+    account = snapshot["accounts"][0]
+
+    assert account["status"] == "error"
+    assert account["failure_kind"] == "authorization"
+    assert account["reconnect_required"] is True
 
 
 def test_analysis_context_supplies_risk_xray_arguments(tmp_path):

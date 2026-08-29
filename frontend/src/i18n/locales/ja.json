@@ -1477,6 +1477,7 @@
       "errorLoad": "ポートフォリオを取得できません",
       "errorRefresh": "更新に失敗しました",
       "errorReconnect": "口座の再接続に失敗しました",
+      "errorReconnectTimeout": "ブラウザー認証がタイムアウトしました。再接続し、ブローカー認証を速やかに完了してください。",
       "errorSaveSettings": "ポートフォリオ設定を保存できません",
       "errorExport": "書き出しに失敗しました"
     },
@@ -1507,7 +1508,8 @@
       "failed": "読み取れませんでした — 合計に含まれていません",
       "lastSuccess": "最後に読み取れたのは {{time}}",
       "noSuccess": "まだ一度も読み取れていません",
-      "reconnect": "再接続"
+      "reconnect": "再接続",
+      "retryRead": "再読み込み"
     },
     "holdings": {
       "title": "保有明細",

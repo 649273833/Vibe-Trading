@@ -1477,6 +1477,7 @@
       "errorLoad": "Portfolio unavailable",
       "errorRefresh": "Refresh failed",
       "errorReconnect": "Account reconnect failed",
+      "errorReconnectTimeout": "Browser authorization timed out. Reconnect and complete the broker authorization promptly.",
       "errorSaveSettings": "Unable to save portfolio settings",
       "errorExport": "Export failed"
     },
@@ -1507,7 +1508,8 @@
       "failed": "Could not be read — not counted in the total",
       "lastSuccess": "Last successful read {{time}}",
       "noSuccess": "No successful read yet",
-      "reconnect": "Reconnect"
+      "reconnect": "Reconnect",
+      "retryRead": "Retry read"
     },
     "holdings": {
       "title": "Holdings",

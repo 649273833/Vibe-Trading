@@ -109,6 +109,8 @@ export interface PortfolioAccount {
   unpriced_position_count?: number;
   error_code?: string;
   error?: string;
+  failure_kind?: "authorization" | "transient";
+  reconnect_required?: boolean;
   auth?: {
     method: string;
     renewal: "automatic" | "session" | "provider_managed";
