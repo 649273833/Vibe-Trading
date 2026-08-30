@@ -426,6 +426,36 @@
     "generation": "Generierung",
     "dataSourceSettings": "Datenquellen-Einstellungen",
     "dataSourceSettingsDesc": "Konfigurieren Sie optionale Marktdaten-Anmeldeinformationen, die von Backtests und Research-Agenten verwendet werden.",
+    "sourcePriority": {
+      "title": "Datenquellen-Priorität",
+      "description": "Steuert die Reihenfolge, in der Datenquellen pro Markt durchprobiert werden, wenn der Agent Daten automatisch abruft. Explizit angegebene Quellen sind nicht betroffen.",
+      "marketLabel": "Markt",
+      "badgeDefault": "Standard",
+      "badgeCustom": "Angepasst",
+      "customMarkets": "Angepasst · {{count}}",
+      "moveUp": "Nach oben",
+      "moveDown": "Nach unten",
+      "resetToDefault": "Auf Standard zurücksetzen",
+      "invalidOverrideWarning": "Der gespeicherte Override für {{envVar}} ist ungültig (gleiche Quellen in neuer Reihenfolge erforderlich) — die Standardreihenfolge gilt.",
+      "noMarkets": "Keine Marktdatenquellen registriert.",
+      "howItWorksTitle": "So funktioniert es",
+      "howItWorks": "Bei automatisch erkannten Symbolen werden die Quellen von oben nach unten versucht; eine fehlgeschlagene Quelle fällt zur nächsten durch. Beim Speichern sofort wirksam — kein Neustart nötig.",
+      "caliberCaveat": "Hinweis: Die Quellen unterscheiden sich in der Adjustierungsbasis — z. B. liefert Yahoo unadjustierte OHLC-Kurse, während Tencent/Eastmoney/Tushare adjustierte Kurse liefern — das Umordnen der Kette kann daher Backtest-Zahlen verändern.",
+      "markets": {
+        "a_share": "China-Aktien (A)",
+        "us_equity": "US-Aktien",
+        "hk_equity": "Hongkong-Aktien",
+        "india_equity": "Indien-Aktien",
+        "kr_equity": "Korea-Aktien",
+        "ca_equity": "Kanada-Aktien",
+        "vietnam_equity": "Vietnam-Aktien",
+        "crypto": "Krypto",
+        "futures": "Futures",
+        "fund": "Fonds",
+        "macro": "Makro",
+        "forex": "Devisen"
+      }
+    },
     "tushareToken": "Tushare-Token",
     "clearTushareToken": "Gespeicherten Tushare-Token löschen",
     "saveDataSourceSettings": "Datenquellen-Einstellungen speichern",
@@ -1447,6 +1477,7 @@
       "errorLoad": "Portfolio nicht verfügbar",
       "errorRefresh": "Aktualisierung fehlgeschlagen",
       "errorReconnect": "Erneutes Verbinden des Kontos fehlgeschlagen",
+      "errorReconnectTimeout": "Die Browser-Autorisierung ist abgelaufen. Verbinden Sie sich erneut und schließen Sie die Broker-Autorisierung zeitnah ab.",
       "errorSaveSettings": "Portfolio-Einstellungen konnten nicht gespeichert werden",
       "errorExport": "Export fehlgeschlagen"
     },
@@ -1477,7 +1508,8 @@
       "failed": "Konnte nicht gelesen werden — nicht in der Summe enthalten",
       "lastSuccess": "Letzter erfolgreicher Abruf {{time}}",
       "noSuccess": "Noch kein erfolgreicher Abruf",
-      "reconnect": "Neu verbinden"
+      "reconnect": "Neu verbinden",
+      "retryRead": "Lesen wiederholen"
     },
     "holdings": {
       "title": "Positionen",
@@ -1519,6 +1551,11 @@
     "env": {
       "live": "Live",
       "paper": "Paper"
+    },
+    "compatibility": {
+      "native": "Nativer Adapter",
+      "contractTested": "Vertragstest",
+      "experimental": "Experimentell"
     },
     "editor": {
       "title": "Portfolio-Konten verwalten",
@@ -1565,12 +1602,17 @@
       "codexBody": "Lassen Sie Codex connector init ausführen, den Leseadapter anhand der offiziellen Dokumentation implementieren, ihn validieren und dann installieren. Das Plugin bleibt außerhalb des Repositorys.",
       "readOnly": "Schreibgeschützt",
       "credentialSaved": "gespeichert",
+      "optional": "(optional)",
+      "authType": "Authentifizierung",
+      "dependency": "Lokale Abhängigkeit",
       "oauthNote": "Nutzt OAuth; bei Bedarf über das erneute Verbinden autorisieren.",
       "localNote": "Die Zugangsdaten verwaltet die vorhandene lokale Connector-Konfiguration.",
       "saveVault": "Im Speicher ablegen",
       "savedVault": "Zugangsdaten im Systemspeicher abgelegt.",
       "test": "Testen",
       "testOk": "{{label}} ist bereit.",
+      "testFailed": "Test für {{label}} fehlgeschlagen: {{error}}",
+      "unknownTestError": "Der Connector hat einen unbekannten Fehler zurückgegeben.",
       "delete": "Löschen",
       "configured": "Erforderliche Zugangsdaten konfiguriert"
     }
