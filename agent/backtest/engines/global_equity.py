@@ -1,4 +1,4 @@
-"""Global equity (US / HK / Canada) backtest engine.
+"""Global equity (US / HK / Canada / UK) backtest engine.
 
 Market rules:
   US:
@@ -16,6 +16,11 @@ Market rules:
     - Whole shares; odd and mixed lots remain executable
     - Broker commission and slippage are config-driven
     - Official TSX/TSXV price-increment grid is applied to fills
+  UK (LSE, GBP/GBp-quoted lines only):
+    - Same-session round trips and long/short orders supported
+    - Whole shares
+    - Config-driven slippage
+    - SDRT charged on purchases
 
 India (NSE/BSE) is handled by the dedicated ``backtest.engines.india_equity``
 ``IndiaEquityEngine`` (T+1 delivery, circuit bands, STT/stamp/GST stack).
@@ -32,7 +37,7 @@ from backtest.engines.base import BaseEngine
 
 
 class GlobalEquityEngine(BaseEngine):
-    """US / HK / Canada equity engine, selected by *market* parameter.
+    """US / HK / Canada / UK equity engine selected by *market*.
 
     Config keys:
       - slippage_us: default 0.0005
@@ -75,20 +80,20 @@ class GlobalEquityEngine(BaseEngine):
         self.uk_stamp_tax: float = config.get("uk_stamp_tax", 0.005)
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
-        """US/HK/Canada: same-session trading, both directions allowed."""
+        """Allow same-session trading in both directions for every market."""
         return True
 
     def round_size(self, raw_size: float, price: float) -> float:
-        """US: fractional; HK: 100-share lots; Canada: whole shares.
+        """US: fractional; HK: 100-share lots; Canada/UK: whole shares.
 
         TSX and TSXV accept odd and mixed lots through dedicated facilities,
         so forcing every order to a board lot would reject valid retail trades.
-        The exchange still has no native fractional-share order, hence the
-        whole-share floor.
+        Canada and UK exchanges have no native fractional-share order, hence
+        the whole-share floor.
         """
         if self.market == "hk":
             return max(int(raw_size / 100) * 100, 0)
-        if self.market == "ca":
+        if self.market in {"ca", "uk"}:
             return float(math.floor(max(raw_size, 0.0)))
         return round(max(raw_size, 0.0), 2)
 
@@ -135,6 +140,8 @@ class GlobalEquityEngine(BaseEngine):
             rate = self.slippage_hk
         elif self.market == "ca":
             rate = self.slippage_ca
+        elif self.market == "uk":
+            rate = self.slippage_uk
         else:
             rate = self.slippage_us
         slipped = price * (1 + direction * rate)

@@ -5,12 +5,11 @@ Drives the real market-engine routing so a ``VOD.L`` backtest lands on
 bars. This is the path the routing tables feed: ``source=auto`` ->
 ``_MARKET_TO_SOURCE`` -> yahoo -> GlobalEquity, submarket ``uk``. Without the
 ``uk_equity`` entries the same call silently produced a CryptoEngine (the
-the regression this guards).
+regression this guards).
 
-All data is in-memory; no network access. LSE prices are quoted in GBp, so
-the synthetic series uses penny-scale prices and whole-share sizes (the
-generic GlobalEquity rounding path is what UK inherits, unlike HK board lots
-or Canada's tick grid), and buys carry the statutory 0.5% SDRT (rounded to
+All data is in-memory; no network access. The loader contract normalizes LSE
+GBp prices to GBP before the engine, so the synthetic series uses pound-scale
+prices and whole-share sizes. Buys carry the statutory 0.5% SDRT (rounded to
 the nearest penny, exact ½p up).
 """
 
@@ -19,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from backtest.engines.global_equity import GlobalEquityEngine
 from backtest.runner import _create_market_engine
@@ -27,10 +27,10 @@ CODE = "VOD.L"
 
 _BARS = pd.DataFrame(
     {
-        "open": [110.0 + 2 * i for i in range(9)],
-        "high": [112.0 + 2 * i for i in range(9)],
-        "low": [108.0 + 2 * i for i in range(9)],
-        "close": [111.0 + 2 * i for i in range(9)],
+        "open": [1.10 + 0.02 * i for i in range(9)],
+        "high": [1.12 + 0.02 * i for i in range(9)],
+        "low": [1.08 + 0.02 * i for i in range(9)],
+        "close": [1.11 + 0.02 * i for i in range(9)],
         "volume": [1_000_000] * 9,
     },
     index=pd.bdate_range("2026-03-02", periods=9),
@@ -83,15 +83,21 @@ def test_backtest_completes_on_lse_bars(tmp_path: Path) -> None:
 
 
 def test_uk_orders_are_whole_shares(tmp_path: Path) -> None:
-    """LSE has no fractional orders; the generic equity path rounds to cents.
-
-    Unlike HK (board lots) and Canada (tick grid), UK inherits the plain
-    GlobalEquity rounding — but must still execute on every bar.
-    """
+    """LSE has no native fractional-share orders."""
     engine = _run([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], tmp_path)
     fills = engine.fill_records
     assert fills
-    assert all(abs(f.signed_quantity) > 0 for f in fills)
+    assert all(abs(fill.signed_quantity) > 0 for fill in fills)
+    assert all(float(fill.signed_quantity).is_integer() for fill in fills)
+
+
+def test_uk_uses_uk_slippage_configuration() -> None:
+    engine = GlobalEquityEngine(
+        {"slippage_us": 0.001, "slippage_uk": 0.02}, market="uk"
+    )
+
+    assert engine.apply_slippage(100.0, 1) == pytest.approx(102.0)
+    assert engine.apply_slippage(100.0, -1) == pytest.approx(98.0)
 
 
 def test_uk_sdrt_charged_on_buys_only() -> None:
@@ -104,12 +110,12 @@ def test_uk_sdrt_charged_on_buys_only() -> None:
     engine = _create_market_engine("auto", {"initial_cash": 100_000}, [CODE])
     assert isinstance(engine, GlobalEquityEngine)
     assert engine.market == "uk"
-    assert engine.calc_commission(1000.0, 110.0, 1, is_open=True) == 550.0
-    assert engine.calc_commission(1000.0, 110.0, -1, is_open=True) == 0.0
+    assert engine.calc_commission(1000.0, 1.10, 1, is_open=True) == 5.5
+    assert engine.calc_commission(1000.0, 1.10, -1, is_open=True) == 0.0
     # Close path: the engine passes the POSITION side, so closing a long
     # (direction=1) is a sale and covering a short (direction=-1) is a buy.
-    assert engine.calc_commission(1000.0, 110.0, 1, is_open=False) == 0.0
-    assert engine.calc_commission(1000.0, 110.0, -1, is_open=False) == 550.0
+    assert engine.calc_commission(1000.0, 1.10, 1, is_open=False) == 0.0
+    assert engine.calc_commission(1000.0, 1.10, -1, is_open=False) == 5.5
     # Exact half-penny rounds UP per the HMRC manual (13.4547 -> 13.45,
     # 13.455 -> 13.46).
     assert engine.calc_commission(2690.94, 1.0, 1, is_open=True) == 13.45
