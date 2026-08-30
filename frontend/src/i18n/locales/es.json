@@ -1399,6 +1399,8 @@
   },
   "runDashboard": {
     "eyebrow": "Investigación cuantitativa · Backtest",
+    "noBacktestData": "Este run no tiene datos de backtest que graficar",
+    "noBacktestDataStudioHint": "Parece un análisis de cartera/riesgo — consulta sus números en la pestaña Studio.",
     "engine": "motor",
     "portfolio": "Cartera",
     "systematicStrategy": "Estrategia sistemática",

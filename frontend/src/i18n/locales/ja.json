@@ -1399,6 +1399,8 @@
   },
   "runDashboard": {
     "eyebrow": "定量リサーチ · バックテスト",
+    "noBacktestData": "このRunにはグラフ化できるバックテストデータがありません",
+    "noBacktestDataStudioHint": "ポートフォリオ/リスク分析のようです — 数値はStudioタブで確認してください。",
     "engine": "エンジン",
     "portfolio": "ポートフォリオ",
     "systematicStrategy": "システマティック戦略",
