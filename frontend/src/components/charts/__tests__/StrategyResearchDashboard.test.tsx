@@ -68,4 +68,23 @@ describe("StrategyResearchDashboard empty state", () => {
     expect(screen.queryByText("This run has no backtest data to chart")).not.toBeInTheDocument();
     expect(screen.getByText("Sharpe")).toBeInTheDocument();
   });
+
+  it("falls back to trade_log when the artifact trade array is empty", () => {
+    render(<StrategyResearchDashboard run={makeRun({
+      risk_xray: { concentration: { hhi: 0.018 } },
+      artifacts_trades_csv: [],
+      trade_log: [{
+        timestamp: "2026-01-02",
+        code: "AAPL",
+        side: "sell",
+        price: "101",
+        qty: "1",
+        pnl: "1",
+        reason: "exit signal",
+      }],
+    })} />);
+
+    expect(screen.queryByText("This run has no backtest data to chart")).not.toBeInTheDocument();
+    expect(screen.getByText("exit signal")).toBeInTheDocument();
+  });
 });

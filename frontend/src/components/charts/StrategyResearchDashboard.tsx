@@ -133,7 +133,9 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
       drawdown: String(row.drawdown ?? ""),
     }));
   }, [run.artifacts_equity_csv, run.equity_curve]);
-  const trades = run.artifacts_trades_csv || run.trade_log || [];
+  const trades = run.artifacts_trades_csv?.length
+    ? run.artifacts_trades_csv
+    : run.trade_log || [];
   const identity = useMemo(() => getStrategyReportIdentity(run), [run]);
 
   useEffect(() => {
