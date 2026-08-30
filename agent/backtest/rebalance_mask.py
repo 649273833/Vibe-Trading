@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from datetime import date
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
@@ -56,23 +56,39 @@ def resolve_rebalance_dates(
         raise ValueError("rebalance_mask does not intersect the aligned trading dates")
 
     if isinstance(validated, str):
+        offset = to_offset(validated)
+        bounds = dates.asi8.tolist()
+        if len(bounds) > 1:
+            minimum_spacing = min(
+                current - previous
+                for previous, current in zip(bounds, bounds[1:])
+                if current > previous
+            )
+            try:
+                offset_nanos = offset.nanos
+            except ValueError:
+                pass
+            else:
+                if offset_nanos < minimum_spacing:
+                    raise ValueError(
+                        "rebalance_mask offset alias must not be finer than "
+                        "the aligned bar spacing"
+                    )
         observed = pd.Series(dates, index=dates)
         selected = []
         for item in observed.resample(validated).first().dropna().tolist():
-            timestamp = pd.Timestamp(item)
-            assert isinstance(timestamp, pd.Timestamp)
+            timestamp = cast(pd.Timestamp, pd.Timestamp(item))
             selected.append(timestamp)
     else:
         selected = []
+        bounds = dates.asi8.tolist()
         for item in validated:
-            requested = pd.Timestamp(item)
-            assert isinstance(requested, pd.Timestamp)
+            requested = cast(pd.Timestamp, pd.Timestamp(item))
             if dates.tz is not None:
                 requested = requested.tz_localize(dates.tz)
-            index = bisect_left(dates.asi8.tolist(), requested.value)
+            index = bisect_left(bounds, requested.value)
             if index < len(dates):
-                timestamp = dates[index]
-                assert isinstance(timestamp, pd.Timestamp)
+                timestamp = cast(pd.Timestamp, dates[index])
                 selected.append(timestamp)
 
     execution_dates = frozenset(selected)

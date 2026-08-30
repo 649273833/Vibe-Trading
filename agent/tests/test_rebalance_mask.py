@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from backtest.engines.base import BaseEngine
+from backtest.runner import BacktestConfigSchema
 
 
 class _MaskEngine(BaseEngine):
@@ -88,6 +89,15 @@ def test_mask_true_zero_target_explicitly_exits_position() -> None:
     assert [fill.action for fill in engine.fill_records] == ["open", "close"]
 
 
+def test_off_mask_zero_target_keeps_position_open() -> None:
+    engine = _MaskEngine(rebalance_mask=["2026-01-02"])
+
+    _run_masked(engine, [0.5, 0.0, 0.0])
+
+    assert engine.bar_sizes == pytest.approx([5.0, 5.0, 5.0])
+    assert [fill.action for fill in engine.fill_records[:-1]] == ["open"]
+
+
 def test_missing_mask_preserves_every_bar_legacy_rebalance() -> None:
     engine = _MaskEngine()
 
@@ -134,3 +144,57 @@ def test_mask_without_trading_date_intersection_is_rejected() -> None:
 def test_invalid_mask_alias_is_rejected() -> None:
     with pytest.raises(ValueError, match="rebalance_mask"):
         _MaskEngine(rebalance_mask="monthly")
+
+
+def test_alias_finer_than_aligned_bar_spacing_is_rejected() -> None:
+    dates = pd.bdate_range("2026-01-02", periods=3)
+    engine = _MaskEngine(rebalance_mask="h")
+
+    with pytest.raises(ValueError, match="rebalance_mask.*finer"):
+        _run_masked(engine, [0.2, 0.8, 0.2], dates=dates)
+
+
+@pytest.mark.parametrize(
+    ("mask", "position_adjustment"),
+    [
+        ("MS", "rebalance"),
+        (["2026-01-02"], "rebalance"),
+        (None, "hold"),
+    ],
+)
+def test_schema_accepts_supported_mask_combinations(
+    mask: str | list[str] | None,
+    position_adjustment: str,
+) -> None:
+    config = BacktestConfigSchema.model_validate(
+        {
+            "codes": ["AAPL.US"],
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "source": "yfinance",
+            "position_adjustment": position_adjustment,
+            "rebalance_mask": mask,
+        }
+    )
+
+    assert config.rebalance_mask == mask
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"position_adjustment": "hold", "rebalance_mask": "MS"},
+        {"position_adjustment": "rebalance", "rebalance_mask": "monthly"},
+    ],
+)
+def test_schema_rejects_ambiguous_or_invalid_mask(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="rebalance_mask"):
+        BacktestConfigSchema.model_validate(
+            {
+                "codes": ["AAPL.US"],
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+                "source": "yfinance",
+                **overrides,
+            }
+        )

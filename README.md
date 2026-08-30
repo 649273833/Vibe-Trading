@@ -1126,9 +1126,12 @@ select execution bars in `config.json`:
 
 `MS` executes the aligned target on the first observed trading bar of each
 month. Weekly/quarterly pandas offset aliases (for example `W-FRI` and `QS`) and
-explicit ISO date lists are also accepted. Omit `rebalance_mask` to preserve
-the existing every-bar rebalance behavior. A mask is deliberately incompatible
-with `position_adjustment="hold"`.
+explicit ISO date lists are also accepted. An alias must not be finer than the
+aligned bar interval. Period aliases select the first observed bar in each
+period; `W-FRI` starts a Friday-anchored week and therefore normally executes
+on the following Monday, not on Friday itself. Omit `rebalance_mask` to
+preserve the existing every-bar rebalance behavior. A mask is deliberately
+incompatible with `position_adjustment="hold"`.
 
 **Bench a pre-built alpha zoo** (one line):
 ```bash
