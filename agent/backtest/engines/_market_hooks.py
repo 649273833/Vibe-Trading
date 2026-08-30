@@ -67,9 +67,11 @@ _MARKET_PATTERNS = [
 
 _CHINA_EXCHANGES = {"CFFEX", "SHFE", "DCE", "ZCE", "INE", "GFEX"}
 
-# Settlement currency per market. A composite backtest holds one shared capital
-# pool, so a code set spanning two of these would add CNY to USD to KRW as if
-# they were the same unit.
+# Supported settlement-currency contract per market. A composite backtest holds
+# one shared capital pool, so a code set spanning two of these would add CNY to
+# USD to KRW as if they were the same unit. The suffix alone cannot prove an
+# LSE line's currency; UK loaders admit only declared GBP/GBp and reject every
+# other/unknown quote before it reaches this table.
 _MARKET_CURRENCY = {
     "a_share": "CNY",
     "us_equity": "USD",
@@ -95,7 +97,7 @@ _FUTURES_EXCHANGE_CURRENCY = {"EUREX": "EUR"}
 
 
 def code_currency(code: str) -> str:
-    """Return the currency a symbol settles in.
+    """Return the supported settlement-currency contract for a symbol.
 
     Args:
         code: Ticker / symbol string.

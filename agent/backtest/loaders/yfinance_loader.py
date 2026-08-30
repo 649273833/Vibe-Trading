@@ -1,4 +1,4 @@
-"""yfinance-backed loader for HK/US equity OHLCV data."""
+"""yfinance-backed loader for global equity and crypto OHLCV data."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 import yfinance as yf
 
-logger = logging.getLogger(__name__)
-
 from backtest.loaders.base import (
-    is_gbp_pence_symbol,
+    is_lse_symbol,
     loader_cache_get,
     loader_cache_put,
-    scale_pence_to_currency,
+    normalize_lse_quote_currency,
     validate_date_range,
     validate_ohlc,
 )
 from backtest.loaders.registry import register
+
+logger = logging.getLogger(__name__)
 
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _COLUMN_RENAMES = {
@@ -100,10 +100,9 @@ def _declared_currency(symbol: str) -> Optional[str]:
     """Return Yahoo's declared currency for ``symbol``, or ``None`` when absent.
 
     ``yf.Ticker(...).history_metadata`` carries the exchange's declared quote
-    currency. Absence (or any probe failure) MUST NOT be treated as GBp: a
-    missing currency means "do not scale", not "assume pence" — the suffix
-    heuristic alone would wrongly ÷100 every LSE line priced in GBP or USD
-    (e.g. VUSA.L=GBP, VUSD.L=USD).
+    currency. Absence (or any probe failure) MUST NOT be treated as GBp. The
+    LSE loader contract rejects a missing or non-GBP currency rather than
+    allowing a USD line into static GBP accounting.
     """
     try:
         meta = yf.Ticker(symbol).history_metadata
@@ -347,16 +346,13 @@ class DataLoader:
                     logger.warning("yfinance returned no usable data for %s", symbol)
                     continue
 
-                # Yahoo-family data: LSE names may quote in GBp (pence) —
-                # normalize ÷100 so code_currency's GBP matches the values.
-                # Scale ONLY on Yahoo's declared currency (GBp/p). A GBP or
-                # USD-priced .L line (VUSA.L=GBP, VUSD.L=USD) must pass
-                # through unscaled; a missing currency means "do not scale"
-                # (fail closed — never assume pence from the suffix).
-                if is_gbp_pence_symbol(symbol):
+                # The engine currently has one static GBP pool for uk_equity.
+                # Normalize declared GBp/p to GBP, pass declared GBP unchanged,
+                # and reject USD/other/unknown .L lines before they can enter
+                # that pool. The suffix identifies LSE, never the currency.
+                if is_lse_symbol(symbol):
                     declared = _declared_currency(symbol)
-                    if declared in ("GBp", "p"):
-                        normalized, _ = scale_pence_to_currency(normalized, "GBp")
+                    normalized = normalize_lse_quote_currency(normalized, declared)
 
                 loader_cache_put(
                     source=self.name,

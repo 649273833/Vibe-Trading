@@ -133,8 +133,8 @@ def test_market_data_provenance_exposes_declared_volume_unit():
     assert payload["_provenance"]["0700.HK"]["volume_unit"] == "shares"
 
 
-def test_market_data_provenance_declares_gbp_conversion_for_uk():
-    """UK-serving loaders declare the GBp->GBP price normalization (#1206)."""
+def test_market_data_provenance_uses_per_symbol_currency_conversion():
+    """Conversion provenance follows the frame, not the ``.L`` suffix."""
     idx = pd.date_range("2026-01-01", periods=1, freq="D")
     idx.name = "trade_date"
     df = pd.DataFrame(
@@ -150,14 +150,27 @@ def test_market_data_provenance_declares_gbp_conversion_for_uk():
 
     class _UKAwareLoader:
         volume_units = {"uk_equity": "shares"}
-        price_units = {"uk_equity": "GBP"}
 
         def fetch(self, codes, start, end, interval="1D"):
-            return {code: df for code in codes}
+            result = {}
+            for code in codes:
+                frame = df.copy()
+                if code == "VOD.L":
+                    frame.attrs.update(
+                        quote_currency="GBP",
+                        currency_conversion="GBp→GBP (÷100)",
+                    )
+                elif code == "VUSA.L":
+                    frame.attrs.update(
+                        quote_currency="GBP",
+                        currency_conversion="none",
+                    )
+                result[code] = frame
+            return result
 
     payload = json.loads(
         fetch_market_data_json(
-            codes=["VOD.L", "AAPL.US"],
+            codes=["VOD.L", "VUSA.L", "AAPL.US"],
             start_date="2026-01-01",
             end_date="2026-01-02",
             source="yahoo",
@@ -167,8 +180,11 @@ def test_market_data_provenance_declares_gbp_conversion_for_uk():
     )
 
     assert payload["_provenance"]["VOD.L"]["currency_conversion"] == "GBp→GBP (÷100)"
+    assert payload["_provenance"]["VOD.L"]["quote_currency"] == "GBP"
     assert payload["_provenance"]["VOD.L"]["volume_unit"] == "shares"
-    # Non-UK symbols served by the same loader keep "none".
+    assert payload["_provenance"]["VUSA.L"]["currency_conversion"] == "none"
+    assert payload["_provenance"]["VUSA.L"]["quote_currency"] == "GBP"
+    # Non-LSE symbols without frame metadata keep the neutral default.
     assert payload["_provenance"]["AAPL.US"]["currency_conversion"] == "none"
 
 

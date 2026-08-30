@@ -35,7 +35,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from backtest.loaders._http import (
-    DEFAULT_USER_AGENT,
     resolve_min_interval,
     throttled_get,
     throttled_get_json,
@@ -218,8 +217,8 @@ def _parse_chart(payload: Any, yahoo_symbol: str) -> Tuple[List[Dict[str, Any]],
 
     Returns:
         ``(rows, currency)``: rows as in :func:`get_chart`, plus the quote
-        currency declared in the chart meta (``"GBp"`` when the venue quotes
-        UK names in pence — LSE always quotes, GBp when chart meta says so).
+        currency declared in the chart meta (for example ``"GBp"``, ``"GBP"``,
+        or ``"USD"`` for different LSE lines).
     """
     chart = (payload or {}).get("chart") or {}
     error = chart.get("error")

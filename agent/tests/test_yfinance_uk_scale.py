@@ -1,7 +1,8 @@
-"""yfinance loader scales GBp-quoted UK (.L) prices to GBP.
+"""yfinance loader enforces the GBP-only LSE quote contract.
 
-Yahoo-family data serves LSE UK names in pence (VOD.L ~117p); the loader
-must normalize ÷100 so ``code_currency``'s GBP matches the values (#1206).
+Yahoo-family data serves some LSE names in pence (VOD.L ~117p), some in
+pounds, and some in other currencies. The loader normalizes GBp to GBP and
+rejects anything that cannot safely enter ``code_currency``'s GBP pool.
 """
 from __future__ import annotations
 
@@ -43,6 +44,10 @@ def test_fetch_scales_lse_pence_to_gbp(monkeypatch: pytest.MonkeyPatch) -> None:
     assert frame["high"].iloc[1] == pytest.approx(1.19)
     assert frame["low"].iloc[0] == pytest.approx(1.16)
     assert frame["volume"].iloc[0] == 100
+    assert frame.attrs == {
+        "quote_currency": "GBP",
+        "currency_conversion": "GBp→GBP (÷100)",
+    }
 
 
 def test_fetch_scales_other_lse_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,10 +95,15 @@ def test_fetch_leaves_gbp_quoted_lse_unscaled(monkeypatch: pytest.MonkeyPatch) -
 
     frame = result["VUSA.L"]
     assert frame["close"].iloc[0] == pytest.approx(117.5)  # untouched
+    assert frame.attrs == {
+        "quote_currency": "GBP",
+        "currency_conversion": "none",
+    }
 
 
-def test_fetch_leaves_usd_quoted_lse_unscaled(monkeypatch: pytest.MonkeyPatch) -> None:
-    # VUSD.L is USD-priced .L: suffix alone would wrongly ÷100.
+def test_fetch_rejects_usd_quoted_lse_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # VUSD.L is USD-priced. Passing it unscaled would still label the values GBP
+    # in the composite and shadow-accounting layers.
     monkeypatch.delenv("VIBE_TRADING_DATA_CACHE", raising=False)
 
     def fake_download(tickers, start_date, end_date, interval):
@@ -105,13 +115,12 @@ def test_fetch_leaves_usd_quoted_lse_unscaled(monkeypatch: pytest.MonkeyPatch) -
 
     result = yfl.DataLoader().fetch(["VUSD.L"], "2025-01-01", "2025-01-03")
 
-    frame = result["VUSD.L"]
-    assert frame["close"].iloc[0] == pytest.approx(117.5)  # untouched
+    assert "VUSD.L" not in result
 
 
 def test_fetch_fails_closed_when_currency_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A missing declared currency means "do not scale", not "assume pence":
-    # the suffix heuristic must never be the fallback.
+    # Without metadata, 117.5 could mean GBP 117.50 or GBp 117.5. Returning it
+    # under either assumption is unsafe, so the symbol must be omitted.
     monkeypatch.delenv("VIBE_TRADING_DATA_CACHE", raising=False)
 
     def fake_download(tickers, start_date, end_date, interval):
@@ -123,8 +132,7 @@ def test_fetch_fails_closed_when_currency_absent(monkeypatch: pytest.MonkeyPatch
 
     result = yfl.DataLoader().fetch(["VOD.L"], "2025-01-01", "2025-01-03")
 
-    frame = result["VOD.L"]
-    assert frame["close"].iloc[0] == pytest.approx(117.5)  # NOT ÷100'd
+    assert "VOD.L" not in result
 
 
 def test_fetch_scales_only_on_gbp_pence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,24 +155,9 @@ def test_fetch_scales_only_on_gbp_pence(monkeypatch: pytest.MonkeyPatch) -> None
 def test_fetch_declared_currency_failure_is_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # CI/reviewer regression: _declared_currency hits the network. When it
-    # fails (offline, metadata 403), the suffix heuristic must NOT kick in —
-    # fail-closed = never assume pence; prices stay unscaled.
-    monkeypatch.delenv("VIBE_TRADING_DATA_CACHE", raising=False)
+    def raise_offline(_symbol: str):
+        raise RuntimeError("offline")
 
-    def fake_download(tickers, start_date, end_date, interval):
-        assert tickers == ["VOD.L"]
-        return _download_frame()
+    monkeypatch.setattr(yfl.yf, "Ticker", raise_offline)
 
-    monkeypatch.setattr(yfl, "_download_history", fake_download)
-
-    # Real offline behavior: _declared_currency swallows probe failures and
-    # returns None (fail-closed). Simulating the raise would turn it into a
-    # dropped symbol — the production function never raises.
-    monkeypatch.setattr(yfl, "_declared_currency", lambda symbol: None)
-
-    result = yfl.DataLoader().fetch(["VOD.L"], "2025-01-01", "2025-01-03")
-
-    frame = result["VOD.L"]
-    # Fail-closed: no scale. No exception may escape.
-    assert frame["close"].iloc[0] == pytest.approx(117.5)
+    assert yfl._declared_currency("VOD.L") is None

@@ -289,12 +289,10 @@ def fetch_market_data(
         results[symbol] = cap_rows(records, max_rows)
         if include_provenance:
             volume_units = getattr(provider_cls, "volume_units", None) or {}
-            price_units = getattr(provider_cls, "price_units", None) or {}
-            if price_units.get(market):
-                # Loader normalizes GBp-quoted UK prices to GBP at fetch
-                # (#1206); declare the applied conversion explicitly.
-                currency_conversion = f"GBp→{price_units[market]} (÷100)"
-            else:
+            frame_attrs = getattr(df, "attrs", None)
+            frame_attrs = frame_attrs if isinstance(frame_attrs, dict) else {}
+            currency_conversion = frame_attrs.get("currency_conversion")
+            if not isinstance(currency_conversion, str) or not currency_conversion:
                 currency_conversion = "none"
             entry: dict[str, Any] = {
                 "source": used_source or src,
@@ -304,6 +302,9 @@ def fetch_market_data(
                 "currency_conversion": currency_conversion,
                 "volume_unit": volume_units.get(market),
             }
+            quote_currency = frame_attrs.get("quote_currency")
+            if isinstance(quote_currency, str) and quote_currency:
+                entry["quote_currency"] = quote_currency
             if extra_provenance:
                 entry.update(extra_provenance)
             provenance[symbol] = entry

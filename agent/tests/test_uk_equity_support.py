@@ -4,15 +4,22 @@ Regression suite for issue #1205: UK symbols used to fall through the
 source/market detection tables to the tushare default and the China
 fallback chain, surfacing as ``_unresolved`` after several seconds of
 network attempts. They must now route as a first-class market with the
-same parity as Canada/US: yahoo source, ``uk_equity`` market, GBP
-settlement, and GlobalEquityEngine with ``market="uk"``.
+same parity as Canada/US: yahoo source, ``uk_equity`` market, a GBP-only
+loader/accounting contract, and GlobalEquityEngine with ``market="uk"``.
 """
 
 from __future__ import annotations
 
+import pandas as pd
+import pytest
+
 from backtest.engines.global_equity import GlobalEquityEngine
 from backtest.engines._market_hooks import _detect_market, _detect_submarket, code_currency
-from backtest.loaders.base import is_gbp_pence_symbol, scale_pence_to_currency
+from backtest.loaders.base import (
+    is_lse_symbol,
+    normalize_lse_quote_currency,
+    scale_pence_to_currency,
+)
 from backtest.loaders.registry import FALLBACK_CHAINS
 from backtest.runner import _create_market_engine, _MARKET_TO_SOURCE
 from src.market_data import detect_source
@@ -23,7 +30,7 @@ class TestUKSourceDetection:
         assert detect_source("VOD.L") == "yahoo"
         assert detect_source("SHEL.L") == "yahoo"
 
-    def test_ise_routes_to_yahoo(self) -> None:
+    def test_other_lse_name_routes_to_yahoo(self) -> None:
         assert detect_source("BARC.L") == "yahoo"
 
     def test_lowercase_suffix_routes_to_yahoo(self) -> None:
@@ -35,7 +42,7 @@ class TestUKMarketClassification:
         assert _detect_market("VOD.L") == "uk_equity"
         assert _detect_market("HSBA.L") == "uk_equity"
 
-    def test_ise_classifies_as_uk_equity(self) -> None:
+    def test_other_lse_name_classifies_as_uk_equity(self) -> None:
         assert _detect_market("BARC.L") == "uk_equity"
 
     def test_lowercase_classifies_as_uk_equity(self) -> None:
@@ -51,12 +58,14 @@ class TestUKMarketClassification:
         assert _detect_submarket(["700.HK"]) == "hk"
 
 
-class TestUKSettlementCurrency:
+class TestUKSettlementContract:
     def test_lse_settles_in_gbp(self) -> None:
+        # This is the supported post-loader contract. Source metadata gates out
+        # USD/other/unknown .L lines before the engine sees them.
         assert code_currency("VOD.L") == "GBP"
         assert code_currency("SHEL.L") == "GBP"
 
-    def test_ise_settles_in_gbp(self) -> None:
+    def test_other_lse_name_uses_gbp_contract(self) -> None:
         assert code_currency("BARC.L") == "GBP"
 
     def test_uk_market_cost_is_separate_from_cad(self) -> None:
@@ -94,7 +103,7 @@ class TestUKBacktestRouting:
         assert isinstance(engine, GlobalEquityEngine)
         assert engine.market == "uk"
 
-    def test_ise_engine_is_global_equity(self) -> None:
+    def test_other_lse_name_engine_is_global_equity(self) -> None:
         engine = _create_market_engine("auto", {"initial_cash": 100_000}, ["BARC.L"])
         assert isinstance(engine, GlobalEquityEngine)
         assert engine.market == "uk"
@@ -103,9 +112,7 @@ class TestUKBacktestRouting:
 class TestGbpPenceNormalization:
     """GBp-quoted UK prices must normalize to GBP (÷100) at the loader."""
 
-    def test_scale_scales_pence_when_currency_is_gbp(self) -> None:
-        import pandas as pd
-
+    def test_scale_scales_pence_when_currency_is_gbp_pence(self) -> None:
         frame = pd.DataFrame(
             {
                 "open": [117.0],
@@ -122,8 +129,6 @@ class TestGbpPenceNormalization:
         assert scaled["volume"].iloc[0] == 1000
 
     def test_scale_leaves_other_currencies_untouched(self) -> None:
-        import pandas as pd
-
         frame = pd.DataFrame(
             {"open": [10.0], "high": [11.0], "low": [9.0], "close": [10.5], "volume": [1]}
         )
@@ -133,17 +138,26 @@ class TestGbpPenceNormalization:
             assert scaled["close"].iloc[0] == 10.5
 
     def test_scale_empty_frame_is_noop(self) -> None:
-        import pandas as pd
-
         empty = pd.DataFrame()
         scaled, applied = scale_pence_to_currency(empty, "GBp")
         assert applied == "none"
         assert scaled.empty
 
-    def test_pence_symbol_detection(self) -> None:
-        assert is_gbp_pence_symbol("VOD.L")
-        assert is_gbp_pence_symbol("BARC.L")
-        assert is_gbp_pence_symbol("vod.l")
-        assert not is_gbp_pence_symbol("AAPL.US")
-        assert not is_gbp_pence_symbol("0700.HK")
-        assert not is_gbp_pence_symbol("GC=F")
+    def test_lse_symbol_detection_does_not_claim_currency(self) -> None:
+        assert is_lse_symbol("VOD.L")
+        assert is_lse_symbol("BARC.L")
+        assert is_lse_symbol("vod.l")
+        assert not is_lse_symbol("AAPL.US")
+        assert not is_lse_symbol("0700.HK")
+        assert not is_lse_symbol("GC=F")
+
+    @pytest.mark.parametrize("currency", ["USD", "EUR", "", None])
+    def test_lse_contract_rejects_non_gbp_or_missing_currency(
+        self, currency: str | None
+    ) -> None:
+        frame = pd.DataFrame(
+            {"open": [1.0], "high": [1.1], "low": [0.9], "close": [1.05]}
+        )
+
+        with pytest.raises(ValueError, match="must be declared as GBP or GBp"):
+            normalize_lse_quote_currency(frame, currency)

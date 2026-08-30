@@ -276,7 +276,7 @@ class TestFetch:
         # LSE prices arrive in pence ("GBp") from Yahoo's chart meta; the
         # loader must normalize ÷100 so 117p becomes £1.17.
         rows = [
-            _row("2024-01-02", 11700, 11800, 11600, 11750, 1000),
+            _row("2024-01-02", 117, 118, 116, 117.5, 1000),
         ]
         with patch(
             "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
@@ -285,13 +285,52 @@ class TestFetch:
             out = DataLoader().fetch(["VOD.L"], "2024-01-01", "2024-01-31")
         assert "VOD.L" in out
         frame = out["VOD.L"]
-        assert frame["open"].iloc[0] == 117.0
-        assert frame["high"].iloc[0] == 118.0
-        assert frame["low"].iloc[0] == 116.0
-        assert frame["close"].iloc[0] == 117.5
+        assert frame["open"].iloc[0] == 1.17
+        assert frame["high"].iloc[0] == 1.18
+        assert frame["low"].iloc[0] == 1.16
+        assert frame["close"].iloc[0] == 1.175
         # Volume is untouched.
         assert frame["volume"].iloc[0] == 1000
+        assert frame.attrs == {
+            "quote_currency": "GBP",
+            "currency_conversion": "GBp→GBP (÷100)",
+        }
         assert mock_chart.call_args.args[0] == "VOD.L"
+
+    def test_gbp_quoted_lse_line_passes_unscaled(self):
+        rows = [_row("2024-01-02", 107.0, 108.0, 106.0, 107.8, 1000)]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, "GBP"),
+        ):
+            out = DataLoader().fetch(["VUSA.L"], "2024-01-01", "2024-01-31")
+
+        frame = out["VUSA.L"]
+        assert frame["close"].iloc[0] == 107.8
+        assert frame.attrs == {
+            "quote_currency": "GBP",
+            "currency_conversion": "none",
+        }
+
+    def test_usd_quoted_lse_line_is_omitted(self):
+        rows = [_row("2024-01-02", 146.0, 147.0, 145.0, 146.4, 1000)]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, "USD"),
+        ):
+            out = DataLoader().fetch(["VUSD.L"], "2024-01-01", "2024-01-31")
+
+        assert out == {}
+
+    def test_lse_line_with_missing_currency_is_omitted(self):
+        rows = [_row("2024-01-02", 117.0, 118.0, 116.0, 117.5, 1000)]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, ""),
+        ):
+            out = DataLoader().fetch(["VOD.L"], "2024-01-01", "2024-01-31")
+
+        assert out == {}
 
     def test_non_gbp_currency_meta_left_untouched(self):
         rows = [
