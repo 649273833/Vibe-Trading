@@ -168,6 +168,7 @@ export function RunDetail() {
     cancelBulkChartLoadRef.current = true;
     setRun(null);
     setCode({});
+    setPromptExpanded(false);
     setTab(requestedInitialTab);
     setLoading(true);
     setSelectedSymbol("");
@@ -375,6 +376,7 @@ export function RunDetail() {
             </p>
             <button
               type="button"
+              aria-expanded={promptExpanded}
               onClick={() => setPromptExpanded((v) => !v)}
               className="mt-1 text-xs text-primary hover:underline"
             >
