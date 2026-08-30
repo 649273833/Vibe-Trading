@@ -44,11 +44,12 @@ from src.live.audit import LiveActionEvent, write_live_action
 from src.live.halt import halt_flag_set, trip_halt
 from src.live.mandate.model import Mandate
 from src.live.mandate.store import load_mandate
+from src.live.runtime import triggers as trigger_runtime
 from src.live.runtime.flatten import flatten_and_cancel
 from src.live.runtime.jobstore import JobStore
 from src.live.runtime.liveness import write_heartbeat
 from src.live.runtime.scheduler import Job, Scheduler
-from src.live.runtime.triggers import Trigger, due_now
+from src.live.runtime.triggers import Trigger
 
 logger = logging.getLogger(__name__)
 
@@ -782,7 +783,7 @@ class LiveRunner:
         ]
         if not market_triggers:
             return True
-        return any(due_now(trigger, now_ms) for trigger in market_triggers)
+        return any(trigger_runtime.due_now(trigger, now_ms) for trigger in market_triggers)
 
     def _jobs_from_triggers(self, now: datetime) -> list[Job]:
         """Convert the injected triggers (R3) into schedulable watch jobs (R1).
