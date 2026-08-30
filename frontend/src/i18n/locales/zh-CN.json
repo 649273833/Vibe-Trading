@@ -609,6 +609,8 @@
     "runNotFound": "运行记录未找到",
     "runNotFoundDesc": "运行目录可能已被删除，或者浏览器未配置 API 访问。如果远程访问，请检查设置中的 API 认证密钥是否已设置。",
     "goBack": "返回",
+    "showFullPrompt": "显示完整提示词",
+    "showLessPrompt": "收起",
     "chart": "图表",
     "trades": "交易",
     "factor": "因子研究",

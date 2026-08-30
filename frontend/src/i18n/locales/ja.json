@@ -609,6 +609,8 @@
     "runNotFound": "実行が見つかりません",
     "runNotFoundDesc": "実行ディレクトリが削除されたか、ブラウザに API アクセスが設定されていない可能性があります。リモートでアクセスする場合は、設定で API 認証キーが設定されているか確認してください。",
     "goBack": "戻る",
+    "showFullPrompt": "プロンプト全文を表示",
+    "showLessPrompt": "折りたたむ",
     "chart": "チャート",
     "trades": "トレード",
     "factor": "ファクター分析",
