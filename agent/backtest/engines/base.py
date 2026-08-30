@@ -965,15 +965,27 @@ class BaseEngine(ABC):
         # positions. Optimizer-agnostic, so they land for the baseline too.
         from backtest.rebalance_notes import (
             compute_rebalance_notes,
+            compute_rebalance_execution_evidence,
             render_rebalance_notes_markdown,
             write_rebalance_notes,
         )
         rebalance_notes = compute_rebalance_notes(target_pos)
+        # The requested count above cannot be read as executions (#1275): under
+        # position_adjustment="rebalance" a constant target re-pins the book on
+        # many bars, so report what the immutable fills actually did alongside
+        # what the strategy asked for.
+        rebalance_notes["summary"].update(
+            compute_rebalance_execution_evidence(self.fill_records, equity_series)
+        )
         write_rebalance_notes(run_dir / "artifacts" / "rebalance_notes.json", rebalance_notes)
         (run_dir / "artifacts" / "rebalance_notes.md").write_text(
             render_rebalance_notes_markdown(rebalance_notes), encoding="utf-8"
         )
-        m["rebalance_count"] = rebalance_notes["summary"]["rebalance_count"]
+        m["target_change_count"] = rebalance_notes["summary"]["target_change_count"]
+        m["rebalance_executed_bars"] = rebalance_notes["summary"]["rebalance_executed_bars"]
+        m["rebalance_executed_fills"] = rebalance_notes["summary"]["rebalance_executed_fills"]
+        m["rebalance_realized_turnover"] = rebalance_notes["summary"]["rebalance_realized_turnover"]
+        # Requested (target-delta) turnover, kept from the notes summary.
         m["rebalance_turnover_mean"] = rebalance_notes["summary"]["turnover_mean"]
         m["rebalance_turnover_max"] = rebalance_notes["summary"]["turnover_max"]
 
@@ -997,7 +1009,7 @@ class BaseEngine(ABC):
         if self.dropped_target_adjustments:
             logger.warning(
                 "position_adjustment='hold' dropped %d target change(s) across %d "
-                "symbol(s); the report's rebalance_count describes requests, not "
+                "symbol(s); the report's target_change_count describes requests, not "
                 "fills. Set position_adjustment='rebalance' to execute them.",
                 len(self.dropped_target_adjustments),
                 len({event["symbol"] for event in self.dropped_target_adjustments}),
