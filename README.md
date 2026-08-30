@@ -1114,6 +1114,22 @@ vibe-trading run -p "Backtest a momentum + value + quality multi-factor strategy
 vibe-trading --pine <run_id>
 ```
 
+For calendar-triggered partial rebalancing, keep the strategy signal dense and
+select execution bars in `config.json`:
+
+```json
+{
+  "position_adjustment": "rebalance",
+  "rebalance_mask": "MS"
+}
+```
+
+`MS` executes the aligned target on the first observed trading bar of each
+month. Weekly/quarterly pandas offset aliases (for example `W-FRI` and `QS`) and
+explicit ISO date lists are also accepted. Omit `rebalance_mask` to preserve
+the existing every-bar rebalance behavior. A mask is deliberately incompatible
+with `position_adjustment="hold"`.
+
 **Bench a pre-built alpha zoo** (one line):
 ```bash
 vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025 --top 20
