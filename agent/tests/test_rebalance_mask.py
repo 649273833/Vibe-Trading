@@ -146,9 +146,10 @@ def test_invalid_mask_alias_is_rejected() -> None:
         _MaskEngine(rebalance_mask="monthly")
 
 
-def test_alias_finer_than_aligned_bar_spacing_is_rejected() -> None:
+@pytest.mark.parametrize("alias", ["h", "bh"])
+def test_alias_finer_than_aligned_bar_spacing_is_rejected(alias: str) -> None:
     dates = pd.bdate_range("2026-01-02", periods=3)
-    engine = _MaskEngine(rebalance_mask="h")
+    engine = _MaskEngine(rebalance_mask=alias)
 
     with pytest.raises(ValueError, match="rebalance_mask.*finer"):
         _run_masked(engine, [0.2, 0.8, 0.2], dates=dates)

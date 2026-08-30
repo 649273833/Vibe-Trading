@@ -57,23 +57,25 @@ def resolve_rebalance_dates(
 
     if isinstance(validated, str):
         offset = to_offset(validated)
-        bounds = dates.asi8.tolist()
-        if len(bounds) > 1:
-            minimum_spacing = min(
-                current - previous
-                for previous, current in zip(bounds, bounds[1:])
-                if current > previous
-            )
+        bounds: list[int] = dates.asi8.tolist()
+        spacings = [
+            current - previous
+            for previous, current in zip(bounds, bounds[1:])
+            if current > previous
+        ]
+        if spacings:
+            minimum_spacing = min(spacings)
             try:
                 offset_nanos = offset.nanos
             except ValueError:
-                pass
-            else:
-                if offset_nanos < minimum_spacing:
-                    raise ValueError(
-                        "rebalance_mask offset alias must not be finer than "
-                        "the aligned bar spacing"
-                    )
+                first_bar = cast(pd.Timestamp, dates[0])
+                next_boundary = cast(pd.Timestamp, first_bar + offset)
+                offset_nanos = next_boundary.value - first_bar.value
+            if 0 < offset_nanos < minimum_spacing:
+                raise ValueError(
+                    "rebalance_mask offset alias must not be finer than "
+                    "the aligned bar spacing"
+                )
         observed = pd.Series(dates, index=dates)
         selected = []
         for item in observed.resample(validated).first().dropna().tolist():
@@ -81,7 +83,7 @@ def resolve_rebalance_dates(
             selected.append(timestamp)
     else:
         selected = []
-        bounds = dates.asi8.tolist()
+        bounds: list[int] = dates.asi8.tolist()
         for item in validated:
             requested = cast(pd.Timestamp, pd.Timestamp(item))
             if dates.tz is not None:

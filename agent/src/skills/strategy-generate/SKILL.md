@@ -129,7 +129,7 @@ Self-check after writing `signal_engine.py`:
   "optimizer_params": {},
   "engine": "daily",
   "position_adjustment": "rebalance",
-  "rebalance_mask": "MS",
+  "rebalance_mask": null,
   "rebalance_tolerance": 0.05,
   "validation": null
 }
