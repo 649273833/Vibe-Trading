@@ -31,6 +31,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.agent.resolution_context import (
+    IdentityConstraint,
+    ResolutionContext,
+    candidate_market,
+)
+
 
 GROUNDING_ARTIFACT = "grounding_evidence.json"
 
@@ -863,6 +869,7 @@ class IdentityRecord:
     source_tool_call_id: str | None = None
     source: list[str] = field(default_factory=list)
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    resolution_constraints: list[dict[str, Any]] = field(default_factory=list)
     version: int = 1
     updated_at: str = field(default_factory=_utc_now)
 
@@ -932,6 +939,7 @@ class GroundingLedger:
         run_dir: Path,
         user_message: str,
         history: Sequence[Mapping[str, Any]] | None = None,
+        contextual_identity_constraints: bool = True,
     ) -> None:
         """Create a ledger and seed only authoritative prior identities.
 
@@ -939,12 +947,19 @@ class GroundingLedger:
             run_dir: Active run directory.
             user_message: Current user request.
             history: Optional prior message history. It remains available to
-                the model, but is deliberately not an authorization source for
-                this run: stale identities from an earlier user subject must
-                not unlock a new subject's tools.
+                the model. Only explicit constraints whose clause names the
+                current resolver subject may carry forward; stale global
+                instructions cannot authorize a new subject.
+            contextual_identity_constraints: Whether explicit market words in
+                the original conversation may narrow resolver candidates.
         """
         self.run_dir = Path(run_dir)
         self.user_message = user_message
+        self.resolution_context = ResolutionContext.from_messages(
+            user_message,
+            history,
+            enabled=contextual_identity_constraints,
+        )
         self._identities: dict[str, IdentityRecord] = {}
         self._evidence: list[EvidenceRecord] = []
         self._tool_failures: list[dict[str, Any]] = []
@@ -1574,6 +1589,9 @@ class GroundingLedger:
 
         raw_candidates = data.get("candidates")
         candidates = [dict(item) for item in raw_candidates if isinstance(item, dict)] if isinstance(raw_candidates, list) else []
+        resolver_candidates = candidates
+        relevant_constraints = self.resolution_context.constraints_for(query)
+        constraint_audit = [item.audit_record() for item in relevant_constraints]
         sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
         if not candidates:
             # "This entity does not exist" may only be concluded when every
@@ -1599,9 +1617,37 @@ class GroundingLedger:
                 source_tool_call_id=call_id,
                 source=clean_sources,
                 candidates=[],
+                resolution_constraints=constraint_audit,
                 version=version,
             )
             return
+
+        market_values = {
+            item.value
+            for item in relevant_constraints
+            if item.dimension == "market" and item.explicit
+        }
+        if market_values:
+            constrained = [
+                candidate
+                for candidate in candidates
+                if candidate_market(candidate) in market_values
+            ]
+            if constrained:
+                candidates = constrained
+            else:
+                # A mismatch with an explicit constraint must stay fail closed.
+                # The candidate list may be truncated, so this is ambiguity,
+                # not proof that the requested listing does not exist.
+                self._identities[key] = IdentityRecord(
+                    query=query,
+                    status="ambiguous",
+                    source_tool_call_id=call_id,
+                    candidates=resolver_candidates,
+                    resolution_constraints=constraint_audit,
+                    version=version,
+                )
+                return
 
         chosen = self._choose_candidate(query, candidates)
         if chosen is None:
@@ -1609,7 +1655,8 @@ class GroundingLedger:
                 query=query,
                 status="ambiguous",
                 source_tool_call_id=call_id,
-                candidates=candidates,
+                candidates=resolver_candidates,
+                resolution_constraints=constraint_audit,
                 version=version,
             )
             return
@@ -1620,7 +1667,8 @@ class GroundingLedger:
                 query=query,
                 status="invalidated",
                 source_tool_call_id=call_id,
-                candidates=candidates,
+                candidates=resolver_candidates,
+                resolution_constraints=constraint_audit,
                 version=version,
             )
             return
@@ -1640,6 +1688,7 @@ class GroundingLedger:
                 status="conflicting",
                 source_tool_call_id=call_id,
                 candidates=conflicting,
+                resolution_constraints=constraint_audit,
                 version=version,
             )
             return
@@ -1652,6 +1701,7 @@ class GroundingLedger:
                 status="conflicting",
                 source_tool_call_id=call_id,
                 candidates=conflicting,
+                resolution_constraints=constraint_audit,
                 version=version,
             )
             return
@@ -1671,7 +1721,8 @@ class GroundingLedger:
             currency=_infer_currency(symbol),
             source_tool_call_id=call_id,
             source=source_names,
-            candidates=candidates,
+            candidates=resolver_candidates,
+            resolution_constraints=constraint_audit,
             version=version,
         )
         self._supersede_shortlists(symbol)
@@ -2643,7 +2694,9 @@ class GroundingLedger:
 __all__ = [
     "GROUNDING_ARTIFACT",
     "GroundingLedger",
+    "IdentityConstraint",
     "IdentityRecord",
+    "ResolutionContext",
     "ToolAuthorization",
     "ValidationResult",
 ]

@@ -25,7 +25,7 @@ import threading
 import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
@@ -1066,6 +1066,9 @@ class AgentLoop:
             run_dir=run_dir,
             user_message=user_message,
             history=history,
+            contextual_identity_constraints=(
+                get_env_config().agent_tuning.vibe_contextual_identity_constraints
+            ),
         )
 
         context = ContextBuilder(self.registry, self.memory,
