@@ -1401,6 +1401,8 @@
   },
   "runDashboard": {
     "eyebrow": "Quantitative research · Backtest",
+    "noBacktestData": "This run has no backtest data to chart",
+    "noBacktestDataStudioHint": "It looks like a portfolio/risk analysis instead — check the Studio tab for its numbers.",
     "engine": "engine",
     "portfolio": "Portfolio",
     "systematicStrategy": "Systematic strategy",

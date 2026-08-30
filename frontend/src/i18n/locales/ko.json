@@ -1401,6 +1401,8 @@
   },
   "runDashboard": {
     "eyebrow": "계량 리서치 · 백테스트",
+    "noBacktestData": "이 실행에는 표시할 백테스트 데이터가 없습니다",
+    "noBacktestDataStudioHint": "포트폴리오/리스크 분석으로 보입니다 — 수치는 Studio 탭에서 확인하세요.",
     "engine": "엔진",
     "portfolio": "포트폴리오",
     "systematicStrategy": "시스테매틱 전략",

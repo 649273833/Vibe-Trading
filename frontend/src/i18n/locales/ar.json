@@ -1401,6 +1401,8 @@
   },
   "runDashboard": {
     "eyebrow": "بحث كمّي · اختبار رجعي",
+    "noBacktestData": "لا توجد بيانات اختبار رجعي لعرضها في هذا التشغيل",
+    "noBacktestDataStudioHint": "يبدو أنه تحليل محفظة/مخاطر بدلاً من ذلك — راجع أرقامه في تبويب Studio.",
     "engine": "محرك",
     "portfolio": "محفظة",
     "systematicStrategy": "استراتيجية منهجية",
