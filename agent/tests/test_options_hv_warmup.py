@@ -9,10 +9,13 @@ volatility. (#1293, part 2.)
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import pytest
 
-from backtest.engines.options_portfolio import historical_volatility
+from backtest.engines.options_portfolio import historical_volatility, run_options_backtest
 
 
 def test_warmup_bars_use_default_iv_not_the_first_computed_window() -> None:
@@ -42,3 +45,39 @@ def test_full_window_bars_are_unchanged_by_the_warmup_fix() -> None:
     log_ret = np.log(close / close.shift(1))
     expected = log_ret.rolling(30).std() * np.sqrt(252)
     pd.testing.assert_series_equal(hv.iloc[30:], expected.iloc[30:].fillna(0.0))
+
+
+@pytest.mark.parametrize("bad_iv", [0.0, -0.5, float("nan"), float("inf")])
+def test_default_iv_must_be_positive_and_finite(bad_iv: float) -> None:
+    """NaN/zero/negative config would silently break pricing or crash on dump."""
+
+    class _FlatLoader:
+        name = "yfinance"
+
+        def fetch(self, codes, start_date, end_date):  # noqa: ANN001
+            return {
+                "SPY": pd.DataFrame(
+                    {"close": [100.0, 101.0], "open": [100.0, 100.5]},
+                    index=pd.to_datetime(["2025-01-01", "2025-01-02"]),
+                )
+            }
+
+    class _NoSignals:
+        def generate(self, data_map):  # noqa: ANN001
+            return []
+
+    with pytest.raises(ValueError, match="default_iv"):
+        run_options_backtest(
+            {
+                "codes": ["SPY"],
+                "start_date": "2025-01-01",
+                "end_date": "2025-01-02",
+                "source": "yfinance",
+                "engine": "options",
+                "initial_cash": 100_000.0,
+                "options_config": {"default_iv": bad_iv},
+            },
+            _FlatLoader(),
+            _NoSignals(),
+            Path("/tmp/opts_guard"),
+        )

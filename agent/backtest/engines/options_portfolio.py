@@ -19,6 +19,7 @@ the per-leg vol every pricing site must agree on.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -42,9 +43,10 @@ def historical_volatility(
     Args:
         close: Close price Series.
         window: Rolling window in days.
-        default_iv: Volatility used for bars without a full window. Backfilling
-            the first computed window here would price bars before it with
-            information from the window's own end (#1293).
+        default_iv: Volatility used for any bar without a full rolling window
+            (the leading warm-up and NaN gaps). Backfilling the first computed
+            window here would price bars before it with information from the
+            window's own end (#1293).
 
     Returns:
         Annualised historical volatility Series.
@@ -219,6 +221,8 @@ def run_options_backtest(
     iv_skew = options_cfg.get("iv_skew", 0.0)         # v2: smile skew param (0 = flat)
     iv_curvature = options_cfg.get("iv_curvature", 0.0)  # v2: smile curvature
     default_iv = options_cfg.get("default_iv", 0.3)
+    if not math.isfinite(default_iv) or default_iv <= 0.0:
+        raise ValueError("options_config.default_iv must be a finite, positive float")
 
     # Load underlying data
     data_map = loader.fetch(codes, start_date, end_date)
