@@ -158,6 +158,7 @@ def fetch_market_data(
         FALLBACK_CHAINS,
         _NO_NETWORK_FALLBACK_SOURCES,
         get_source_order_override,
+        price_caliber,
         refresh_source_order_overrides,
     )
 
@@ -321,6 +322,7 @@ def fetch_market_data(
                 "fallback_used": bool(used_source and used_source != src),
                 "currency_conversion": currency_conversion,
                 "volume_unit": volume_units.get(market),
+                "adjustment": price_caliber(used_source or src, market),
             }
             quote_currency = frame_attrs.get("quote_currency")
             if isinstance(quote_currency, str) and quote_currency:
@@ -381,6 +383,7 @@ def fetch_market_data(
                         "fallback_used": True,
                         "currency_conversion": "none",
                         "volume_unit": base.get("volume_unit"),
+                        "adjustment": base.get("adjustment", price_caliber(src, market)),
                         "venue_fallback": True,
                         "resolved_symbol": sibling,
                     }
