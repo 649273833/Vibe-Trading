@@ -213,6 +213,11 @@ def run_options_backtest(
     exercise_style = options_cfg.get("exercise_style", "european")  # v2: "european" or "american"
     iv_skew = options_cfg.get("iv_skew", 0.0)         # v2: smile skew param (0 = flat)
     iv_curvature = options_cfg.get("iv_curvature", 0.0)  # v2: smile curvature
+    # Short legs hold margin and every open checks buying power; opt out for
+    # research runs that intentionally model unconstrained leverage.
+    margin_enabled = bool(options_cfg.get("margin_enabled", True))
+    margin_rate = float(options_cfg.get("margin_rate", 0.20))
+    margin_floor_rate = float(options_cfg.get("margin_floor_rate", 0.10))
 
     # Load underlying data
     data_map = loader.fetch(codes, start_date, end_date)
@@ -252,6 +257,33 @@ def run_options_backtest(
     trade_records: List[Dict[str, Any]] = []
     greeks_records: List[Dict[str, Any]] = []
     equity_records: List[Dict[str, Any]] = []
+
+    def short_margin_per_unit(option_type: str, spot: float, strike: float,
+                              premium: float) -> float:
+        """CBOE-style short margin per unit: premium plus the larger of
+        ``margin_rate`` of spot minus the out-of-the-money amount and a
+        ``margin_floor_rate`` floor (spot for calls, strike for puts)."""
+        if option_type == "call":
+            otm = max(0.0, strike - spot)
+            return premium + max(margin_rate * spot - otm, margin_floor_rate * spot)
+        otm = max(0.0, spot - strike)
+        return premium + max(margin_rate * spot - otm, margin_floor_rate * strike)
+
+    def current_short_margin(ts: pd.Timestamp) -> float:
+        """Margin the open short legs would post right now, re-marked daily."""
+        total = 0.0
+        for pos in positions:
+            if pos.qty >= 0:
+                continue
+            spot = spot_prices.get(pos.underlying_code, 0.0)
+            iv_val = ivs.get(pos.underlying_code, 0.3)
+            mark_iv = leg_iv(spot, pos.strike, iv_val, iv_skew, iv_curvature)
+            mark = bs_price(spot, pos.strike, pos.time_to_expiry(ts),
+                            risk_free_rate, mark_iv, pos.option_type)
+            total += short_margin_per_unit(
+                pos.option_type, spot, pos.strike, mark
+            ) * abs(pos.qty) * contract_multiplier
+        return total
 
     for current_date in dates:
         ts = pd.Timestamp(current_date)
@@ -360,6 +392,36 @@ def run_options_backtest(
                 if action == "open":
                     # Open: long pays premium, short receives premium
                     abs_cost = opt_price * abs(qty) * contract_multiplier
+                    if margin_enabled:
+                        # Buying power: cash already posted as short margin is
+                        # not spendable. Longs need the premium; shorts need
+                        # the new leg's margin net of the premium it brings in.
+                        posted = current_short_margin(ts)
+                        if qty > 0:
+                            affordable = cash - posted >= abs_cost * (1 + commission)
+                        else:
+                            leg_margin = short_margin_per_unit(
+                                leg_type, spot, strike, opt_price
+                            ) * abs(qty) * contract_multiplier
+                            affordable = (
+                                cash + abs_cost * (1 - commission)
+                                >= posted + leg_margin
+                            )
+                        if not affordable:
+                            trade_records.append({
+                                "timestamp": date_str,
+                                "code": underlying,
+                                "option_type": leg_type,
+                                "strike": strike,
+                                "expiry": expiry,
+                                "side": "reject",
+                                "price": round(opt_price, 4),
+                                "qty": qty,
+                                "pnl": 0.0,
+                                "entry_date": date_str,
+                                "reason": "insufficient buying power",
+                            })
+                            continue
                     if qty > 0:
                         cash -= abs_cost * (1 + commission)
                     else:
@@ -473,6 +535,7 @@ def run_options_backtest(
             "equity": round(portfolio_value, 4),
             "cash": round(cash, 4),
             "positions_value": round(portfolio_value - cash, 4),
+            "margin_hold": round(current_short_margin(ts), 4) if margin_enabled else 0.0,
         })
 
         greeks_records.append({
@@ -493,6 +556,13 @@ def run_options_backtest(
 
     equity_series = equity_df.set_index("timestamp")["equity"]
     metrics = _calc_options_metrics(equity_series, initial_cash, trade_records, bars_per_year)
+    if margin_enabled:
+        metrics["options_margin_hold"] = round(
+            float(equity_df["margin_hold"].iloc[-1]), 4
+        )
+        metrics["options_rejected_opens"] = sum(
+            1 for record in trade_records if record.get("side") == "reject"
+        )
 
     # Write artifacts
     out = run_dir / "artifacts"
@@ -504,7 +574,7 @@ def run_options_backtest(
     equity_df.to_csv(out / "equity.csv", index=False)
 
     trade_cols = ["timestamp", "code", "option_type", "strike", "expiry",
-                  "side", "price", "qty", "pnl", "entry_date"]
+                  "side", "price", "qty", "pnl", "entry_date", "reason"]
     pd.DataFrame(trade_records or [], columns=trade_cols).to_csv(
         out / "trades.csv", index=False)
 
