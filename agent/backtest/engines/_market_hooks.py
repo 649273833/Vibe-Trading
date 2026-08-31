@@ -306,10 +306,23 @@ def check_crypto_liquidation(
         Does NOT execute the liquidation -- caller handles that.
     """
     pos = positions.get(symbol)
-    if pos is None or pos.leverage <= 1.0:
+    # A 1x long's bankruptcy price is zero, so leverage <= 1 exempts it.
+    # A 1x short has no such floor: margin is the full notional, a 2x
+    # adverse move makes margin + unrealized negative, and the position
+    # would ride an impossible state on the books (#1291).
+    if pos is None or (pos.leverage <= 1.0 and pos.direction > 0):
         return False
 
-    mark_price = float(bar.get("close", pos.entry_price))
+    # Mark at the adverse extremum -- bar high for a short, low for a long --
+    # mirroring the strict path's "adverse" price convention, and fall back to
+    # the close when the bar lacks high/low (#1291). With high/low present a
+    # wick through maintenance triggers; close-only bars keep legacy behavior.
+    mark_price = bar.get("high" if pos.direction < 0 else "low")
+    if mark_price is None or pd.isna(mark_price):
+        mark_price = bar.get("close")
+    if mark_price is None or pd.isna(mark_price):
+        mark_price = pos.entry_price
+    mark_price = float(mark_price)
     margin = pos.size * pos.entry_price / pos.leverage
     unrealized = pos.direction * pos.size * (mark_price - pos.entry_price)
 
