@@ -23,6 +23,7 @@ import src.live.mandate.commit as mandate_commit
 from src.live.mandate.commit import (
     CommitError,
     DEFAULT_MANDATE_LIFETIME_DAYS,
+    _profile_fits_ceilings,
     commit_mandate,
     save_proposal,
 )
@@ -321,6 +322,117 @@ def _save_handcrafted_proposal(
         }
     )
     return proposal_id
+
+
+def _save_h19_proposal(live_runtime: Path) -> str:
+    """Persist the H19 fixture: numeric leverage and a two-item whitelist."""
+    profile = {
+        "ordinal": 1,
+        "label": "h19",
+        "max_order_usd": 100.0,
+        "max_total_exposure_usd": 100.0,
+        "daily_trade_cap": 2,
+        "leverage": 2,
+        "instruments": ["equity", "option"],
+    }
+    ceilings = {
+        "account_funding_usd": 100.0,
+        "max_order_notional_usd": 100.0,
+        "max_total_exposure_usd": 100.0,
+        "max_trades_per_day": 2,
+        "leverage": 2,
+        "allowed_instruments": ["equity", "option"],
+    }
+    return _save_handcrafted_proposal("robinhood", profile, ceilings)
+
+
+def test_adjust_string_numeric_widening_rejected(live_runtime: Path) -> None:
+    """H19: a string "10" cannot widen numeric leverage 2 by type confusion."""
+    proposal_id = _save_h19_proposal(live_runtime)
+    with pytest.raises(CommitError, match="invalid type"):
+        commit_mandate(
+            proposal_id=proposal_id,
+            ordinal=1,
+            adjustments={"leverage": "10"},
+            consent_ack=True,
+            broker="robinhood",
+        )
+    assert load_mandate("robinhood") is None
+
+
+def test_adjust_string_numeric_narrowing_rejected(live_runtime: Path) -> None:
+    """H19 policy: even string numeric narrowing is rejected as an invalid type."""
+    proposal_id = _save_h19_proposal(live_runtime)
+    with pytest.raises(CommitError, match="numeric narrowing requires an int or float"):
+        commit_mandate(
+            proposal_id=proposal_id,
+            ordinal=1,
+            adjustments={"leverage": "1"},
+            consent_ack=True,
+            broker="robinhood",
+        )
+    assert load_mandate("robinhood") is None
+
+
+def test_adjust_bool_numeric_limit_rejected(live_runtime: Path) -> None:
+    """H19: bool is an int subclass, but is never a valid numeric limit value."""
+    proposal_id = _save_h19_proposal(live_runtime)
+    with pytest.raises(CommitError, match="invalid type"):
+        commit_mandate(
+            proposal_id=proposal_id,
+            ordinal=1,
+            adjustments={"leverage": True},
+            consent_ack=True,
+            broker="robinhood",
+        )
+    assert load_mandate("robinhood") is None
+
+
+def test_adjust_instruments_widening_rejected(live_runtime: Path) -> None:
+    """H19: adding an instrument to the rendered whitelist must re-propose."""
+    proposal_id = _save_h19_proposal(live_runtime)
+    with pytest.raises(CommitError, match="widen"):
+        commit_mandate(
+            proposal_id=proposal_id,
+            ordinal=1,
+            adjustments={"instruments": ["equity", "option", "cfd"]},
+            consent_ack=True,
+            broker="robinhood",
+        )
+    assert load_mandate("robinhood") is None
+
+
+def test_adjust_instruments_narrowing_subset_commits(live_runtime: Path) -> None:
+    """H19: a true subset of the rendered whitelist commits as narrowing."""
+    proposal_id = _save_h19_proposal(live_runtime)
+    result = commit_mandate(
+        proposal_id=proposal_id,
+        ordinal=1,
+        adjustments={"instruments": ["equity"]},
+        consent_ack=True,
+        broker="robinhood",
+    )
+    mandate = load_mandate("robinhood")
+    assert result["mandate_id"]
+    assert mandate is not None
+    assert mandate.hard_caps.allowed_instruments == ("equity",)
+
+
+def test_profile_fits_ceilings_rejects_non_numeric_profile_value() -> None:
+    """H19 defense-in-depth: numeric ceilings reject string profile values."""
+    assert not _profile_fits_ceilings({"leverage": "10"}, {"leverage": 2})
+
+
+def test_profile_fits_ceilings_rejects_bool_profile_value() -> None:
+    """H19 defense-in-depth: bool cannot masquerade as a numeric profile value."""
+    assert not _profile_fits_ceilings({"leverage": True}, {"leverage": 2})
+
+
+def test_profile_fits_ceilings_rejects_instrument_widening() -> None:
+    """H19 defense-in-depth: the ceiling whitelist must contain every instrument."""
+    profile = {"instruments": ["equity", "option"]}
+    ceilings = {"allowed_instruments": ["equity"]}
+    assert not _profile_fits_ceilings(profile, ceilings)
 
 
 def test_commit_rejects_profile_over_alias_keyed_order_ceiling(live_runtime: Path) -> None:

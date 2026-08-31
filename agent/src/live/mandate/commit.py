@@ -49,6 +49,11 @@ _PROPOSALS_DIRNAME = "proposals"
 _CONSENT_DIRNAME = "consent"
 _PROPOSAL_ID_RE = re.compile(r"^mp_[0-9a-f]{32}$")
 
+def _is_real_number(value: Any) -> bool:
+    """Return whether ``value`` is a non-bool int/float."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 #: Maps every accepted alias of a clamped limit to its CANONICAL name. The
 #: proposal profile, the ceiling snapshot, and the clamp in
 #: ``propose_mandate_tool`` all use slightly different human-vs-schema spellings
@@ -262,12 +267,33 @@ def _resolve_profile(
             if key not in resolved:
                 raise CommitError(f"adjustment {key!r} is not a field of the selected profile")
             current = resolved[key]
-            if isinstance(current, (int, float)) and isinstance(value, (int, float)):
+            if _is_real_number(current):
+                if not _is_real_number(value):
+                    raise CommitError(
+                        f"adjustment {key!r}={value!r} has an invalid type for the rendered limit "
+                        f"{current!r}; numeric narrowing requires an int or float"
+                    )
                 if value > current:
                     raise CommitError(
                         f"adjustment {key!r}={value} widens the rendered limit {current}; "
                         "widening must go through a fresh proposal"
                     )
+            elif isinstance(current, list):
+                if not isinstance(value, list):
+                    raise CommitError(
+                        f"adjustment {key!r}={value!r} has an invalid type for the rendered list "
+                        f"{current!r}; list narrowing requires a list subset"
+                    )
+                if not all(item in current for item in value):
+                    raise CommitError(
+                        f"adjustment {key!r}={value!r} widens the rendered whitelist {current!r}; "
+                        "widening must go through a fresh proposal"
+                    )
+            elif type(value) is not type(current) or value != current:
+                raise CommitError(
+                    f"adjustment {key!r}={value!r} changes the rendered value {current!r}; "
+                    "only narrowing or equivalent adjustments are allowed"
+                )
             resolved[key] = value
     return resolved
 
@@ -299,12 +325,21 @@ def _profile_fits_ceilings(profile: Mapping[str, Any], ceilings: Mapping[str, An
         if key not in prof:
             continue
         prof_value = prof[key]
-        if isinstance(ceiling_value, (int, float)) and isinstance(prof_value, (int, float)):
-            if prof_value > ceiling_value:
-                return False
-        elif key == "leverage":
+        if key == "leverage" and ceiling_value == "none":
             # Cash-only ceiling forbids any leverage other than "none".
-            if ceiling_value == "none" and prof_value not in ("none", None, 1, 1.0):
+            if prof_value is True or prof_value is False or prof_value not in ("none", None, 1, 1.0):
+                return False
+        elif key == "allowed_instruments":
+            # A whitelist may only be narrowed, never widened at commit time.
+            if not isinstance(ceiling_value, list) or not isinstance(prof_value, list):
+                return False
+            if not all(item in ceiling_value for item in prof_value):
+                return False
+        else:
+            # Numeric ceilings fail closed when either side is bool/non-numeric.
+            if not _is_real_number(ceiling_value) or not _is_real_number(prof_value):
+                return False
+            if prof_value > ceiling_value:
                 return False
     return True
 
