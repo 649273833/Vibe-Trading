@@ -43,6 +43,11 @@ from backtest.metrics import (
     calc_metrics,
 )
 from backtest.models import EquitySnapshot, FillRecord, Position, TradeRecord
+from backtest.rebalance_mask import (
+    RebalanceMask,
+    resolve_rebalance_dates,
+    validate_rebalance_mask,
+)
 
 
 def _json_safe_scalar_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
@@ -463,6 +468,14 @@ class BaseEngine(ABC):
         self.position_adjustment = str(config.get("position_adjustment", "hold")).lower()
         if self.position_adjustment not in {"hold", "rebalance"}:
             raise ValueError("position_adjustment must be 'hold' or 'rebalance'")
+        self.rebalance_mask: RebalanceMask = validate_rebalance_mask(
+            config.get("rebalance_mask")
+        )
+        if self.rebalance_mask is not None and self.position_adjustment != "rebalance":
+            raise ValueError(
+                "rebalance_mask requires position_adjustment='rebalance'"
+            )
+        self.rebalance_bars_executed = 0
         # Relative drift band around the target weight. Zero reproduces the
         # historical behaviour, where the only thing separating "resize" from
         # "leave it alone" was the slippage width -- measured, a 0.01% daily
@@ -958,6 +971,9 @@ class BaseEngine(ABC):
                 m["total_return"] - benchmark_metadata["benchmark_return"], 6
             )
         m.update(self._plan_rejection_metrics())
+        if self.rebalance_mask is not None:
+            m["rebalance_mask"] = self.rebalance_mask
+            m["rebalance_bars_executed"] = self.rebalance_bars_executed
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
 
@@ -1100,11 +1116,14 @@ class BaseEngine(ABC):
         self._close_arr = _close_arr
         self._code_to_col = _code_to_col
         self.actual_position_snapshots = []
+        execution_dates = resolve_rebalance_dates(self.rebalance_mask, dates)
+        self.rebalance_bars_executed = 0
 
         for i, ts in enumerate(dates):
             self._bar_idx = i
 
             stop_run = self.before_rebalance_bar(ts, data_map, codes)
+            execute_targets = execution_dates is None or ts in execution_dates
 
             # a. Value the book at prices observable when orders execute.
             # Rebalances happen at the bar open, so using close_df[ts] here
@@ -1115,14 +1134,20 @@ class BaseEngine(ABC):
                 try:
                     val = _target_arr[i, _code_to_col[c]]
                     target_weights[c] = (
-                        None if stop_run else (float(val) if not np.isnan(val) else 0.0)
+                        None
+                        if stop_run or not execute_targets
+                        else (float(val) if not np.isnan(val) else 0.0)
                     )
                 except Exception as exc:
                     target_weights[c] = None
                     logger.warning("Target weight failed for %s at %s: %s", c, ts, exc)
 
             if self.position_adjustment == "rebalance":
-                self._execute_target_rebalance(target_weights, data_map, ts, equity, codes)
+                if execute_targets and not stop_run:
+                    self._execute_target_rebalance(
+                        target_weights, data_map, ts, equity, codes
+                    )
+                    self.rebalance_bars_executed += 1
                 target_weights = {}
             else:
                 self._record_dropped_target_adjustments(target_weights, ts)
