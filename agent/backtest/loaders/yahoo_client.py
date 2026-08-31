@@ -191,7 +191,9 @@ def get_chart(
             structurally unusable.
     """
     yahoo_symbol = map_symbol(symbol)
-    params: Dict[str, Any] = {"interval": interval}
+    # events=div,splits makes Yahoo return the adjclose series next to the raw
+    # quote, which is the only adjusted-caliber source on this endpoint.
+    params: Dict[str, Any] = {"interval": interval, "events": "div,splits"}
     if range_:
         params["range"] = range_
     else:
@@ -234,6 +236,12 @@ def _parse_chart(payload: Any, yahoo_symbol: str) -> Tuple[List[Dict[str, Any]],
 
     timestamps = result.get("timestamp") or []
     quotes = (((result.get("indicators") or {}).get("quote")) or [{}])[0] or {}
+    # Every other loader on this chain serves adjusted prices (qfq), so the
+    # raw quote would book splits as crashes and ex-dividend gaps as losses.
+    # Scale to Yahoo's adjusted close when it is present, keeping raw volume.
+    adjclose_series = (
+        (((result.get("indicators") or {}).get("adjclose")) or [{}])[0] or {}
+    ).get("adjclose")
 
     rows: List[Dict[str, Any]] = []
     for index, ts in enumerate(timestamps):
@@ -241,8 +249,13 @@ def _parse_chart(payload: Any, yahoo_symbol: str) -> Tuple[List[Dict[str, Any]],
         # A non-trading slot leaves OHLC null; skip rather than emit a NaN bar.
         if any(values[field] is None for field in ("open", "high", "low", "close")):
             continue
+        ratio = _adjust_ratio(_at(adjclose_series, index), values["close"])
         row: Dict[str, Any] = {"trade_date": ts}
-        row.update({field: _to_float(values[field]) for field in _QUOTE_FIELDS})
+        for field in _QUOTE_FIELDS:
+            value = _to_float(values[field])
+            if value is not None and field != "volume" and ratio is not None:
+                value *= ratio
+            row[field] = value
         rows.append(row)
     return rows, currency
 
@@ -252,6 +265,22 @@ def _at(series: Any, index: int) -> Any:
     if isinstance(series, list) and 0 <= index < len(series):
         return series[index]
     return None
+
+
+def _adjust_ratio(adj_close: Any, raw_close: Any) -> Optional[float]:
+    """Return adjclose/close when both are usable, else ``None`` (keep raw).
+
+    A ratio that is missing, non-numeric, or wildly off (a bad tick, not a
+    corporate action) must not corrupt the bar; raw is the safer fallback.
+    """
+    adj = _to_float(adj_close)
+    raw = _to_float(raw_close)
+    if adj is None or raw is None or raw <= 0 or adj <= 0:
+        return None
+    ratio = adj / raw
+    if not 0.01 <= ratio <= 100:
+        return None
+    return ratio
 
 
 def _to_float(value: Any) -> Optional[float]:
