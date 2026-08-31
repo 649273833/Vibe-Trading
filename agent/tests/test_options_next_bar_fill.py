@@ -42,7 +42,7 @@ class _FlatLoader:
         return {"SPY": _BARS.copy()}
 
 
-def _signal(date: str):
+def _signal(date: str, expiry: str = _EXPIRY):
     class _Engine:
         def generate(self, data_map):  # noqa: ANN001
             return [
@@ -50,7 +50,7 @@ def _signal(date: str):
                     "date": date,
                     "action": "open",
                     "underlying": "SPY",
-                    "legs": [{"type": "call", "strike": _STRIKE, "expiry": _EXPIRY, "qty": _QTY}],
+                    "legs": [{"type": "call", "strike": _STRIKE, "expiry": expiry, "qty": _QTY}],
                 }
             ]
 
@@ -62,7 +62,14 @@ def _fill_price(day: pd.Timestamp, iv: float) -> float:
     return bs_price(_BARS.at[day, "close"], _STRIKE, t, 0.0, iv, "call")
 
 
-def _run(tmp_path: Path, *, date: str, same_day: bool = False):
+def _run(
+    tmp_path: Path,
+    *,
+    date: str,
+    same_day: bool = False,
+    warmup_bars: int = 0,
+    expiry: str = _EXPIRY,
+):
     run_options_backtest(
         {
             "codes": ["SPY"],
@@ -72,6 +79,7 @@ def _run(tmp_path: Path, *, date: str, same_day: bool = False):
             "engine": "options",
             "initial_cash": 100_000.0,
             "commission": 0.0,
+            **({"warmup_bars": warmup_bars} if warmup_bars else {}),
             "options_config": {
                 "risk_free_rate": 0.0,
                 "contract_multiplier": 1.0,
@@ -79,7 +87,7 @@ def _run(tmp_path: Path, *, date: str, same_day: bool = False):
             },
         },
         _FlatLoader(),
-        _signal(date),
+        _signal(date, expiry=expiry),
         tmp_path,
     )
     return pd.read_csv(tmp_path / "artifacts" / "trades.csv")
@@ -121,3 +129,24 @@ def test_signal_dated_before_first_bar_never_executes(tmp_path: Path) -> None:
 def test_signal_on_last_bar_has_no_next_bar_to_fill(tmp_path: Path) -> None:
     trades = _run(tmp_path, date="2025-01-06")
     assert len(trades) == 0
+
+
+def test_last_warmup_bar_signal_fills_on_first_eval_bar(tmp_path: Path) -> None:
+    """Equity parity: the warm-up cut applies after the signal shift, so a
+    signal dated the last warm-up bar fills on the first evaluated bar."""
+    trades = _run(tmp_path, date="2025-01-01", warmup_bars=1)
+
+    assert len(trades) == 1
+    assert trades.iloc[0]["timestamp"] == "2025-01-02"
+
+
+def test_fill_on_expiry_bar_settles_same_bar_never_a_bar_late(tmp_path: Path) -> None:
+    """Signal dated 2025-01-02 fills 2025-01-03 == expiry: settlement must
+    happen on that bar (entry T floored at 0.001, intrinsic at expiry spot),
+    not on the next bar at the next bar's spot."""
+    trades = _run(tmp_path, date="2025-01-02", expiry="2025-01-03")
+
+    assert list(trades["timestamp"]) == ["2025-01-03", "2025-01-03"]
+    assert trades.iloc[0]["side"] == "buy"
+    assert trades.iloc[1]["side"] == "expire"  # K=100 vs close 90: OTM
+    assert trades.iloc[1]["price"] == pytest.approx(0.0)

@@ -233,13 +233,15 @@ def run_options_backtest(
     all_dates = set()
     for df in data_map.values():
         all_dates.update(df.index)
-    dates = sorted(all_dates)
+    full_dates = sorted(all_dates)
 
     # Warm-up bars primed the signal engine above; from here they do not exist,
-    # so nothing they contain reaches a fill, the equity curve or a metric.
-    warmup_end = evaluation_start_index(config, pd.DatetimeIndex(dates))
-    if warmup_end:
-        dates = dates[warmup_end:]
+    # so nothing they contain reaches a fill, the equity curve or a metric. The
+    # full range stays available for the previous-bar lookup, so a signal dated
+    # the last warm-up bar fills on the first evaluated bar -- the equity
+    # engines' convention (the warm-up cut is applied after the signal shift).
+    warmup_end = evaluation_start_index(config, pd.DatetimeIndex(full_dates))
+    dates = full_dates[warmup_end:]
 
     # Index signals by date
     signal_by_date: Dict[str, List[Dict[str, Any]]] = {}
@@ -255,17 +257,21 @@ def run_options_backtest(
     equity_records: List[Dict[str, Any]] = []
 
     for idx, current_date in enumerate(dates):
+        full_idx = idx + warmup_end
         ts = pd.Timestamp(current_date)
         date_str = str(ts.date()) if hasattr(ts, "date") else str(ts)
         # Signals are dated the bar they were computed on and priced/filled on
-        # the next bar -- the framework convention the equity engines follow
-        # (#1293). A signal dated before the first evaluation bar is never
-        # executed, matching how warm-up-dated signals behaved before. Set
-        # options_config.same_day_fill to price a signal on its own date.
+        # the next bar's close, executed end-of-day on the bar after the
+        # decision (#1293). Equity engines fill the next bar's open; the
+        # options engine deliberately fills the next close because signals are
+        # computed on end-of-day data. A signal dated the last warm-up bar
+        # fills on the first evaluated bar, matching the equity convention;
+        # only signals dated before the very first loaded bar can never fill.
+        # Set options_config.same_day_fill to price a signal on its own date.
         if same_day_fill:
             signal_date = date_str
-        elif idx > 0:
-            prev = pd.Timestamp(dates[idx - 1])
+        elif full_idx > 0:
+            prev = pd.Timestamp(full_dates[full_idx - 1])
             signal_date = str(prev.date()) if hasattr(prev, "date") else str(prev)
         else:
             signal_date = None
@@ -318,32 +324,6 @@ def run_options_backtest(
                         "entry_date": pos.entry_date,
                     })
                     positions.remove(pos)
-
-        # 2b. Handle expiry
-        expired = [p for p in positions if p.is_expired(ts)]
-        for pos in expired:
-            spot = spot_prices.get(pos.underlying_code, 0.0)
-            intrinsic = pos.intrinsic_value(spot)
-
-            # Expiry: recover intrinsic value (entry_price already deducted at open)
-            settlement = intrinsic * pos.qty * contract_multiplier
-            cash += settlement
-            pnl = (intrinsic - pos.entry_price) * pos.qty * contract_multiplier
-
-            side = "exercise" if intrinsic > 0 else "expire"
-            trade_records.append({
-                "timestamp": date_str,
-                "code": pos.underlying_code,
-                "option_type": pos.option_type,
-                "strike": pos.strike,
-                "expiry": str(pos.expiry.date()),
-                "side": side,
-                "price": round(intrinsic, 4),
-                "qty": pos.qty,
-                "pnl": round(pnl, 4),
-                "entry_date": pos.entry_date,
-            })
-            positions.remove(pos)
 
         # 3. Execute the prior bar's signals at today's prices
         day_signals = signal_by_date.get(signal_date, []) if signal_date else []
@@ -456,7 +436,35 @@ def run_options_backtest(
                                 underlying_code=matched.underlying_code,
                             )
 
-        # 4. Compute portfolio mark-to-market value and Greeks
+        # 4. Handle expiry. Runs after signal execution so a fill dated the
+        # bar before expiry settles on the expiry bar itself: an option is
+        # never carried past its expiry and never settled a bar late (#1293).
+        expired = [p for p in positions if p.is_expired(ts)]
+        for pos in expired:
+            spot = spot_prices.get(pos.underlying_code, 0.0)
+            intrinsic = pos.intrinsic_value(spot)
+
+            # Expiry: recover intrinsic value (entry_price already deducted at open)
+            settlement = intrinsic * pos.qty * contract_multiplier
+            cash += settlement
+            pnl = (intrinsic - pos.entry_price) * pos.qty * contract_multiplier
+
+            side = "exercise" if intrinsic > 0 else "expire"
+            trade_records.append({
+                "timestamp": date_str,
+                "code": pos.underlying_code,
+                "option_type": pos.option_type,
+                "strike": pos.strike,
+                "expiry": str(pos.expiry.date()),
+                "side": side,
+                "price": round(intrinsic, 4),
+                "qty": pos.qty,
+                "pnl": round(pnl, 4),
+                "entry_date": pos.entry_date,
+            })
+            positions.remove(pos)
+
+        # 5. Compute portfolio mark-to-market value and Greeks
         portfolio_value = cash
         total_delta = 0.0
         total_gamma = 0.0
