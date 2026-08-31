@@ -17,6 +17,7 @@ simulation rebuild. This keeps the numbers auditable and reproducible.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -283,13 +284,35 @@ def run_shadow_backtest(
         real_total_pnl=real_pnl,
         delta_pnl=round(shadow_pnl - real_pnl, 2) if shadow_pnl is not None else None,
     )
-    _cache_result(base_dir, result)
+    _cache_result(
+        base_dir, result,
+        profile=profile, window_start=window_start, window_end=window_end,
+    )
     return result
 
 
-def load_cached_result(shadow_id: str) -> ShadowBacktestResult | None:
-    """Load the last cached backtest result for a shadow, if any."""
-    cache_path = runs_dir(shadow_id) / "shadow_result.json"
+
+def _cache_key(profile: ShadowProfile, window_start: str, window_end: str) -> str:
+    """Digest for the result cache: window plus the journal hash the profile
+    was extracted from, so a re-render with a different window or an edited
+    journal cannot silently reuse a stale run."""
+    raw = f"{window_start}|{window_end}|{profile.journal_hash}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
+def load_cached_result(
+    profile: ShadowProfile,
+    *,
+    window_start: str,
+    window_end: str,
+) -> ShadowBacktestResult | None:
+    """Load the cached backtest result matching this window and journal.
+
+    The cache is keyed by shadow + run parameters; a different window or a
+    re-extracted (re-hashed) journal deliberately misses instead of serving a
+    stale run.
+    """
+    cache_path = runs_dir(profile.shadow_id) / f"shadow_result_{_cache_key(profile, window_start, window_end)}.json"
     if not cache_path.exists():
         return None
     try:
@@ -319,13 +342,20 @@ def load_cached_result(shadow_id: str) -> ShadowBacktestResult | None:
     )
 
 
-def _cache_result(run_dir: Path, result: ShadowBacktestResult) -> None:
+def _cache_result(
+    run_dir: Path,
+    result: ShadowBacktestResult,
+    *,
+    profile: ShadowProfile,
+    window_start: str,
+    window_end: str,
+) -> None:
     """Persist a ShadowBacktestResult so downstream tools don't re-backtest."""
     from dataclasses import asdict as _asdict
 
     payload = _asdict(result)
     try:
-        (run_dir / "shadow_result.json").write_text(
+        (run_dir / f"shadow_result_{_cache_key(profile, window_start, window_end)}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
