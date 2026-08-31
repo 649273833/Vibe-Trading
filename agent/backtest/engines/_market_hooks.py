@@ -57,6 +57,14 @@ _MARKET_PATTERNS = [
     # Forex pairs: XXX/YYY or XXXXXX.FX
     (re.compile(r"^[A-Z]{3}/[A-Z]{3}$"), "forex"),
     (re.compile(r"^[A-Z]{6}\.FX$"), "forex"),
+    # Yahoo forex suffix convention (EURUSD=X, GBPCNY=X) — served verbatim by
+    # the chart endpoint. Without this rule such symbols fell through to the
+    # a_share default (misrouting composite/market classification).
+    (re.compile(r"^[A-Z]{3}[A-Z]{3}=X$"), "forex"),
+    # Yahoo index symbols (^SPX, ^NDX, ^FTSE, ^VIX, ...) — served verbatim,
+    # same as the =F/=X conventions. Classified as their own market so they
+    # never route through an equity/China chain or a cash currency.
+    (re.compile(r"^\^[A-Za-z0-9.\-]+$"), "index"),
     # Bare US tickers (AAPL, MSFT, SPY, T, ...). Must stay LAST so every
     # suffixed equity / futures / crypto / forex form above wins first.
     # ``{1,5}`` covers every standard US ticker length while 6-char bare
@@ -116,6 +124,8 @@ def code_currency(code: str) -> str:
         pair = code.upper().replace("/", "")
         if pair.endswith(".FX"):
             pair = pair[:-3]
+        if pair.endswith("=X"):
+            pair = pair[:-2]
         return pair[3:6] if len(pair) == 6 else "UNKNOWN:forex"
     if market == "futures":
         if _is_china_futures(code):
