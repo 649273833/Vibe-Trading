@@ -437,8 +437,8 @@ class TestLiquidation:
 
     def test_wick_only_trigger_liquidates(self) -> None:
         """A levered long whose low pierces maintenance is liquidated even when
-        the close recovers; the fill is priced at the close (#1291)."""
-        engine = _make_engine(leverage=2.0)
+        the close recovers; the fill is priced at the adverse mark (bar low)."""
+        engine = _make_engine(leverage=2.0, slippage=0.0)
         engine.positions["BTC-USDT"] = Position(
             "BTC-USDT", 1, 100.0, pd.Timestamp("2025-01-01"), 10.0, leverage=2.0,
         )
@@ -450,6 +450,23 @@ class TestLiquidation:
         assert "BTC-USDT" not in engine.positions
         assert len(engine.trades) == 1
         assert engine.trades[0].exit_reason == "liquidation"
+        assert engine.trades[0].exit_price == pytest.approx(30.0)
+
+    def test_1x_short_liquidates_through_twice_the_entry_price(self) -> None:
+        """#1291: a 1x short must be liquidated, not exempted at 2x adverse."""
+        engine = _make_engine(leverage=1.0, slippage=0.0)
+        engine.positions["BTC-USDT"] = Position(
+            "BTC-USDT", -1, 100.0, pd.Timestamp("2025-01-01"), 10.0, leverage=1.0,
+        )
+        # Margin is the full notional (1000); the 2x adverse bar zeroes it:
+        # equity 0 <= maint (2000 * 0.004 = 8), filled at the adverse high.
+        bar = pd.Series({"close": 200.0, "high": 200.0, "low": 101.0})
+        ts = pd.Timestamp("2025-01-02")
+        engine.on_bar("BTC-USDT", bar, ts)
+        assert "BTC-USDT" not in engine.positions
+        assert len(engine.trades) == 1
+        assert engine.trades[0].exit_reason == "liquidation"
+        assert engine.trades[0].exit_price == pytest.approx(200.0)
 
 
 # ---------------------------------------------------------------------------

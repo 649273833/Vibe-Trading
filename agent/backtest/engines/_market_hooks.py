@@ -289,6 +289,23 @@ def calc_crypto_funding_fee(
     return notional * funding_rate * pos.direction
 
 
+def _liquidation_mark(bar: pd.Series, pos: Position) -> float:
+    """Adverse price the liquidation check and the fill both use.
+
+    Bar high for a short, low for a long -- mirroring the strict path's
+    "adverse" convention (perpetual_risk._mark_price) -- falling back to the
+    close, then the entry price, for bars without high/low. Detection and
+    execution share the same mark so a wick trigger never fills at a better
+    price than the venue that liquidated it.
+    """
+    mark_price = bar.get("high" if pos.direction < 0 else "low")
+    if mark_price is None or pd.isna(mark_price):
+        mark_price = bar.get("close")
+    if mark_price is None or pd.isna(mark_price):
+        mark_price = pos.entry_price
+    return float(mark_price)
+
+
 def check_crypto_liquidation(
     symbol: str,
     bar: pd.Series,
@@ -296,33 +313,17 @@ def check_crypto_liquidation(
 ) -> bool:
     """Check if a crypto position should be liquidated.
 
-    Args:
-        symbol: Instrument code.
-        bar: Current bar data.
-        positions: Shared positions dict.
-
-    Returns:
-        True if liquidation should be triggered.
-        Does NOT execute the liquidation -- caller handles that.
+    Fires when equity in the position (margin + unrealized) falls at or below
+    the maintenance margin, marked at the adverse extremum so an intra-bar
+    wick counts. A 1x long is exempt because its bankruptcy price is zero; a
+    1x short is not -- margin is the full notional and a 2x adverse move
+    zeroes it. Does NOT execute the liquidation -- the caller handles that.
     """
     pos = positions.get(symbol)
-    # A 1x long's bankruptcy price is zero, so leverage <= 1 exempts a 1x long.
-    # A 1x short has no such floor: margin is the full notional, a 2x
-    # adverse move makes margin + unrealized negative, and the position
-    # would ride an impossible state on the books (#1291).
     if pos is None or (pos.leverage <= 1.0 and pos.direction > 0):
         return False
 
-    # Mark at the adverse extremum -- bar high for a short, low for a long --
-    # mirroring the strict path's "adverse" price convention, and fall back to
-    # the close when the bar lacks high/low (#1291). With high/low present a
-    # wick through maintenance triggers; close-only bars keep legacy behavior.
-    mark_price = bar.get("high" if pos.direction < 0 else "low")
-    if mark_price is None or pd.isna(mark_price):
-        mark_price = bar.get("close")
-    if mark_price is None or pd.isna(mark_price):
-        mark_price = pos.entry_price
-    mark_price = float(mark_price)
+    mark_price = _liquidation_mark(bar, pos)
     margin = pos.size * pos.entry_price / pos.leverage
     unrealized = pos.direction * pos.size * (mark_price - pos.entry_price)
 
