@@ -213,6 +213,7 @@ def run_options_backtest(
     exercise_style = options_cfg.get("exercise_style", "european")  # v2: "european" or "american"
     iv_skew = options_cfg.get("iv_skew", 0.0)         # v2: smile skew param (0 = flat)
     iv_curvature = options_cfg.get("iv_curvature", 0.0)  # v2: smile curvature
+    same_day_fill = options_cfg.get("same_day_fill", False)
 
     # Load underlying data
     data_map = loader.fetch(codes, start_date, end_date)
@@ -253,9 +254,21 @@ def run_options_backtest(
     greeks_records: List[Dict[str, Any]] = []
     equity_records: List[Dict[str, Any]] = []
 
-    for current_date in dates:
+    for idx, current_date in enumerate(dates):
         ts = pd.Timestamp(current_date)
         date_str = str(ts.date()) if hasattr(ts, "date") else str(ts)
+        # Signals are dated the bar they were computed on and priced/filled on
+        # the next bar -- the framework convention the equity engines follow
+        # (#1293). A signal dated before the first evaluation bar is never
+        # executed, matching how warm-up-dated signals behaved before. Set
+        # options_config.same_day_fill to price a signal on its own date.
+        if same_day_fill:
+            signal_date = date_str
+        elif idx > 0:
+            prev = pd.Timestamp(dates[idx - 1])
+            signal_date = str(prev.date()) if hasattr(prev, "date") else str(prev)
+        else:
+            signal_date = None
 
         # 1. Get underlying price and IV for the current day
         spot_prices: Dict[str, float] = {}
@@ -332,8 +345,8 @@ def run_options_backtest(
             })
             positions.remove(pos)
 
-        # 3. Execute today's signals
-        day_signals = signal_by_date.get(date_str, [])
+        # 3. Execute the prior bar's signals at today's prices
+        day_signals = signal_by_date.get(signal_date, []) if signal_date else []
         for sig in day_signals:
             action = sig.get("action", "")
             legs = sig.get("legs", [])
