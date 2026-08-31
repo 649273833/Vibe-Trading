@@ -435,6 +435,22 @@ class TestLiquidation:
         engine.on_bar("BTC-USDT", bar, ts)
         assert "BTC-USDT" not in engine.positions
 
+    def test_wick_only_trigger_liquidates(self) -> None:
+        """A levered long whose low pierces maintenance is liquidated even when
+        the close recovers; the fill is priced at the close (#1291)."""
+        engine = _make_engine(leverage=2.0)
+        engine.positions["BTC-USDT"] = Position(
+            "BTC-USDT", 1, 100.0, pd.Timestamp("2025-01-01"), 10.0, leverage=2.0,
+        )
+        # Hook marks at low=30: margin 500, unrealized -700 -> equity -200,
+        # <= maint (300 * 0.004 = 1.2), so liquidation fires on the wick alone.
+        bar = pd.Series({"close": 100.0, "high": 101.0, "low": 30.0})
+        ts = pd.Timestamp("2025-01-02")
+        engine.on_bar("BTC-USDT", bar, ts)
+        assert "BTC-USDT" not in engine.positions
+        assert len(engine.trades) == 1
+        assert engine.trades[0].exit_reason == "liquidation"
+
 
 # ---------------------------------------------------------------------------
 # Tiered maintenance margin

@@ -261,6 +261,9 @@ class CompositeEngine(BaseEngine):
             if check_crypto_liquidation(symbol, bar, self.positions):
                 pos = self.positions.get(symbol)
                 if pos is not None:
+                    # The hook may fire on the bar's adverse extremum (high/low);
+                    # daily bars cannot observe intra-bar timing, so the fill is
+                    # priced at the close and then slippaged adversely.
                     mark_price = float(bar.get("close", pos.entry_price))
                     liq_price = crypto_sub.apply_slippage(mark_price, -pos.direction)
                     self._close_position(symbol, liq_price, timestamp, "liquidation")

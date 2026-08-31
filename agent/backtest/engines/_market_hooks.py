@@ -306,7 +306,7 @@ def check_crypto_liquidation(
         Does NOT execute the liquidation -- caller handles that.
     """
     pos = positions.get(symbol)
-    # A 1x long's bankruptcy price is zero, so leverage <= 1 exempts it.
+    # A 1x long's bankruptcy price is zero, so leverage <= 1 exempts a 1x long.
     # A 1x short has no such floor: margin is the full notional, a 2x
     # adverse move makes margin + unrealized negative, and the position
     # would ride an impossible state on the books (#1291).
