@@ -145,8 +145,11 @@ class TestGetChart:
                                         "volume": [1000, 4000],
                                     }
                                 ],
-                                # A 4:1 split between the two bars: the raw
-                                # close halves but the adjusted close is level.
+                                # Yahoo's quote series already carries splits,
+                                # so the ratio here is the DIVIDEND factor. It
+                                # is exaggerated (0.25) rather than realistic
+                                # (~0.96) only so the scaling is legible in the
+                                # assertions below.
                                 "adjclose": [{"adjclose": [101.25, 100.0]}],
                             },
                         }

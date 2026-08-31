@@ -191,8 +191,8 @@ def get_chart(
             structurally unusable.
     """
     yahoo_symbol = map_symbol(symbol)
-    # events=div,splits makes Yahoo return the adjclose series next to the raw
-    # quote, which is the only adjusted-caliber source on this endpoint.
+    # events=div,splits makes Yahoo return the adjclose series next to the
+    # quote series, which is what lets us reach a dividend-adjusted caliber.
     params: Dict[str, Any] = {"interval": interval, "events": "div,splits"}
     if range_:
         params["range"] = range_
@@ -236,9 +236,13 @@ def _parse_chart(payload: Any, yahoo_symbol: str) -> Tuple[List[Dict[str, Any]],
 
     timestamps = result.get("timestamp") or []
     quotes = (((result.get("indicators") or {}).get("quote")) or [{}])[0] or {}
-    # Every other loader on this chain serves adjusted prices (qfq), so the
-    # raw quote would book splits as crashes and ex-dividend gaps as losses.
-    # Scale to Yahoo's adjusted close when it is present, keeping raw volume.
+    # Yahoo's quote series is ALREADY split-adjusted -- measured 2026-08-31,
+    # AAPL 2020-01-02 comes back as 75.0875 == 300.35 / 4, and the 4:1 split
+    # was 2020-08-31. What it does NOT carry is the dividend adjustment, so
+    # every ex-dividend gap books as a fake loss. adjclose/close is therefore
+    # the dividend factor alone (0.9625 for that bar); applying it to OHLC
+    # brings this source to the same qfq caliber as eastmoney/tencent.
+    # Volume stays raw, matching those loaders.
     adjclose_series = (
         (((result.get("indicators") or {}).get("adjclose")) or [{}])[0] or {}
     ).get("adjclose")
