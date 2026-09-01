@@ -164,6 +164,9 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     # mt5 leads when a local MetaTrader 5 terminal is attached (Windows-only,
     # broker feed); otherwise it reports unavailable and the chain proceeds.
     "forex":     ["mt5", "akshare", "yfinance", "local"],
+    # Yahoo index symbols (^SPX, ^NDX, ^FTSE, ^VIX, ...): served verbatim by
+    # the public chart endpoint, same as the =F/=X conventions.
+    "index":     ["yahoo", "yfinance", "local"],
 }
 
 
