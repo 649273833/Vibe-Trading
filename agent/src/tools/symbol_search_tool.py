@@ -31,6 +31,11 @@ from typing import Any, Dict, List, Optional
 
 from backtest.loaders import eastmoney_client, sec_edgar_client, yahoo_client
 from src.agent.tools import BaseTool
+from src.market_data import FIAT_CODES, canonical_fx_pair
+
+# Back-compat alias: the search tool's historical name for the shared
+# fiat-pair canonicalizer (search, fetch and grounding share one definition).
+_canonical_fx_pair = canonical_fx_pair
 
 logger = logging.getLogger(__name__)
 
@@ -74,41 +79,6 @@ _CRYPTO_PAIR_RE = re.compile(
     rf"^([A-Z0-9]{{2,15}})[-/]({'|'.join(_CRYPTO_QUOTE_ASSETS)})$",
     re.IGNORECASE,
 )
-
-# ISO-4217-style fiat codes. A pair whose BOTH legs are fiat is an FX pair,
-# never a crypto instrument: ``GBP/USD`` was previously classified as the
-# crypto pair "GBP-USD" (its quote leg USD is a crypto-connector quote asset),
-# sent to the exchange venue catalogs, and its Yahoo FX hit was discarded.
-# FX pairs resolve through Yahoo's ``XXXYYY=X`` convention instead.
-_FIAT_CODES = frozenset(
-    {
-        "USD", "EUR", "GBP", "JPY", "CHF", "CNY", "CNH", "HKD", "AUD", "NZD",
-        "CAD", "KRW", "INR", "SGD", "SEK", "NOK", "DKK", "MXN", "BRL", "ZAR",
-        "TRY", "RUB", "PLN", "THB", "MYR", "IDR", "PHP", "VND", "ILS", "AED",
-        "SAR", "EGP", "CZK", "HUF", "RON", "CLP", "COP", "PEN", "TWD", "CUP",
-    }
-)
-
-_FX_PAIR_RE = re.compile(r"^(?P<base>[A-Z]{3})(?:/)?(?P<quote>[A-Z]{3})$", re.IGNORECASE)
-
-
-def _canonical_fx_pair(value: str) -> str | None:
-    """Return a Yahoo FX pair in canonical ``XXXYYY=X`` form, or ``None``.
-
-    Recognizes ``GBP/USD``, ``GBPUSD`` and ``GBPUSD=X`` (both legs must be
-    fiat codes — ``ETH/USD`` and ``XAU/USD`` are not FX pairs) and returns
-    the canonical spelling the market-data fetch layer serves directly.
-    """
-    clean = str(value or "").strip().upper()
-    if clean.endswith("=X"):
-        clean = clean[:-2]
-    matched = _FX_PAIR_RE.fullmatch(clean)
-    if not matched:
-        return None
-    base, quote = matched.group("base"), matched.group("quote")
-    if base not in _FIAT_CODES or quote not in _FIAT_CODES:
-        return None
-    return f"{base}{quote}=X"
 
 # Eastmoney market-number -> our symbol suffix. Anything else is left unmapped
 # (those candidates are skipped rather than emitted with a wrong suffix).
@@ -334,14 +304,14 @@ def _canonical_crypto_pair(value: str) -> str | None:
     matched = _CRYPTO_PAIR_RE.fullmatch(clean)
     if matched:
         base, quote = matched.group(1), matched.group(2)
-        if base in _FIAT_CODES and quote in _FIAT_CODES:
+        if base in FIAT_CODES and quote in FIAT_CODES:
             return None  # fiat/fiat is an FX pair, not crypto
         return f"{base}-{quote}"
     if clean.isalnum():
         for quote in _CRYPTO_QUOTE_ASSETS:
             if clean.endswith(quote) and len(clean) > len(quote) + 1:
                 base = clean[: -len(quote)]
-                if base in _FIAT_CODES and quote in _FIAT_CODES:
+                if base in FIAT_CODES and quote in FIAT_CODES:
                     return None  # fiat/fiat is an FX pair, not crypto
                 return f"{base}-{quote}"
     return None

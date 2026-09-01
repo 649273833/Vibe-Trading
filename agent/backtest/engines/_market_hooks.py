@@ -60,7 +60,7 @@ _MARKET_PATTERNS = [
     # Yahoo forex suffix convention (EURUSD=X, GBPCNY=X) — served verbatim by
     # the chart endpoint. Without this rule such symbols fell through to the
     # a_share default (misrouting composite/market classification).
-    (re.compile(r"^[A-Z]{3}[A-Z]{3}=X$"), "forex"),
+    (re.compile(r"^[A-Z]{3,6}=X$"), "forex"),
     # Yahoo index symbols (^SPX, ^NDX, ^FTSE, ^VIX, ...) — served verbatim,
     # same as the =F/=X conventions. Classified as their own market so they
     # never route through an equity/China chain or a cash currency.

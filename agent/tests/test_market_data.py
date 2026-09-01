@@ -57,6 +57,10 @@ from src.market_data import (
         ("local:my_file", "local"),
         # Yahoo futures / forex suffix conventions (#718) — must not fall to the
         # ``tushare`` default (which routed them to China-market loaders).
+        ("GC=F", "yahoo"),  # gold future
+        ("CL=F", "yahoo"),  # crude future
+        ("EURUSD=X", "yahoo"),  # forex pair
+        ("JPY=X", "yahoo"),  # abbreviated forex pair
         ("^SPX", "yahoo"),  # index (S&P 500)
         ("^FTSE", "yahoo"),  # index (FTSE 100)
         ("^VIX", "yahoo"),
@@ -106,36 +110,35 @@ def test_forex_pair_x_classifies_as_forex_not_a_share() -> None:
     assert code_currency("GBPUSD=X") == "USD"
 
 
-def test_fetch_market_data_routes_index_symbols_to_yahoo() -> None:
-    """auto mode must group ^SPX under yahoo, not the tushare/China chain."""
-    seen_sources: list[str] = []
+def test_abbreviated_fx_pair_x_classes_as_forex() -> None:
+    """JPY=X (USD/JPY abbreviation) must not fall to the a_share default."""
+    from backtest.engines._market_hooks import _detect_market, code_currency
 
-    class _StubLoader:
-        def fetch(self, codes, start, end, *, interval="1D"):  # noqa: ANN001
-            index = pd.DatetimeIndex(pd.to_datetime(["2024-01-02"]))
-            return {
-                code: pd.DataFrame(
-                    {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "volume": [0.0]},
-                    index=index,
-                )
-                for code in codes
-            }
+    assert _detect_market("JPY=X") == "forex"
+    assert _detect_market("EUR=X") == "forex"
+    # The hidden base (JPY=X is USD/JPY) is not derivable — honest UNKNOWN,
+    # not a wrong CNY.
+    assert code_currency("JPY=X") == "UNKNOWN:forex"
 
-    def _resolver(source: str):
-        seen_sources.append(source)
-        return _StubLoader
 
-    out = fetch_market_data(
-        codes=["^SPX"],
-        start_date="2024-01-01",
-        end_date="2024-01-03",
-        source="auto",
-        loader_resolver=_resolver,
-    )
+def test_index_backtest_routes_to_global_equity_not_china_or_crypto() -> None:
+    """^SPX must never reach ChinaAEngine/CryptoEngine through the runner."""
+    from backtest.engines.global_equity import GlobalEquityEngine
+    from backtest.runner import _MARKET_TO_SOURCE, _create_market_engine, _detect_source
 
-    assert "_unresolved" not in out
-    assert "^SPX" in out
-    assert seen_sources and seen_sources[0] == "yahoo"
+    assert _detect_source("^SPX") == "yahoo"
+    engine = _create_market_engine("yahoo", {}, ["^SPX"])
+    assert isinstance(engine, GlobalEquityEngine)
+
+
+def test_composite_builds_index_rule_engine() -> None:
+    """A mixed book containing an index gets an index sub-engine, not a drop."""
+    from backtest.engines.global_equity import GlobalEquityEngine
+    from backtest.engines.composite import _build_rule_engines
+
+    engines = _build_rule_engines({}, ["^SPX"])
+    assert "index" in engines
+    assert isinstance(engines["index"], GlobalEquityEngine)
 
 
 def test_yahoo_loader_accepts_futures_and_forex_suffixes() -> None:

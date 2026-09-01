@@ -842,6 +842,7 @@ _MARKET_TO_SOURCE = {
     "fund": "tushare",
     "macro": "akshare",
     "forex": "akshare",
+    "index": "yahoo",
 }
 
 
@@ -1350,6 +1351,12 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
     if "vietnam_equity" in markets:
         from backtest.engines.vietnam_equity import VietnamEquityEngine
         return VietnamEquityEngine(config)
+    # Index symbols (^SPX, ^FTSE, ...) — priced like a US/global-listed
+    # instrument (GlobalEquityEngine, US rules) and never the China/crypto
+    # default the source-based fallback would pick.
+    if "index" in markets:
+        from backtest.engines.global_equity import GlobalEquityEngine
+        return GlobalEquityEngine(config, market=_detect_submarket(codes))
 
     # Original routing (Wave 1)
     if source in ("okx", "ccxt"):

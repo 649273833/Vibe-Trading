@@ -2471,3 +2471,45 @@ def test_a_us_csv_stem_resolves_to_its_venue_suffix() -> None:
     assert _symbol_from_csv_filename("GC_F") == "GC=F"
     # A bare name has no venue suffix and must stay unresolvable.
     assert _symbol_from_csv_filename("AAPL") is None
+
+
+class TestFiatPairAndIndexNormalization:
+    """Search, fetch and grounding agree on one FX spelling; ^ is a symbol."""
+
+    def test_fiat_pair_spellings_normalize_to_yahoo_form(self) -> None:
+        from src.agent.grounding import _normalize_symbol
+
+        assert _normalize_symbol("GBP/USD") == "GBPUSD=X"
+        assert _normalize_symbol("GBPUSD") == "GBPUSD=X"
+        assert _normalize_symbol("GBPUSD=X") == "GBPUSD=X"
+        # Crypto/metals keep their pair form — not fiat/fiat FX.
+        assert _normalize_symbol("ETH/USD") == "ETH-USD"
+        assert _normalize_symbol("XAU/USD") == "XAU-USD"
+
+    def test_scanned_slashed_pair_matches_resolver_answer(self) -> None:
+        """The query-as-asserted scan must agree with the chosen candidate."""
+        from src.agent.grounding import _scan_symbols
+
+        assert _scan_symbols("use GBP/USD spot") == {"GBPUSD=X"}
+
+    def test_index_symbols_are_scanned_and_typed(self) -> None:
+        from src.agent.grounding import (
+            _infer_currency,
+            _infer_instrument_type,
+            _scan_symbols,
+        )
+
+        assert _scan_symbols("quote ^SPX") == {"^SPX"}
+        assert _infer_instrument_type("^SPX", "INDEX") == "index"
+        assert _infer_instrument_type("^SPX") == "index"
+        assert _infer_currency("GBPUSD=X") == "USD"
+
+    def test_ingest_search_symbol_does_not_create_conflicting_identity(self) -> None:
+        """The flagship regression: ingest('GBP/USD') must lock, never conflict."""
+        from src.agent.grounding import _normalize_symbol
+
+        # Chosen (from search_symbol) and asserted (the query text) must be
+        # the same canonical identity — the comparison in _ingest_resolution.
+        chosen = _normalize_symbol("GBPUSD=X")
+        asserted = _scan_symbols("GBP/USD")
+        assert chosen in asserted
