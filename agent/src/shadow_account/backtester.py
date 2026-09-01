@@ -272,6 +272,7 @@ def run_shadow_backtest(
         journal_path=journal_path,
         combined=combined,
         initial_capital=initial_capital,
+        pool_currency=headline_currency,
     )
 
     result = ShadowBacktestResult(
@@ -524,6 +525,7 @@ def _attribution_or_zero(
     journal_path: str | Path | None,
     combined: dict[str, float],
     initial_capital: float,
+    pool_currency: str | None = None,
 ) -> tuple[AttributionBreakdown, float | None, float]:
     """Compute attribution if the journal is available, else return zeros."""
     shadow_pnl = _shadow_pnl_from_metrics(combined, initial_capital)
@@ -546,7 +548,12 @@ def _attribution_or_zero(
     if not roundtrips:
         return _zero_attribution(), shadow_pnl, 0.0
 
-    return _compute_attribution(profile=profile, roundtrips=roundtrips, shadow_pnl=shadow_pnl)
+    return _compute_attribution(
+        profile=profile,
+        roundtrips=roundtrips,
+        shadow_pnl=shadow_pnl,
+        pool_currency=pool_currency,
+    )
 
 
 def _zero_attribution() -> AttributionBreakdown:
@@ -565,6 +572,7 @@ def _compute_attribution(
     profile: ShadowProfile,
     roundtrips: list[dict[str, Any]],
     shadow_pnl: float,
+    pool_currency: str | None = None,
 ) -> tuple[AttributionBreakdown, float, float]:
     """Attribute the delta between user's real PnL and shadow PnL.
 
@@ -583,35 +591,58 @@ def _compute_attribution(
 
     ``counterfactual_trades`` lists the top-5 |impact| roundtrips for
     Section 6 of the report.
+
+    ``pool_currency`` restricts the comparison to the shadow pool's currency:
+    the pool is single-currency, so roundtrips settling in other currencies
+    are excluded from ``real_pnl`` and counted in
+    ``AttributionBreakdown.excluded_currencies`` instead of being summed
+    against it (#14).
     """
     rule_hold_lo, rule_hold_hi = _aggregate_holding_range(profile)
     noise = 0.0
     early = 0.0
     late = 0.0
+    excluded_currencies: dict[str, int] = {}
+    pool_roundtrips = [
+        rt
+        for rt in roundtrips
+        if pool_currency is None or code_currency(rt["symbol"]) == pool_currency
+    ]
+    if pool_currency is not None:
+        for rt in roundtrips:
+            currency = code_currency(rt["symbol"])
+            if currency != pool_currency:
+                excluded_currencies[currency] = excluded_currencies.get(currency, 0) + 1
     real_pnl = 0.0
     counterfactuals: list[dict[str, Any]] = []
 
-    for rt in roundtrips:
+    for rt in pool_roundtrips:
         pnl = float(rt["pnl"])
         real_pnl += pnl
         hold = float(rt["hold_days"])
         within_rule = rule_hold_lo <= hold <= rule_hold_hi
         impact = 0.0
         reason = ""
+        # Buckets are mutually exclusive (#17): a too-short winner belongs to
+        # early-exit and a too-long loser to late-exit; only the remaining
+        # out-of-range trades count as rule-violation noise. Without the
+        # split, those trades landed in both noise and early/late and
+        # `explained` summed them twice.
         if not within_rule:
-            noise += -pnl
-            impact += -pnl
-            reason = "rule_violation"
-        if pnl > 0 and hold < rule_hold_lo:
-            shortfall = pnl * max(0.0, (rule_hold_lo - hold) / max(rule_hold_lo, 1))
-            early += shortfall
-            impact += shortfall
-            reason = reason or "early_exit"
-        if pnl < 0 and hold > rule_hold_hi:
-            excess = -pnl * max(0.0, (hold - rule_hold_hi) / max(rule_hold_hi, 1))
-            late += excess
-            impact += excess
-            reason = reason or "late_exit"
+            if pnl > 0 and hold < rule_hold_lo:
+                shortfall = pnl * max(0.0, (rule_hold_lo - hold) / max(rule_hold_lo, 1))
+                early += shortfall
+                impact += shortfall
+                reason = "early_exit"
+            elif pnl < 0 and hold > rule_hold_hi:
+                excess = -pnl * max(0.0, (hold - rule_hold_hi) / max(rule_hold_hi, 1))
+                late += excess
+                impact += excess
+                reason = "late_exit"
+            else:
+                noise += -pnl
+                impact += -pnl
+                reason = "rule_violation"
         if impact != 0.0:
             counterfactuals.append({
                 "symbol": rt["symbol"],
@@ -623,7 +654,7 @@ def _compute_attribution(
                 "reason": reason,
             })
 
-    overtrading = _overtrading_pnl(profile=profile, roundtrips=roundtrips)
+    overtrading = _overtrading_pnl(profile=profile, roundtrips=pool_roundtrips)
     explained = noise + early + late + overtrading
     missed = round(shadow_pnl - real_pnl - explained, 2)
 
@@ -638,6 +669,7 @@ def _compute_attribution(
             late_exit_pnl=round(late, 2),
             overtrading_pnl=round(overtrading, 2),
             counterfactual_trades=top5,
+            excluded_currencies=excluded_currencies,
         ),
         round(shadow_pnl, 2),
         round(real_pnl, 2),
