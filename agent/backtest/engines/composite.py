@@ -17,6 +17,7 @@ from backtest.engines._market_hooks import (
     _detect_market,
     _interval_span_hours,
     _is_china_futures,
+    _liquidation_mark,
     code_currency,
     calc_crypto_funding_fee,
     check_crypto_liquidation,
@@ -268,8 +269,9 @@ class CompositeEngine(BaseEngine):
             if check_crypto_liquidation(symbol, bar, self.positions):
                 pos = self.positions.get(symbol)
                 if pos is not None:
-                    mark_price = float(bar.get("close", pos.entry_price))
-                    liq_price = crypto_sub.apply_slippage(mark_price, -pos.direction)
+                    # Fill at the same adverse mark the hook used for the check so
+                    # a wick trigger never exits at a better price than the venue.
+                    liq_price = crypto_sub.apply_slippage(_liquidation_mark(bar, pos), -pos.direction)
                     self._close_position(symbol, liq_price, timestamp, "liquidation")
 
         elif market == "forex":
