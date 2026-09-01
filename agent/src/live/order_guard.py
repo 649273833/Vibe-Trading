@@ -258,6 +258,7 @@ class LiveOrderGuardTool(MCPRemoteTool):
             notional_usd=enforced,
             quantity=intent.quantity,
             instrument_type=intent.instrument_type,
+            limit_price=intent.limit_price,
         )
 
     def _quote_price(self, intent: OrderIntent) -> float | None:
