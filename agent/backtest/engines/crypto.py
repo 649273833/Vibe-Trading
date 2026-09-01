@@ -17,6 +17,7 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines._market_hooks import (
+    _interval_span_hours,
     calc_crypto_funding_fee,
     check_crypto_liquidation,
 )
@@ -603,6 +604,7 @@ class CryptoEngine(BaseEngine):
         fee = calc_crypto_funding_fee(
             symbol, bar, timestamp, self.positions,
             self.funding_rate, self._funding_applied, self._funding_daily_done,
+            _interval_span_hours(self._run_interval),
         )
         self.capital -= fee
 

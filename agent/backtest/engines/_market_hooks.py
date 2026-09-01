@@ -225,6 +225,19 @@ _TIER_TABLE = [
 FUNDING_HOURS = {0, 8, 16}
 
 
+def _interval_span_hours(interval: str) -> float | None:
+    """Bar span in hours for a runner interval token, ``None`` when unknown.
+
+    The runner accepts only 1m/5m/15m/30m/1H/4H/1D, so ``m`` is minutes here
+    (there is no monthly token to confuse it with).
+    """
+    token = str(interval).strip()
+    for suffix, scale in (("m", 1 / 60), ("H", 1.0), ("D", 24.0)):
+        if token.endswith(suffix) and token[: -len(suffix)].isdigit():
+            return int(token[: -len(suffix)]) * scale
+    return None
+
+
 def _maintenance_rate(notional_usd: float) -> float:
     """Look up tiered maintenance margin rate."""
     for tier_max, rate in _TIER_TABLE:
@@ -241,6 +254,7 @@ def calc_crypto_funding_fee(
     funding_rate: float,
     applied_set: set,
     daily_done_set: set,
+    bar_span_hours: float | None = None,
 ) -> float:
     """Calculate crypto funding fee for one symbol.
 
@@ -253,6 +267,12 @@ def calc_crypto_funding_fee(
             carries no historical ``funding_rate`` column.
         applied_set: (symbol, date, hour) dedup set — mutated.
         daily_done_set: (symbol, date) dedup set — mutated.
+        bar_span_hours: Bar span in hours when known. At 8h or wider the
+            settlement count comes from the span (``max(1, span // 8)`` per
+            bar), because a daily bar can never land on the 8h/16h slots:
+            without this a daily-bar run charges a third of the documented
+            funding model (#1290). Narrower bars keep the slot logic below
+            unchanged.
 
     Returns:
         Fee amount (positive = longs pay, negative = longs receive).
@@ -263,7 +283,14 @@ def calc_crypto_funding_fee(
     current_date = timestamp.date()
     hour = timestamp.hour if hasattr(timestamp, "hour") else 0
 
-    if hour in FUNDING_HOURS:
+    settlements = 1
+    if bar_span_hours is not None and bar_span_hours >= 8:
+        settlements = max(1, int(bar_span_hours // 8))
+        key = (symbol, current_date, hour)
+        if key in applied_set:
+            return 0.0
+        applied_set.add(key)
+    elif hour in FUNDING_HOURS:
         key = (symbol, current_date, hour)
         if key in applied_set:
             return 0.0
@@ -286,7 +313,7 @@ def calc_crypto_funding_fee(
     hist = bar.get("funding_rate")
     if hist is not None and pd.notna(hist):
         funding_rate = float(hist)
-    return notional * funding_rate * pos.direction
+    return notional * funding_rate * pos.direction * settlements
 
 
 def check_crypto_liquidation(
