@@ -19,6 +19,7 @@ the per-leg vol every pricing site must agree on.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,19 +35,25 @@ from src.quantlib.options import bs_greeks, bs_price, normalise_option_type
 # --- Historical volatility ---
 
 
-def historical_volatility(close: pd.Series, window: int = 30) -> pd.Series:
+def historical_volatility(
+    close: pd.Series, window: int = 30, default_iv: float = 0.3
+) -> pd.Series:
     """Calculate annualised historical volatility from a close price series.
 
     Args:
         close: Close price Series.
         window: Rolling window in days.
+        default_iv: Volatility used for any bar without a full rolling window
+            (the leading warm-up and NaN gaps). Backfilling the first computed
+            window here would price bars before it with information from the
+            window's own end (#1293).
 
     Returns:
         Annualised historical volatility Series.
     """
     log_ret = np.log(close / close.shift(1))
     hv = log_ret.rolling(window=window).std() * np.sqrt(252)
-    return hv.fillna(hv.dropna().iloc[0] if len(hv.dropna()) > 0 else 0.3)
+    return hv.fillna(default_iv)
 
 
 # --- IV Smile model (v2) ---
@@ -214,6 +221,9 @@ def run_options_backtest(
     iv_skew = options_cfg.get("iv_skew", 0.0)         # v2: smile skew param (0 = flat)
     iv_curvature = options_cfg.get("iv_curvature", 0.0)  # v2: smile curvature
     same_day_fill = options_cfg.get("same_day_fill", False)
+    default_iv = options_cfg.get("default_iv", 0.3)
+    if not math.isfinite(default_iv) or default_iv <= 0.0:
+        raise ValueError("options_config.default_iv must be a finite, positive float")
 
     # Load underlying data
     data_map = loader.fetch(codes, start_date, end_date)
@@ -224,7 +234,7 @@ def run_options_backtest(
     # Compute implied volatility (approximated by historical volatility)
     iv_map: Dict[str, pd.Series] = {}
     for code, df in data_map.items():
-        iv_map[code] = historical_volatility(df["close"])
+        iv_map[code] = historical_volatility(df["close"], default_iv=default_iv)
 
     # Generate trade signals
     signals = engine.generate(data_map)
@@ -282,14 +292,22 @@ def run_options_backtest(
         for code, df in data_map.items():
             if ts in df.index:
                 spot_prices[code] = float(df.at[ts, "close"])
-                ivs[code] = float(iv_map[code].at[ts]) if ts in iv_map[code].index else 0.3
+                ivs[code] = (
+                    float(iv_map[code].at[ts])
+                    if ts in iv_map[code].index
+                    else default_iv
+                )
             else:
                 # Use the last available price
                 before = df.index[df.index <= ts]
                 if len(before) > 0:
                     last = before[-1]
                     spot_prices[code] = float(df.at[last, "close"])
-                    ivs[code] = float(iv_map[code].at[last]) if last in iv_map[code].index else 0.3
+                    ivs[code] = (
+                        float(iv_map[code].at[last])
+                        if last in iv_map[code].index
+                        else default_iv
+                    )
 
         # 2a. American early exercise (v2): exercise if intrinsic > continuation
         if exercise_style == "american":
@@ -297,7 +315,7 @@ def run_options_backtest(
                 if pos.is_expired(ts):
                     continue  # handled below
                 spot = spot_prices.get(pos.underlying_code, 0.0)
-                iv_val_ex = ivs.get(pos.underlying_code, 0.3)
+                iv_val_ex = ivs.get(pos.underlying_code, default_iv)
                 T_ex = pos.time_to_expiry(ts)
                 if T_ex <= 0:
                     continue
@@ -333,7 +351,7 @@ def run_options_backtest(
             underlying = sig.get("underlying", codes[0] if codes else "")
 
             spot = spot_prices.get(underlying, 0.0)
-            iv_val = ivs.get(underlying, 0.3)
+            iv_val = ivs.get(underlying, default_iv)
 
             for leg in legs:
                 # Fold before it is priced, matched and recorded: config comes
@@ -474,7 +492,7 @@ def run_options_backtest(
 
         for pos in positions:
             spot = spot_prices.get(pos.underlying_code, 0.0)
-            iv_val = ivs.get(pos.underlying_code, 0.3)
+            iv_val = ivs.get(pos.underlying_code, default_iv)
             T = pos.time_to_expiry(ts)
 
             mark_iv = leg_iv(spot, pos.strike, iv_val, iv_skew, iv_curvature)
