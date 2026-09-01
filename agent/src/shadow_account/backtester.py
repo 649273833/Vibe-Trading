@@ -34,7 +34,7 @@ from src.shadow_account.models import (
 )
 from src.shadow_account.storage import runs_dir
 from src.tools.trade_journal_parsers import parse_file, records_to_dataframe
-from src.tools.trade_journal_tool import pair_trades_fifo
+from src.tools.trade_journal_tool import build_frame_adjust, pair_trades_fifo
 
 logger = logging.getLogger(__name__)
 
@@ -267,12 +267,23 @@ def run_shadow_backtest(
     if headline_points:
         equity_curves["combined"] = headline_points
 
+    # Restate journal legs to one price caliber where the run's own adjusted
+    # frames cover the symbol; uncovered symbols stay raw (see #15).
+    adjust_frames: dict[str, pd.DataFrame] = {}
+    for currency, _, _, _ in group_results:
+        artifacts_dir = base_dir / currency / "artifacts"
+        if artifacts_dir.is_dir():
+            for ohlcv_csv in artifacts_dir.glob("ohlcv_*.csv"):
+                symbol = ohlcv_csv.stem.removeprefix("ohlcv_")
+                frame = pd.read_csv(ohlcv_csv, index_col=0, parse_dates=True)
+                adjust_frames.setdefault(symbol, frame)
     attribution, shadow_pnl, real_pnl = _attribution_or_zero(
         profile=profile,
         journal_path=journal_path,
         combined=combined,
         initial_capital=initial_capital,
         pool_currency=headline_currency,
+        adjust=build_frame_adjust(adjust_frames) if adjust_frames else None,
     )
 
     result = ShadowBacktestResult(
@@ -526,6 +537,7 @@ def _attribution_or_zero(
     combined: dict[str, float],
     initial_capital: float,
     pool_currency: str | None = None,
+    adjust=None,
 ) -> tuple[AttributionBreakdown, float | None, float]:
     """Compute attribution if the journal is available, else return zeros."""
     shadow_pnl = _shadow_pnl_from_metrics(combined, initial_capital)
@@ -540,7 +552,7 @@ def _attribution_or_zero(
     try:
         _, records = parse_file(path)
         trades_df = records_to_dataframe(records)
-        roundtrips = pair_trades_fifo(trades_df)
+        roundtrips = pair_trades_fifo(trades_df, adjust=adjust)
     except Exception as exc:
         logger.warning("Attribution skipped — journal parse failed: %s", exc)
         return _zero_attribution(), shadow_pnl, 0.0
