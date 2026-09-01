@@ -153,6 +153,9 @@ class CompositeEngine(BaseEngine):
             ValueError: If the codes span more than one settlement currency.
         """
         _reject_mixed_currency(config.get("codes") or list(self._symbol_market))
+        # The run config, not the construction config, is authoritative for the
+        # bar span — same convention as CryptoEngine.run_backtest.
+        self._run_interval = str(config.get("interval", "1D"))
         return super().run_backtest(config, *args, **kwargs)
 
     def _rule_for(self, symbol: str) -> BaseEngine:
