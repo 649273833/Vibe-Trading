@@ -26,6 +26,8 @@ from backtest.loaders.registry import (
     LOADER_REGISTRY,
     VALID_SOURCES,
     get_loader_cls_with_fallback,
+    mixed_caliber_warning,
+    price_caliber,
     resolve_loader,
 )
 from backtest.loaders.base import NoAvailableSourceError, validate_ohlc
@@ -58,6 +60,9 @@ class DataFetchResult:
     source: str
     loader: Any
     effective_sources: List[str]
+    # Mixed-caliber warning for the served basket (#1301), None when every
+    # served symbol shares one comparable caliber (or none is measurable).
+    caliber_warning: str | None = None
 
 
 class BacktestConfigSchema(BaseModel):
@@ -1261,6 +1266,8 @@ def main(run_dir: Path) -> None:
     loader = fetch_result.loader
     config["codes"] = codes
     config["_run_card_effective_sources"] = fetch_result.effective_sources
+    if fetch_result.caliber_warning:
+        config["_run_card_caliber_warning"] = fetch_result.caliber_warning
     interval = config.get("interval", "1D")
     if not data_map:
         print(json.dumps({"error": "No data fetched"}))
@@ -1424,6 +1431,7 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
     market_groups = _group_codes_by_market(codes)
     merged = {}
     served_by: set[str] = set()
+    caliber_stamps: dict[str, tuple[str, str]] = {}
     start_date = config.get("start_date", "")
     end_date = config.get("end_date", "")
 
@@ -1452,6 +1460,8 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
         )
         if market_result:
             served_by.add(src_name)
+            for code in market_result:
+                caliber_stamps[code] = (src_name, price_caliber(src_name, market))
         missing = [code for code in market_codes if code not in market_result]
 
         # Retry only missing symbols so a partial primary response does not
@@ -1472,7 +1482,10 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
             if mapped:
                 market_result.update(mapped)
                 missing = [code for code in missing if code not in mapped]
-                served_by.add(str(getattr(fb_loader, "name", fb_name) or fb_name))
+                fb_served_by = str(getattr(fb_loader, "name", fb_name) or fb_name)
+                served_by.add(fb_served_by)
+                for code in mapped:
+                    caliber_stamps[code] = (fb_served_by, price_caliber(fb_served_by, market))
                 logger.info(
                     "Runtime fallback: %s -> %s for %s", src_name, fb_name, market
                 )
@@ -1484,6 +1497,7 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
         merged.update(market_result)
 
     config["_actual_sources"] = sorted(served_by)
+    config["_caliber_stamps"] = caliber_stamps
     return merged
 
 
@@ -1504,12 +1518,14 @@ def fetch_data_map(config: dict) -> DataFetchResult:
     codes = list(config.get("codes") or [])
     interval = str(config.get("interval") or "1D")
 
+    caliber_stamps: dict[str, tuple[str, str]] = {}
     if source == "auto":
         data_map = _fetch_auto(codes, config, interval)
         loader: Any = _AutoLoader(data_map)
         # Prefer the loaders that actually served rows; the symbol-pattern guess
         # is only a fallback for a stubbed/patched fetcher that recorded nothing.
         recorded = config.pop("_actual_sources", None)
+        caliber_stamps = config.pop("_caliber_stamps", None) or {}
         used_sources: list[str] = [
             str(name) for name in recorded or [] if str(name).strip()
         ] or sorted(_group_codes_by_source(codes))
@@ -1536,6 +1552,11 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             fields=config.get("extra_fields") or None,
             interval=interval,
         )
+        for code in data_map:
+            caliber_stamps[code] = (
+                served_by,
+                price_caliber(served_by, _detect_market(code)),
+            )
         used_sources = [served_by] if data_map else []
         missing = [code for code in codes if code not in data_map]
         if missing:
@@ -1576,6 +1597,11 @@ def fetch_data_map(config: dict) -> DataFetchResult:
                         getattr(fallback_loader, "name", fallback_source)
                         or fallback_source
                     )
+                    for code in mapped:
+                        caliber_stamps[code] = (
+                            fb_served_by,
+                            price_caliber(fb_served_by, _detect_market(code)),
+                        )
                     if not used_sources:
                         source = fb_served_by
                         loader = fallback_loader
@@ -1590,12 +1616,19 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             )
 
     data_map = _sanitize_data_map(data_map)
+    caliber_stamps = {
+        code: stamp for code, stamp in caliber_stamps.items() if code in data_map
+    }
+    caliber_warning = mixed_caliber_warning(caliber_stamps)
+    if caliber_warning:
+        logger.warning("%s", caliber_warning)
     return DataFetchResult(
         data_map=data_map,
         codes=codes,
         source=source,
         loader=loader,
         effective_sources=used_sources,
+        caliber_warning=caliber_warning,
     )
 
 
