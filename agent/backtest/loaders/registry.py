@@ -192,12 +192,12 @@ PRICE_CALIBER_BY_SOURCE: dict[str, str] = {
     "akshare": "split_dividend",  # adjust="qfq", including the stock_us_hist path
     "baostock": "split_dividend",  # adjustflag="2"
     "tushare": "split_dividend",  # adj_factor applied via cn_adjust (A-share/fund)
+    "tiingo": "split_dividend",  # prefers adjOpen/High/Low/Close, else adjClose/close
+    "fmp": "split_dividend",  # Stable historical-price-eod/full, scaled by adjClose/close
     # Split-adjusted only.
     "pykrx": "split",  # get_market_ohlcv_by_date(adjusted=True), Naver-backed
     # Unadjusted.
     "sina": "raw",
-    "tiingo": "raw",  # fetches adjusted columns and deliberately drops them
-    "fmp": "raw",  # historical-price-full only, never the adjusted variant
     "alphavantage": "raw",  # TIME_SERIES_DAILY, not the _ADJUSTED endpoint
     "longbridge": "raw",  # pins AdjustType.NoAdjust
 }
