@@ -453,6 +453,7 @@ def get_loader_cls_with_fallback(source: str) -> Type[Any]:
                      "(~/.vibe-trading/data-bridge/config.yaml) — it must exist and "
                      "list at least one source.",
             "tickerall": "Set TICKERALL_API_KEY and TICKERALL_ACCOUNT_ID.",
+            "fmp": "Set FMP_API_KEY.",
         }.get(source, "")
         raise NoAvailableSourceError(
             f"Data source '{source}' is unavailable and does not fall back to a "
