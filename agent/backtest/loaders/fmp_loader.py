@@ -10,9 +10,10 @@ API format (public, documented):
     ?symbol=SYMBOL&from=YYYY-MM-DD&to=YYYY-MM-DD&apikey=KEY
 
 The JSON body is a top-level array ``[{date, open, high, low, close,
-volume}, ...]`` in ascending date order (legacy ``{"symbol": "AAPL",
-"historical": [...]}`` shape is still accepted for compatibility); an unknown
-symbol or empty window yields an empty array.
+adjClose, volume}, ...]`` (legacy ``{"symbol": "AAPL", "historical": [...]}``
+shape is still accepted for compatibility); an unknown symbol or empty window
+yields an empty array. The parser sorts by date, so the order the endpoint
+happens to return is not relied on.
 
 Auth: set ``FMP_API_KEY`` in the environment. Covers US equities only.
 """
@@ -146,7 +147,10 @@ class DataLoader:
         return result
 
     def _fetch_one(
-        self, code: str, start_date: str, end_date: str,
+        self,
+        code: str,
+        start_date: str,
+        end_date: str,
     ) -> Optional[pd.DataFrame]:
         """Fetch and parse one symbol's daily bars; ``None`` on no data.
 
@@ -175,7 +179,12 @@ class DataLoader:
             _BASE_URL,
             host_key=_HOST_KEY,
             min_interval=_min_interval(),
-            params={"symbol": symbol, "from": start_date, "to": end_date, "apikey": api_key},
+            params={
+                "symbol": symbol,
+                "from": start_date,
+                "to": end_date,
+                "apikey": api_key,
+            },
         )
         return _parse_historical(payload)
 
@@ -186,17 +195,26 @@ def _parse_historical(payload: Any) -> Optional[pd.DataFrame]:
     Stable API returns a top-level array; legacy ``{"historical": [...]}``
     shape is accepted for compatibility.
 
+    The endpoint carries dividend- and split-adjusted closes in ``adjClose``.
+    OHLC is scaled by ``adjClose/close`` when present so backtests see
+    total-return prices rather than raw gaps — the same split_dividend caliber
+    eastmoney/tencent/yahoo/yfinance serve, and what this source is registered
+    as in ``PRICE_CALIBER_BY_SOURCE``. Volume is never scaled.
+
     Args:
         payload: Decoded JSON body from the historical-price endpoint.
+            Accepts both the legacy ``{"historical": [...]}`` dict and the
+            Stable top-level ``[...]`` array.
 
     Returns:
         DataFrame indexed by ``trade_date`` with float ``open/high/low/close/
-        volume`` columns, or ``None`` when no usable rows are present.
+        volume`` columns (adjusted), or ``None`` when no usable rows are present.
     """
     if isinstance(payload, list):
         historical = payload
     elif isinstance(payload, dict):
-        historical = payload.get("historical")
+        h = payload.get("historical")
+        historical = h if isinstance(h, list) else None
     else:
         historical = None
     if not historical:
@@ -206,12 +224,29 @@ def _parse_historical(payload: Any) -> Optional[pd.DataFrame]:
     for bar in historical:
         if not isinstance(bar, dict) or "date" not in bar:
             continue
-        rows.append(
-            {
-                "trade_date": bar["date"],
-                **{field: bar.get(field) for field in _OHLCV_FIELDS},
-            }
-        )
+        adj_close = bar.get("adjClose")
+        close_raw = bar.get("close")
+        ratio: Optional[float] = None
+        try:
+            if adj_close is not None and close_raw is not None:
+                ac = float(adj_close)
+                cr = float(close_raw)
+                if cr > 0 and ac > 0:
+                    r = ac / cr
+                    if 0.01 <= r <= 100:
+                        ratio = r
+        except (TypeError, ValueError):
+            ratio = None
+        row = {"trade_date": bar["date"]}
+        for field in _OHLCV_FIELDS:
+            val = bar.get(field)
+            if field != "volume" and ratio is not None and val is not None:
+                try:
+                    val = float(val) * ratio
+                except (TypeError, ValueError):
+                    pass
+            row[field] = val
+        rows.append(row)
 
     if not rows:
         return None
