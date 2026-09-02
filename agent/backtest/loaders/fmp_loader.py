@@ -6,12 +6,13 @@ routes through :mod:`backtest.loaders._http` so calls share one process-wide
 minimum-spacing gate and a reused session.
 
 API format (public, documented):
-  https://financialmodelingprep.com/api/v3/historical-price-full/{SYMBOL}
-    ?from=YYYY-MM-DD&to=YYYY-MM-DD&apikey=KEY
+  https://financialmodelingprep.com/stable/historical-price-eod/full
+    ?symbol=SYMBOL&from=YYYY-MM-DD&to=YYYY-MM-DD&apikey=KEY
 
-The JSON body is ``{"symbol": "AAPL", "historical": [{date, open, high, low,
-close, volume}, ...]}`` in descending date order; an unknown symbol or empty
-window yields an empty/absent ``historical`` array.
+The JSON body is a top-level array ``[{date, open, high, low, close,
+volume}, ...]`` in ascending date order (legacy ``{"symbol": "AAPL",
+"historical": [...]}`` shape is still accepted for compatibility); an unknown
+symbol or empty window yields an empty array.
 
 Auth: set ``FMP_API_KEY`` in the environment. Covers US equities only.
 """
@@ -30,7 +31,7 @@ from backtest.loaders.registry import register
 logger = logging.getLogger(__name__)
 
 _API_KEY_ENV = "FMP_API_KEY"
-_BASE_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
+_BASE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 
 # Shared throttle/session bucket for every FMP request in this process.
 _HOST_KEY = "fmp"
@@ -171,16 +172,19 @@ class DataLoader:
             return None
 
         payload = throttled_get_json(
-            f"{_BASE_URL}/{symbol}",
+            _BASE_URL,
             host_key=_HOST_KEY,
             min_interval=_min_interval(),
-            params={"from": start_date, "to": end_date, "apikey": api_key},
+            params={"symbol": symbol, "from": start_date, "to": end_date, "apikey": api_key},
         )
         return _parse_historical(payload)
 
 
 def _parse_historical(payload: Any) -> Optional[pd.DataFrame]:
     """Convert an FMP historical-price body into an ascending OHLCV frame.
+
+    Stable API returns a top-level array; legacy ``{"historical": [...]}``
+    shape is accepted for compatibility.
 
     Args:
         payload: Decoded JSON body from the historical-price endpoint.
@@ -189,7 +193,12 @@ def _parse_historical(payload: Any) -> Optional[pd.DataFrame]:
         DataFrame indexed by ``trade_date`` with float ``open/high/low/close/
         volume`` columns, or ``None`` when no usable rows are present.
     """
-    historical = (payload or {}).get("historical") if isinstance(payload, dict) else None
+    if isinstance(payload, list):
+        historical = payload
+    elif isinstance(payload, dict):
+        historical = payload.get("historical")
+    else:
+        historical = None
     if not historical:
         return None
 

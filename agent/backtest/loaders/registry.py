@@ -128,7 +128,10 @@ def _ensure_registered() -> None:
 # An explicit ``local`` request that is unavailable is a config problem the user
 # must see, not something to paper over with a Yahoo/Tencent fetch.
 # ``tickerall`` joins for the same reason (explicit-only, the user's own broker key).
-_NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris", "tickerall"})  # QVERIS-INTEGRATION
+# ``fmp`` joins because an explicit ``source="fmp"`` request must not silently
+# return data from a different source when the Stable endpoint 403s — the
+# caller asked for FMP provenance, not a Yahoo fallback (issue #1270).
+_NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris", "tickerall", "fmp"})  # QVERIS-INTEGRATION
 
 
 # ---------------------------------------------------------------------------
