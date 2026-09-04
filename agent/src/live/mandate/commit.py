@@ -54,6 +54,35 @@ def _is_real_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+#: The leverage axis is the one clamped limit whose FLOOR is spelled as a word:
+#: ``"none"`` means cash only, and it is this module's own default
+#: (``leverage_raw = profile.get("leverage", "none")`` below). It is therefore
+#: not an "invalid non-numeric type" — it is the most conservative value on the
+#: axis, and it has to sort BELOW every number rather than fall into a
+#: fail-closed reject branch. Without this, narrowing 2x -> cash-only is refused
+#: while the equivalent 2x -> 1.0 is accepted, so the gate rejects the safest
+#: option a user can pick.
+_LEVERAGE_FLOOR_SENTINELS = ("none", None)
+
+
+def _normalize_leverage(value: Any) -> float | None:
+    """Return leverage as a comparable float, or ``None`` when it is not one.
+
+    Args:
+        value: Raw leverage from a profile, ceiling snapshot or adjustment.
+
+    Returns:
+        ``1.0`` for the cash-only sentinel, the value itself for a real
+        (non-bool) number, and ``None`` for anything else — a string like
+        ``"10"``, a bool, or any other type — so the caller fails closed.
+    """
+    if value is None or (isinstance(value, str) and value.strip().casefold() == "none"):
+        return 1.0
+    if _is_real_number(value):
+        return float(value)
+    return None
+
+
 #: Maps every accepted alias of a clamped limit to its CANONICAL name. The
 #: proposal profile, the ceiling snapshot, and the clamp in
 #: ``propose_mandate_tool`` all use slightly different human-vs-schema spellings
@@ -267,7 +296,25 @@ def _resolve_profile(
             if key not in resolved:
                 raise CommitError(f"adjustment {key!r} is not a field of the selected profile")
             current = resolved[key]
-            if _is_real_number(current):
+            if key == "leverage" and (
+                current in _LEVERAGE_FLOOR_SENTINELS or value in _LEVERAGE_FLOOR_SENTINELS
+            ):
+                # Cash-only sits at the floor of this axis, so compare on the
+                # normalized scale instead of by type. Narrowing 2x -> "none"
+                # is the safest adjustment there is and must commit.
+                current_lev = _normalize_leverage(current)
+                new_lev = _normalize_leverage(value)
+                if current_lev is None or new_lev is None:
+                    raise CommitError(
+                        f"adjustment {key!r}={value!r} has an invalid type for the rendered limit "
+                        f"{current!r}; leverage narrowing requires a number or \"none\""
+                    )
+                if new_lev > current_lev:
+                    raise CommitError(
+                        f"adjustment {key!r}={value!r} widens the rendered limit {current!r}; "
+                        "widening must go through a fresh proposal"
+                    )
+            elif _is_real_number(current):
                 if not _is_real_number(value):
                     raise CommitError(
                         f"adjustment {key!r}={value!r} has an invalid type for the rendered limit "
@@ -325,9 +372,15 @@ def _profile_fits_ceilings(profile: Mapping[str, Any], ceilings: Mapping[str, An
         if key not in prof:
             continue
         prof_value = prof[key]
-        if key == "leverage" and ceiling_value == "none":
-            # Cash-only ceiling forbids any leverage other than "none".
-            if prof_value is True or prof_value is False or prof_value not in ("none", None, 1, 1.0):
+        if key == "leverage":
+            # One scale for both sides: "none" is the floor (1.0), not a type
+            # error. A cash-only ceiling therefore still forbids any real
+            # leverage, and a cash-only PROFILE still fits a numeric ceiling.
+            ceiling_lev = _normalize_leverage(ceiling_value)
+            prof_lev = _normalize_leverage(prof_value)
+            if ceiling_lev is None or prof_lev is None:
+                return False
+            if prof_lev > ceiling_lev:
                 return False
         elif key == "allowed_instruments":
             # A whitelist may only be narrowed, never widened at commit time.

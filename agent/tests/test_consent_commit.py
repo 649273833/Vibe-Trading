@@ -672,3 +672,79 @@ def test_registry_has_propose_tool_but_no_mandate_writer() -> None:
     assert "propose_mandate_profiles" in names
     for forbidden in ("commit_mandate", "set_mandate", "write_mandate", "authorize_live"):
         assert forbidden not in names, f"{forbidden} must not be a registered tool"
+
+
+# ---------------------------------------------------------------------------
+# The other column: adjustments and profiles that must STILL be accepted.
+#
+# Every H19 test above asserts a refusal. A gate tested only for what it blocks
+# reads identically whether it blocks the right things or everything, which is
+# how the cash-only regression survived nine green checks twice. These pin the
+# open side of the same gate, and "none" is the case that matters: it is this
+# module's own default and the floor of the leverage axis, not an invalid type.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "rendered, adjusted",
+    [
+        (2.0, "none"),  # cash only: the safest narrowing a user can make
+        (2.0, 1.0),  # the same thing spelled as a number
+        (2.0, 2.0),  # unchanged
+        ("none", "none"),  # already cash only, unchanged
+    ],
+)
+def test_leverage_narrowing_still_commits(rendered, adjusted) -> None:
+    proposal = {
+        "proposal_id": "p-open",
+        "profiles": [{"ordinal": 1, "label": "conservative", "leverage": rendered}],
+    }
+
+    resolved = mandate_commit._resolve_profile(proposal, 1, {"leverage": adjusted})
+
+    assert resolved["leverage"] == adjusted
+
+
+def test_leverage_widening_from_cash_only_is_still_refused() -> None:
+    """The floor sorts below every number in BOTH directions."""
+    proposal = {
+        "proposal_id": "p-widen",
+        "profiles": [{"ordinal": 1, "label": "cash", "leverage": "none"}],
+    }
+
+    with pytest.raises(mandate_commit.CommitError, match="widens"):
+        mandate_commit._resolve_profile(proposal, 1, {"leverage": 2.0})
+
+
+@pytest.mark.parametrize("bad", ["10", "1", True, False, [2.0]])
+def test_leverage_adjustment_of_an_invalid_type_is_still_refused(bad) -> None:
+    """Normalizing the sentinel must not re-open the H19 type hole."""
+    proposal = {
+        "proposal_id": "p-type",
+        "profiles": [{"ordinal": 1, "label": "conservative", "leverage": 2.0}],
+    }
+
+    with pytest.raises(mandate_commit.CommitError):
+        mandate_commit._resolve_profile(proposal, 1, {"leverage": bad})
+
+
+@pytest.mark.parametrize(
+    "profile_leverage, ceiling_leverage, fits",
+    [
+        ("none", 2.0, True),  # cash-only profile under a leveraged ceiling
+        (1.0, 2.0, True),
+        (2.0, 2.0, True),
+        (4.0, 2.0, False),
+        ("none", "none", True),  # cash-only under a cash-only ceiling
+        (2.0, "none", False),  # leverage under a cash-only ceiling
+        ("10", 2.0, False),  # a stringified number is still not a number
+        (True, 2.0, False),  # bool is still not a number
+    ],
+)
+def test_leverage_ceiling_table(profile_leverage, ceiling_leverage, fits) -> None:
+    assert (
+        mandate_commit._profile_fits_ceilings(
+            {"leverage": profile_leverage}, {"leverage": ceiling_leverage}
+        )
+        is fits
+    )
