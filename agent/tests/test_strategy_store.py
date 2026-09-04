@@ -1395,3 +1395,51 @@ class TestSchemaMigration:
         fetched = store2.get_artifact(aid)
         assert fetched is not None
         assert fetched.name == "reopen_factor"
+
+
+class TestOrderingWithTiedTimestamps:
+    """Ordering must hold when created_at collides.
+
+    _now_iso() carries only the clock's resolution, so a batch registered
+    inside one tick shares a timestamp. On Linux that is rare enough to pass by
+    luck; on Windows the ~15.6ms granularity makes it the normal case. Pinning
+    the timestamp reproduces it on every platform.
+    """
+
+    PINNED = "2026-03-02T10:00:00+00:00"
+
+    def _pin(self, monkeypatch, module):
+        monkeypatch.setattr(module, "_now_iso", lambda: self.PINNED)
+
+    def test_in_memory_artifacts_newest_first_on_tie(self, monkeypatch):
+        from src.strategy_store import store as store_module
+
+        self._pin(monkeypatch, store_module)
+        s = store_module.InMemoryStrategyStore()
+        for i in range(3):
+            s.register_artifact(_make_artifact(name=f"tied_{i}"))
+
+        names = [a.name for a in s.list_artifacts()]
+        assert {a.created_at for a in s.list_artifacts()} == {self.PINNED}
+        assert names == ["tied_2", "tied_1", "tied_0"]
+
+    def test_in_memory_bench_history_newest_first_on_tie(self, monkeypatch):
+        from src.strategy_store import store as store_module
+
+        self._pin(monkeypatch, store_module)
+        s = store_module.InMemoryStrategyStore()
+        aid = s.register_artifact(_make_artifact(name="tied_bench"))
+        for i in range(3):
+            s.record_bench(BenchResult(artifact_id=aid, sharpe=float(i)))
+
+        assert [r.sharpe for r in s.get_bench_history(aid)] == [2.0, 1.0, 0.0]
+
+    def test_sqlite_artifacts_newest_first_on_tie(self, monkeypatch, tmp_path):
+        from src.strategy_store import sqlite_store as sqlite_module
+
+        self._pin(monkeypatch, sqlite_module)
+        s = sqlite_module.SqliteStrategyStore(db_path=tmp_path / "tied.db")
+        for i in range(3):
+            s.register_artifact(_make_artifact(name=f"tied_{i}"))
+
+        assert [a.name for a in s.list_artifacts()] == ["tied_2", "tied_1", "tied_0"]
