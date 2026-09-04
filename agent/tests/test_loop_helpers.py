@@ -24,10 +24,12 @@ from src.agent.loop import (
 )
 
 
-def _apply_microcompact_gate(messages: list) -> None:
+def _apply_microcompact_gate(messages: list, called_ok: set | None = None) -> None:
     """Mirror AgentLoop layer-1 gate (``loop.py`` ~572-573)."""
     if estimate_tokens(messages) > MICROCOMPACT_THRESHOLD:
-        _microcompact(messages)
+        unreadable = _microcompact(messages)
+        if called_ok is not None:
+            called_ok.difference_update(unreadable)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +147,72 @@ class TestMicrocompactThresholdGate:
         preserved = [m for m in tool_msgs if m["content"] != "[cleared]"]
         assert len(cleared) == 5
         assert len(preserved) == KEEP_RECENT
+
+
+class TestMicrocompactDedupLedger:
+    """#1343: a cleared result cannot back "use the previous result", so the
+    tools it came from must leave the dedup ledger and become callable again."""
+
+    @staticmethod
+    def _tool(name: str, content: str) -> dict:
+        return {"role": "tool", "name": name, "content": content, "tool_call_id": f"tc_{name}_{len(content)}"}
+
+    def test_cleared_tool_is_returned_for_unblocking(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("get_stock_news", "y" * 200),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["get_fund_flow", "get_stock_news"]
+
+    def test_tool_with_surviving_result_stays_blocked(self) -> None:
+        # Same name has an old cleared result AND a result inside KEEP_RECENT:
+        # the model can still read one, so the dedup block must stay.
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("other", "y" * 200),
+            self._tool("get_fund_flow", "fresh" + "z" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["other"]
+
+    def test_short_old_result_still_counts_as_readable(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("get_fund_flow", "ok"),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == []
+
+    def test_unnamed_messages_clear_without_unblocking(self) -> None:
+        messages = [{"role": "tool", "content": "x" * 200, "tool_call_id": f"tc_{i}"} for i in range(KEEP_RECENT + 2)]
+        assert _microcompact(messages) == []
+
+    def test_second_pass_reports_nothing_new(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["get_fund_flow"]
+        assert _microcompact(messages) == []
+
+    def test_gate_updates_dedup_ledger(self) -> None:
+        messages = [{"role": "system", "content": "sys"}]
+        messages.append({"role": "user", "content": "x" * (MICROCOMPACT_THRESHOLD * 4 + 1000)})
+        messages.append(self._tool("get_fund_flow", "y" * 200))
+        for name in ("recent_a", "recent_b", "recent_c"):
+            messages.append(self._tool(name, "z" * 200))
+
+        called_ok = {"get_fund_flow", "recent_a"}
+        _apply_microcompact_gate(messages, called_ok)
+        assert called_ok == {"recent_a"}
 
 
 # ---------------------------------------------------------------------------
