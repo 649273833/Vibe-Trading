@@ -70,8 +70,14 @@ class TestMicrocompact:
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         # Old ones should be [cleared]
-        cleared = [m for m in tool_msgs if m["content"] == "[cleared]"]
-        preserved = [m for m in tool_msgs if m["content"] != "[cleared]"]
+        cleared = [
+            m for m in tool_msgs if m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
+        preserved = [
+            m
+            for m in tool_msgs
+            if not m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
         assert len(cleared) == 5
         assert len(preserved) == KEEP_RECENT
 
@@ -96,7 +102,7 @@ class TestMicrocompact:
             {"role": "tool", "content": "x" * 200, "tool_call_id": "tc_0"},
         ]
         _microcompact(messages)
-        assert messages[0]["content"] != "[cleared]"
+        assert not messages[0]["content"].startswith("[CLEARED FROM CONTEXT:")
 
     def test_does_not_touch_non_tool(self) -> None:
         messages = [
@@ -141,8 +147,14 @@ class TestMicrocompactThresholdGate:
         _apply_microcompact_gate(messages)
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
-        cleared = [m for m in tool_msgs if m["content"] == "[cleared]"]
-        preserved = [m for m in tool_msgs if m["content"] != "[cleared]"]
+        cleared = [
+            m for m in tool_msgs if m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
+        preserved = [
+            m
+            for m in tool_msgs
+            if not m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
         assert len(cleared) == 5
         assert len(preserved) == KEEP_RECENT
 
