@@ -25,7 +25,9 @@ from backtest.models import Position
 _MARKET_PATTERNS = [
     (re.compile(r"^\d{6}\.(SZ|SH|BJ)$", re.I), "a_share"),
     (re.compile(r"^(51|15|56)\d{4}\.(SZ|SH)$", re.I), "a_share"),
-    (re.compile(r"^[A-Z]+\.US$", re.I), "us_equity"),
+    # US equities: tickers may carry a class-share dot (BRK.B.US, BF.B.US)
+    # and a hyphen (e.g. BF-B.US) — same characters as ca/india/uk below.
+    (re.compile(r"^[A-Z0-9&.\-]+\.US$", re.I), "us_equity"),
     (re.compile(r"^\d{3,5}\.HK$", re.I), "hk_equity"),
     # India equities: NSE (RELIANCE.NS) / BSE (500325.BO); tickers may carry
     # '&' and '-' (e.g. M&M.NS, BAJAJ-AUTO.NS).

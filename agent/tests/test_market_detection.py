@@ -46,6 +46,14 @@ class TestDetectMarket:
             ("AAPL.US", "us_equity"),
             ("TSLA.US", "us_equity"),
             ("NVDA.US", "us_equity"),
+            # US equity — dotted class shares in the .US form (BRK.B, BF.A,
+            # RDS.A) must not fall through to the a_share default.
+            ("BRK.B.US", "us_equity"),
+            ("BRK.A.US", "us_equity"),
+            ("BF.B.US", "us_equity"),
+            ("RDS.A.US", "us_equity"),
+            ("WRB.B.US", "us_equity"),
+            ("LEN.B.US", "us_equity"),
             # US equity — bare tickers without the .US suffix (issue #986)
             ("AAPL", "us_equity"),
             ("MSFT", "us_equity"),
@@ -101,6 +109,7 @@ class TestDetectMarket:
         assert _detect_market("aapl") == "us_equity"
         assert _detect_market("btc-usdt") == "crypto"
         assert _detect_market("td.to") == "ca_equity"
+        assert _detect_market("brk.b.us") == "us_equity"
 
     def test_unknown_defaults_to_a_share(self) -> None:
         assert _detect_market("UNKNOWN") == "a_share"
@@ -134,6 +143,17 @@ class TestBareUsTickerRouting:
         assert _detect_source("AAPL") == "yfinance"
         assert code_currency("AAPL") == "USD"
         assert code_currency("AAPL.US") == "USD"
+
+    def test_dotted_class_share_source_and_currency(self) -> None:
+        """Dotted class shares must route to USD + yfinance, not CNY/tushare."""
+        for code in ("BRK.B.US", "BRK.A.US", "BF.B.US"):
+            assert _detect_source(code) == "yfinance", code
+            assert code_currency(code) == "USD", code
+
+    def test_dotted_class_share_groups_with_other_us_equities(self) -> None:
+        basket = ["BRK.B.US", "AAPL.US"]
+        groups = _group_codes_by_market(basket)
+        assert groups == {"us_equity": basket}
 
     def test_canadian_tickers_route_to_canada_and_cad(self) -> None:
         assert _detect_source("TD.TO") == "yahoo"
