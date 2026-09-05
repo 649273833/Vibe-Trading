@@ -469,6 +469,8 @@ def test_compute_profile_dividend_rows() -> None:
     # A 09:00 dividend row must not leak into the trading-activity stats.
     assert profile["market_distribution"] == {"china_a": 2}
     assert profile["hourly_distribution"] == {10: 2}
+    # Nor into the per-symbol trade count and turnover.
+    assert profile["top_symbols"] == [{"symbol": "A.SH", "trades": 2, "total_amount": 2200.0}]
 
 
 def test_compute_profile_without_dividends_is_unchanged() -> None:

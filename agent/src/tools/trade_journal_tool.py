@@ -270,7 +270,7 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
         total_pnl = total_dividends
 
     top_symbols = (
-        df.groupby("symbol")
+        trades_df.groupby("symbol")
         .agg(trades=("symbol", "count"), total_amount=("amount", "sum"))
         .sort_values("total_amount", ascending=False)
         .head(10)
