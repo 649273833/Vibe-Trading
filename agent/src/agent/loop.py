@@ -434,6 +434,27 @@ def _verification_ledger(messages: list) -> str:
             break
     return "\n".join(unique)
 
+# Marker written over a tool result whose payload layer 1 removed. Matched by
+# PREFIX because the text carries the original length, so no two cleared
+# results are the same string; never compare a content to it with ``==``.
+_CLEARED_PREFIX = "[CLEARED FROM CONTEXT:"
+
+
+def _cleared_text(original_len: int) -> str:
+    """Build the self-describing placeholder that replaces a pruned result."""
+    return (
+        f"{_CLEARED_PREFIX} this tool call SUCCEEDED and returned "
+        f"{original_len} characters, which were removed to free context "
+        "space. This is NOT a tool failure and NOT an empty result. If you "
+        "need these values, call the tool again with the same arguments.]"
+    )
+
+
+def _is_cleared(content: Any) -> bool:
+    """True when ``content`` is a layer-1 cleared-result marker."""
+    return isinstance(content, str) and content.startswith(_CLEARED_PREFIX)
+
+
 def _microcompact(messages: list) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
@@ -452,11 +473,21 @@ def _microcompact(messages: list) -> list:
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
         content = msg.get("content", "")
-        if isinstance(content, str) and len(content) > 100:
-            msg["content"] = "[cleared]"
+        # Skip a result already cleared: the marker is itself >100 chars, so
+        # re-clearing it would rewrite the recorded original size with the
+        # MARKER's length ("returned 287 characters") and re-report the tool
+        # as newly unreadable on every later pass.
+        if isinstance(content, str) and len(content) > 100 and not _is_cleared(content):
+            # A bare "[cleared]" is indistinguishable from a tool that
+            # returned nothing, so the model reports "no data was retrieved"
+            # for data it did receive and this layer then deleted. Say which
+            # it is, and say the result is recoverable.
+            msg["content"] = _cleared_text(len(content))
             if msg.get("name"):
                 newly_cleared.append(msg["name"])
-    surviving = {m.get("name") for m in tool_msgs if m.get("content") != "[cleared]"}
+    # Identified by prefix, not equality: the marker carries the original
+    # length, so every cleared result is a different string.
+    surviving = {m.get("name") for m in tool_msgs if not _is_cleared(m.get("content"))}
     return sorted(set(newly_cleared) - surviving)
 
 
@@ -475,7 +506,7 @@ def _context_collapse(messages: list) -> None:
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
-        if content == "[cleared]":
+        if _is_cleared(content):
             continue
         head = content[:COLLAPSE_HEAD]
         tail = content[-COLLAPSE_TAIL:]
@@ -947,7 +978,18 @@ class AgentLoop:
         self.memory = memory or WorkspaceMemory()
         self._event_callback = event_callback
         self.max_iterations = max_iterations
-        self._called_ok: set[str] = set()
+        # Dedup identity is (tool name, canonical arguments) -- NOT the name
+        # alone. Keying on the name blocked every legitimate second call to a
+        # paginated or parameterised tool: get_financial_statements(
+        # statement='income') then (statement='balance') is one name but two
+        # different requests, and the second was answered with a synthetic
+        # 'already completed successfully' skip. The model then correctly
+        # reported that the balance sheet 'returned no readable content' -- a
+        # true statement about a fabricated tool result.
+        # Keys come from _identical_call_key, the same canonicaliser the
+        # deterministic cache uses, so the block path and the cache path can
+        # never disagree about what 'the same call' means.
+        self._called_ok: set[tuple[str, str]] = set()
         self._cancel_event = threading.Event()
         self._previous_summary: str = ""
         self._persistent_memory = persistent_memory
@@ -1941,7 +1983,17 @@ class AgentLoop:
 
             tool_def = self.registry.get(tc.name)
             is_repeatable = tool_def.repeatable if tool_def else False
-            if tc.name in self._called_ok and not is_repeatable:
+            # A None key means the arguments could not be canonicalised. The
+            # deterministic cache treats that as 'never cache'; the blocking
+            # gate must likewise treat it as 'never block', otherwise every
+            # un-serialisable call would collapse into a single identity and
+            # the second one would be skipped without ever running.
+            dedup_key = self._identical_call_key(tc.name, tc.arguments)
+            if (
+                dedup_key is not None
+                and dedup_key in self._called_ok
+                and not is_repeatable
+            ):
                 logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
                 skip_msg = json.dumps({"skipped": True, "reason": f"{tc.name} already completed successfully. Use the previous result."})
                 messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
@@ -2523,7 +2575,16 @@ class AgentLoop:
         """
         unreadable_tools = _microcompact(messages)
         if unreadable_tools:
-            self._called_ok.difference_update(unreadable_tools)
+            # The ledger is keyed by (tool name, canonical arguments), so a
+            # name cannot be subtracted from it directly: a plain
+            # ``difference_update`` of names against tuples removes nothing and
+            # the unblock silently becomes a no-op. Drop EVERY argument variant
+            # of a cleared tool — microcompact only reports a name once no
+            # readable result of any variant survives.
+            cleared = set(unreadable_tools)
+            self._called_ok = {
+                key for key in self._called_ok if key[0] not in cleared
+            }
             trace.write({
                 "type": "microcompact_cleared",
                 "iter": iteration,
@@ -2583,7 +2644,9 @@ class AgentLoop:
 
         success = _is_tool_success(result)
         if success:
-            self._called_ok.add(tc.name)
+            recorded_key = self._identical_call_key(tc.name, tc.arguments)
+            if recorded_key is not None:
+                self._called_ok.add(recorded_key)
             if tc.name == "backtest":
                 try:
                     _archive_backtest_result(result, self.memory.run_dir)
