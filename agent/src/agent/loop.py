@@ -434,29 +434,61 @@ def _verification_ledger(messages: list) -> str:
             break
     return "\n".join(unique)
 
-def _microcompact(messages: list) -> None:
+# Marker written over a tool result whose payload layer 1 removed. Matched by
+# PREFIX because the text carries the original length, so no two cleared
+# results are the same string; never compare a content to it with ``==``.
+_CLEARED_PREFIX = "[CLEARED FROM CONTEXT:"
+
+
+def _cleared_text(original_len: int) -> str:
+    """Build the self-describing placeholder that replaces a pruned result."""
+    return (
+        f"{_CLEARED_PREFIX} this tool call SUCCEEDED and returned "
+        f"{original_len} characters, which were removed to free context "
+        "space. This is NOT a tool failure and NOT an empty result. If you "
+        "need these values, call the tool again with the same arguments.]"
+    )
+
+
+def _is_cleared(content: Any) -> bool:
+    """True when ``content`` is a layer-1 cleared-result marker."""
+    return isinstance(content, str) and content.startswith(_CLEARED_PREFIX)
+
+
+def _microcompact(messages: list) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
     Args:
         messages: Message list (mutated in place).
+
+    Returns:
+        Names of tools whose every result just became unreadable. The caller
+        drops these from the dedup ledger: blocking a re-call with "use the
+        previous result" only makes sense while that result is still in
+        context, and a cleared result is not.
     """
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     if len(tool_msgs) <= KEEP_RECENT:
-        return
+        return []
+    newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
         content = msg.get("content", "")
-        if isinstance(content, str) and len(content) > 100:
+        # Skip a result already cleared: the marker is itself >100 chars, so
+        # re-clearing it would rewrite the recorded original size with the
+        # MARKER's length ("returned 287 characters") and re-report the tool
+        # as newly unreadable on every later pass.
+        if isinstance(content, str) and len(content) > 100 and not _is_cleared(content):
             # A bare "[cleared]" is indistinguishable from a tool that
             # returned nothing, so the model reports "no data was retrieved"
             # for data it did receive and this layer then deleted. Say which
             # it is, and say the result is recoverable.
-            msg["content"] = (
-                "[CLEARED FROM CONTEXT: this tool call SUCCEEDED and returned "
-                f"{len(content)} characters, which were removed to free "
-                "context space. This is NOT a tool failure and NOT an empty "
-                "result. If you need these values, call the tool again with "
-                "the same arguments.]"
-            )
+            msg["content"] = _cleared_text(len(content))
+            if msg.get("name"):
+                newly_cleared.append(msg["name"])
+    # Identified by prefix, not equality: the marker carries the original
+    # length, so every cleared result is a different string.
+    surviving = {m.get("name") for m in tool_msgs if not _is_cleared(m.get("content"))}
+    return sorted(set(newly_cleared) - surviving)
 
 
 def _context_collapse(messages: list) -> None:
@@ -474,7 +506,7 @@ def _context_collapse(messages: list) -> None:
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
-        if content == "[cleared]":
+        if _is_cleared(content):
             continue
         head = content[:COLLAPSE_HEAD]
         tail = content[-COLLAPSE_TAIL:]
@@ -1180,7 +1212,7 @@ class AgentLoop:
                 # tool history available for the model to reference instead of
                 # having every result past the most recent few cleared.
                 if tokens > int(_token_threshold() * 0.5):
-                    _microcompact(messages)
+                    self._microcompact_and_unblock(messages, trace, iteration)
                     tokens = estimate_tokens(messages)
 
                 # Layer 2: context collapse (fold long text, zero API cost)
@@ -2520,6 +2552,45 @@ class AgentLoop:
             "was to create or update a file, a plain-text answer without the "
             "file write is a failure."
         )
+
+    def _microcompact_and_unblock(self, messages: list, trace: TraceWriter, iteration: int) -> list[str]:
+        """Run layer-1 microcompact and re-open the tools it made unreadable.
+
+        The dedup ledger may only point the model at a result that is still in
+        context. Once microcompact clears every result a tool produced, the
+        "already completed successfully, use the previous result" skip is
+        pointing at ``[cleared]``, which is how #1343 deadlocked: the model
+        needed the numbers, could not see them, re-called, and was blocked 44
+        times.
+
+        Args:
+            messages: Message list, mutated in place by the compaction.
+            trace: Run trace; a ``microcompact_cleared`` event is written
+                whenever the ledger is re-opened, because this layer used to
+                act silently and left no evidence for diagnosis.
+            iteration: Current ReAct iteration, recorded on the trace event.
+
+        Returns:
+            The tool names re-opened, for callers and tests to assert on.
+        """
+        unreadable_tools = _microcompact(messages)
+        if unreadable_tools:
+            # The ledger is keyed by (tool name, canonical arguments), so a
+            # name cannot be subtracted from it directly: a plain
+            # ``difference_update`` of names against tuples removes nothing and
+            # the unblock silently becomes a no-op. Drop EVERY argument variant
+            # of a cleared tool — microcompact only reports a name once no
+            # readable result of any variant survives.
+            cleared = set(unreadable_tools)
+            self._called_ok = {
+                key for key in self._called_ok if key[0] not in cleared
+            }
+            trace.write({
+                "type": "microcompact_cleared",
+                "iter": iteration,
+                "tools": unreadable_tools,
+            })
+        return unreadable_tools
 
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
         """Build a stable key identifying a deterministic tool invocation.
