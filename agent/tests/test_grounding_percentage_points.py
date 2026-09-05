@@ -65,3 +65,51 @@ def test_mixed_sentence_keeps_price_drops_percentage_point():
 def test_bare_number_still_extracted():
     """Guard against the mask being over-broad: a plain number is untouched."""
     assert 48.20 in _extract("48.20")
+
+
+# The English spellings above were the ones the report named, but this gate
+# sees whatever language the model answered in, and the UI ships seven locales.
+# The first version of the mask required the number to sit directly against
+# "百分点", which is the rare Chinese spelling — the ordinary one puts the
+# measure word 个 in between, and "基点" was not covered at all. Both were
+# still being read as prices, so a Chinese fundamentals answer kept getting
+# rejected while the identical English answer passed.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "毛利率下降 3.6 个百分点",
+        "毛利率下降3.6个百分点",
+        "净利率提升 2 个百分点。",
+        "同比下降 3.6 百分点",
+        "利差扩大 250 个基点",
+        "利差扩大250基点",
+        # A trailing CJK character rather than punctuation: \b after a CJK
+        # unit needs a non-word char to follow, so this is the case that
+        # breaks if the boundary is reintroduced there.
+        "毛利率下降 3.6 个百分点，主因是原材料",
+    ],
+)
+def test_chinese_percentage_point_deltas_are_masked(text: str) -> None:
+    assert _extract(text) == [], f"{text!r} leaked a price-like number"
+
+
+# The other arm. Narrowing the false positives must not blind the gate to a
+# real unsourced price, in either language.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("TSLA.US last traded at 412.35 USD", [412.35]),
+        ("closed at 412.35", [412.35]),
+        ("现价 412.35 元", [412.35]),
+        ("收盘价 412.35", [412.35]),
+        # "ppm" is not "pp": the ASCII units keep their word boundary, so the
+        # mask does not apply and a number still reaches the comparator. The
+        # value is 3.0 rather than 3.6 because the extractor drops a decimal
+        # tail followed immediately by letters — the same quirk the pp report
+        # describes, pre-existing and untouched here. Pinned as-is so a future
+        # change to either behaviour is visible.
+        ("3.6ppm impurity", [3.0]),
+    ],
+)
+def test_real_prices_still_extracted(text: str, expected: list) -> None:
+    assert _extract(text) == expected
