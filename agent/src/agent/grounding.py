@@ -209,10 +209,25 @@ _PRIVATE_ASSERTION_RE = re.compile(
     r"(?:是|仍是|属于)(?:一家)?(?:私人|私营|非上市)公司|未上市|没有上市)",
     re.IGNORECASE,
 )
+# The bare verbs below are present tense only, which is not how an answer
+# actually states an observed price: "closed at 412.35" and "last traded at
+# 412.35" are the ordinary spellings and neither matches \bclose\b or
+# \btrade\b. Chinese 收盘 / 现价 match, so the gate was strictly leakier in
+# English than in Chinese — a fabricated USD price in the most natural
+# phrasing walked straight through while its Chinese translation was caught.
+# The past-tense forms are required to be followed by "at" so that reporting
+# volume ("traded 1.2M shares") or a corporate event ("the deal closed at a
+# 30% premium" — a percentage, already masked) is not read as a quote.
+_PRICE_VERB_PAST_RE = r"\b(?:closed|opened|traded|quoted|priced|settled|fixed)\s+at\b"
 _PRICE_CONTEXT_RE = re.compile(
     r"(?:\b(?:opening|open|high|low|closing|close|price|quote)\b|"
+    + _PRICE_VERB_PAST_RE + r"|"
     r"\b(?:entry|buy|target|support|resistance)\s+(?:price|level)\b|"
     r"开盘价?|最高价?|最低价?|收盘价?|买入价|入场价|目标价|支撑位?|阻力位?|"
+    # Chinese had the mirror-image gap: these four are as ordinary as 收盘价
+    # and none of them matched, so a fabricated 成交价 / 股价 walked through
+    # exactly the way "closed at" did in English.
+    r"成交价|最新价|股价|收报|"
     r"现价|报价|价格|价位)",
     re.IGNORECASE,
 )
