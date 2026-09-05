@@ -24,10 +24,12 @@ from src.agent.loop import (
 )
 
 
-def _apply_microcompact_gate(messages: list) -> None:
+def _apply_microcompact_gate(messages: list, called_ok: set | None = None) -> None:
     """Mirror AgentLoop layer-1 gate (``loop.py`` ~572-573)."""
     if estimate_tokens(messages) > MICROCOMPACT_THRESHOLD:
-        _microcompact(messages)
+        unreadable = _microcompact(messages)
+        if called_ok is not None:
+            called_ok.difference_update(unreadable)
 
 
 # ---------------------------------------------------------------------------
@@ -70,8 +72,14 @@ class TestMicrocompact:
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         # Old ones should be [cleared]
-        cleared = [m for m in tool_msgs if m["content"] == "[cleared]"]
-        preserved = [m for m in tool_msgs if m["content"] != "[cleared]"]
+        cleared = [
+            m for m in tool_msgs if m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
+        preserved = [
+            m
+            for m in tool_msgs
+            if not m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
         assert len(cleared) == 5
         assert len(preserved) == KEEP_RECENT
 
@@ -96,7 +104,7 @@ class TestMicrocompact:
             {"role": "tool", "content": "x" * 200, "tool_call_id": "tc_0"},
         ]
         _microcompact(messages)
-        assert messages[0]["content"] != "[cleared]"
+        assert not messages[0]["content"].startswith("[CLEARED FROM CONTEXT:")
 
     def test_does_not_touch_non_tool(self) -> None:
         messages = [
@@ -141,10 +149,82 @@ class TestMicrocompactThresholdGate:
         _apply_microcompact_gate(messages)
 
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
-        cleared = [m for m in tool_msgs if m["content"] == "[cleared]"]
-        preserved = [m for m in tool_msgs if m["content"] != "[cleared]"]
+        cleared = [
+            m for m in tool_msgs if m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
+        preserved = [
+            m
+            for m in tool_msgs
+            if not m["content"].startswith("[CLEARED FROM CONTEXT:")
+        ]
         assert len(cleared) == 5
         assert len(preserved) == KEEP_RECENT
+
+
+class TestMicrocompactDedupLedger:
+    """#1343: a cleared result cannot back "use the previous result", so the
+    tools it came from must leave the dedup ledger and become callable again."""
+
+    @staticmethod
+    def _tool(name: str, content: str) -> dict:
+        return {"role": "tool", "name": name, "content": content, "tool_call_id": f"tc_{name}_{len(content)}"}
+
+    def test_cleared_tool_is_returned_for_unblocking(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("get_stock_news", "y" * 200),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["get_fund_flow", "get_stock_news"]
+
+    def test_tool_with_surviving_result_stays_blocked(self) -> None:
+        # Same name has an old cleared result AND a result inside KEEP_RECENT:
+        # the model can still read one, so the dedup block must stay.
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("other", "y" * 200),
+            self._tool("get_fund_flow", "fresh" + "z" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["other"]
+
+    def test_short_old_result_still_counts_as_readable(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("get_fund_flow", "ok"),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == []
+
+    def test_unnamed_messages_clear_without_unblocking(self) -> None:
+        messages = [{"role": "tool", "content": "x" * 200, "tool_call_id": f"tc_{i}"} for i in range(KEEP_RECENT + 2)]
+        assert _microcompact(messages) == []
+
+    def test_second_pass_reports_nothing_new(self) -> None:
+        messages = [
+            self._tool("get_fund_flow", "x" * 200),
+            self._tool("recent_a", "a" * 200),
+            self._tool("recent_b", "b" * 200),
+            self._tool("recent_c", "c" * 200),
+        ]
+        assert _microcompact(messages) == ["get_fund_flow"]
+        assert _microcompact(messages) == []
+
+    def test_gate_updates_dedup_ledger(self) -> None:
+        messages = [{"role": "system", "content": "sys"}]
+        messages.append({"role": "user", "content": "x" * (MICROCOMPACT_THRESHOLD * 4 + 1000)})
+        messages.append(self._tool("get_fund_flow", "y" * 200))
+        for name in ("recent_a", "recent_b", "recent_c"):
+            messages.append(self._tool(name, "z" * 200))
+
+        called_ok = {"get_fund_flow", "recent_a"}
+        _apply_microcompact_gate(messages, called_ok)
+        assert called_ok == {"recent_a"}
 
 
 # ---------------------------------------------------------------------------
@@ -598,3 +678,44 @@ def test_stall_timeout_seconds_default_and_override(monkeypatch) -> None:
     assert _stall_timeout_seconds() == 42.0
     monkeypatch.delattr(loop_module, "STALL_TIMEOUT_SECONDS", raising=False)
     assert _stall_timeout_seconds() > 0
+
+
+class TestMicrocompactMarkerIsStable:
+    """The cleared-result marker is >100 chars, i.e. longer than the pruning
+    threshold itself, so microcompact must not treat it as prunable payload."""
+
+    def _tool_msgs(self, payload_len: int) -> list:
+        msgs = [
+            {
+                "role": "tool",
+                "tool_call_id": "c0",
+                "name": "get_fund_flow",
+                "content": "x" * payload_len,
+            }
+        ]
+        msgs += [
+            {"role": "tool", "tool_call_id": f"p{i}", "name": "pad", "content": "y" * 200}
+            for i in range(KEEP_RECENT + 1)
+        ]
+        return msgs
+
+    def test_marker_keeps_the_original_payload_length(self) -> None:
+        payload_len = 4321
+        messages = self._tool_msgs(payload_len)
+        _microcompact(messages)
+        first = messages[0]["content"]
+        assert str(payload_len) in first, first
+
+        # A second pass must not rewrite the marker with the marker's own
+        # length, which would report a fabricated original size to the model.
+        _microcompact(messages)
+        assert messages[0]["content"] == first
+        assert str(payload_len) in messages[0]["content"]
+
+    def test_second_pass_reports_no_new_unreadable_tools(self) -> None:
+        messages = self._tool_msgs(4321)
+        assert _microcompact(messages) == ["get_fund_flow"]
+        assert _microcompact(messages) == [], (
+            "a tool already reported unreadable must not be re-reported, or the "
+            "ledger is re-opened and traced on every later iteration"
+        )
