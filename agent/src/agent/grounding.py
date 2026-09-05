@@ -162,11 +162,33 @@ _GENERIC_PRICE_FIELD_ALIASES = {
 # Project-style canonical symbols. A bare model-generated ticker is still
 # checked when it appears under a symbol argument key, but it is not accepted
 # as user-provided identity because it lacks venue information.
+#
+# A joined crypto pair (``BTCUSDT``, ``ETHUSDT`` …) is recognized alongside
+# the dashed/slashed form so a user message like ``Get BTCUSDT spot price``
+# seeds an asserted identity and the asserted-symbol conflict check at
+# ``_ingest_resolution`` runs against it. The base is restricted to alpha
+# so a numeric prefix cannot masquerade as a joined pair, and the suffix
+# list is the unambiguous stablecoin set (``USDT`` / ``USDC`` / ``BUSD`` /
+# ``TUSD``) — ``USD`` is excluded because too many non-crypto strings end
+# in those three letters and over-matching would lock the wrong identity.
+_JOINED_CRYPTO_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "TUSD")
+# Spot precious metals quoted in USD collide with the TUSD suffix: XPTUSD is
+# XPT + USD (platinum), but stripping "TUSD" leaves the alpha base "XP" and
+# folds it to XP-TUSD — a crypto pair that does not exist, and the same class
+# of misresolution the USD exclusion above exists to prevent. XAU/XAG/XPD do
+# not collide today; they are listed together because they are the same kind
+# of symbol and a future suffix would collide with them the same way.
+_METAL_USD_PAIR_RE = re.compile(r"^(?:XAU|XAG|XPT|XPD)USD$", re.IGNORECASE)
+_JOINED_CRYPTO_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[A-Z]{2,15}(?:" + "|".join(_JOINED_CRYPTO_QUOTE_SUFFIXES) + r")(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _CANONICAL_SYMBOL_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:"
     r"\d{3,6}\.(?:SH|SZ|BJ|SS|HK|KS|KQ)|"
     r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX|TO|V)|"
     r"[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH)|"
+    r"[A-Z]{2,15}(?:" + "|".join(_JOINED_CRYPTO_QUOTE_SUFFIXES) + r")|"
     r"\^[A-Z0-9&.\-]{1,20}|"
     r"[A-Z0-9]{2,15}=[FX]"
     r")(?![A-Za-z0-9_])",
@@ -577,8 +599,10 @@ def _normalize_symbol(value: Any) -> str:
     Returns:
         The canonical spelling — uppercased, with Shanghai's ``.SS`` alias
         folded onto ``.SH``, an exchange prefix rewritten as a suffix, a Hong
-        Kong code zero-padded, and a crypto pair hyphenated. Text that is not a
-        symbol is returned uppercased and otherwise untouched.
+        Kong code zero-padded, and a crypto pair hyphenated. A joined crypto
+        pair with no separator (``BTCUSDT``) is rewritten as the dashed form
+        (``BTC-USDT``) so every downstream check sees one identity. Text that
+        is not a symbol is returned uppercased and otherwise untouched.
     """
     # A fiat/fiat pair is one FX instrument regardless of spelling: ``GBP/USD``
     # and ``GBPUSD`` are both ``GBPUSD=X``. Checked BEFORE the slash is
@@ -598,6 +622,17 @@ def _normalize_symbol(value: Any) -> str:
         return f"{prefixed.group(2)}.{prefixed.group(1)}"
     base, dot, suffix = symbol.rpartition(".")
     if not dot:
+        # No separator at all: rewrite a joined crypto pair (``BTCUSDT``)
+        # as the dashed form so the dash/slash branch and the canonical
+        # regex both match. The base must be all-alpha so a numeric prefix
+        # cannot collide with another numeric-code branch downstream.
+        joined = _JOINED_CRYPTO_RE.fullmatch(symbol)
+        if joined and not _METAL_USD_PAIR_RE.fullmatch(symbol):
+            for quote in _JOINED_CRYPTO_QUOTE_SUFFIXES:
+                if symbol.endswith(quote) and len(symbol) > len(quote):
+                    base_part = symbol[: -len(quote)]
+                    if base_part.isalpha():
+                        return f"{base_part}-{quote}"
         return symbol
     if suffix == "SS":
         suffix = "SH"
