@@ -63,6 +63,12 @@ COLLAPSE_TEXT_MIN = 2400
 COLLAPSE_HEAD = 900
 COLLAPSE_TAIL = 500
 
+# The stub ``_fix_tool_pairs`` inserts for a call whose result a layer-3 fold
+# consumed. The other "data is gone" placeholder is layer 1's cleared marker,
+# which is not a constant — it embeds the original payload length, so it is
+# built by ``_cleared_text`` and matched by ``_is_cleared``.
+_STUB_RESULT_CONTENT = "[Result from earlier context — see summary above]"
+
 TAIL_TOKEN_BUDGET = 20_000
 SUMMARY_CHUNK_CHARS = 80_000
 
@@ -491,6 +497,18 @@ def _microcompact(messages: list) -> list:
     return sorted(set(newly_cleared) - surviving)
 
 
+def _result_data_gone(content: Any) -> bool:
+    """True when a tool result's real data is gone from context.
+
+    Two sources, and they must both be recognised: layer 1 overwrites an old
+    result with the ``_CLEARED_PREFIX`` marker, and ``_fix_tool_pairs``
+    inserts ``_STUB_RESULT_CONTENT`` for a call whose result a layer-3 fold
+    consumed. The marker is matched by prefix, never equality — it embeds the
+    original payload length, so no two cleared results are the same string.
+    """
+    return _is_cleared(content) or content == _STUB_RESULT_CONTENT
+
+
 def _context_collapse(messages: list) -> None:
     """Layer 2: fold long text blocks in older messages without LLM call.
 
@@ -506,12 +524,78 @@ def _context_collapse(messages: list) -> None:
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
-        if _is_cleared(content):
+        if _result_data_gone(content):
             continue
         head = content[:COLLAPSE_HEAD]
         tail = content[-COLLAPSE_TAIL:]
         trimmed = len(content) - COLLAPSE_HEAD - COLLAPSE_TAIL
         msg["content"] = f"{head}\n\n...[{trimmed} chars collapsed]...\n\n{tail}"
+
+    # Zero-cost relief for oversized tool-call payloads whose paired result
+    # was already compacted away (``[cleared]``): the arguments blob is now
+    # useless to the model (the data it requested is gone), so fold it to a
+    # valid JSON stub. The call id/name survive, so tool pairing and the
+    # model's "I called tool X" memory are intact, and the provider still
+    # receives well-formed ``arguments``. Nothing re-reads historical
+    # arguments for re-dispatch, so this is safe.
+    cleared_ids = {
+        m.get("tool_call_id")
+        for m in messages
+        if m.get("role") == "tool" and _result_data_gone(m.get("content"))
+    }
+    for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                continue
+            args = fn.get("arguments")
+            if (
+                isinstance(args, str)
+                and len(args) > COLLAPSE_TEXT_MIN
+                and tc.get("id") in cleared_ids
+            ):
+                fn["arguments"] = "{}"
+
+
+def _msg_estimate_chars(msg: dict) -> int:
+    """Rough character size of a message for token budgeting.
+
+    Sizes ``content`` plus every tool-call ``arguments`` payload. Assistant
+    tool-call messages carry their payload in ``tool_calls[].function.
+    arguments`` with empty ``content``; sizing them by content alone made the
+    layer-3 tail budget count a 100 KB arguments blob as ~10 tokens.
+    """
+    size = len(str(msg.get("content", "")))
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function")
+        if isinstance(fn, dict) and fn.get("arguments") is not None:
+            # Sized via ``str`` (matches ``estimate_tokens``' full-serialization
+            # gate) so dict/object arguments count instead of being ignored.
+            size += len(str(fn["arguments"]))
+    return size
+
+
+def _tail_cut_index(body: list, budget: int = TAIL_TOKEN_BUDGET) -> int:
+    """First index of the preserved ``body`` tail that fits ``budget`` tokens.
+
+    Walks back from the end accumulating each message's estimated tokens and
+    returns the earliest index that fits, never splitting a tool_call /
+    tool_result pair. Sized with ``_msg_estimate_chars`` so oversized tool-call
+    arguments push their message into the folded head instead of being counted
+    as a handful of tokens in the preserved tail.
+    """
+    accumulated = 0
+    cut_idx = len(body)
+    for i in range(len(body) - 1, -1, -1):
+        msg_tokens = (_msg_estimate_chars(body[i]) // 4) + 10
+        if accumulated + msg_tokens > budget:
+            cut_idx = i + 1
+            break
+        accumulated += msg_tokens
+        cut_idx = i
+    while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
+        cut_idx += 1
+    return cut_idx
 
 
 def _fix_tool_pairs(messages: list) -> None:
@@ -562,7 +646,7 @@ def _fix_tool_pairs(messages: list) -> None:
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "name": tc.get("function", {}).get("name", "unknown"),
-                    "content": "[Result from earlier context — see summary above]",
+                    "content": _STUB_RESULT_CONTENT,
                 }
                 inserts.append((idx + 1, stub))
                 result_ids.add(tc_id)
@@ -2750,21 +2834,9 @@ class AgentLoop:
         system_msg = messages[0]
         body = messages[1:]
 
-        # Token-budget tail: walk backward to find how many recent messages to preserve
-        accumulated = 0
-        cut_idx = len(body)
-        for i in range(len(body) - 1, -1, -1):
-            content = body[i].get("content", "")
-            msg_tokens = (len(str(content)) // 4) + 10
-            if accumulated + msg_tokens > TAIL_TOKEN_BUDGET:
-                cut_idx = i + 1
-                break
-            accumulated += msg_tokens
-            cut_idx = i
-
-        # Don't split in the middle of a tool_call/tool_result pair
-        while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
-            cut_idx += 1
+        # Token-budget tail: size messages with their tool-call arguments so
+        # oversized tool calls are folded instead of hiding in the tail.
+        cut_idx = _tail_cut_index(body)
 
         head = body[:cut_idx]
         tail = body[cut_idx:]

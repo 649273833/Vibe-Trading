@@ -21,6 +21,7 @@ from src.agent.loop import (
     _llm_timeout_seconds,
     _stall_timeout_seconds,
     _verification_ledger,
+    _cleared_text,
 )
 
 
@@ -257,13 +258,14 @@ class TestContextCollapse:
             assert msg["content"] == orig
 
     def test_skips_cleared_content(self) -> None:
+        marker = _cleared_text(5000)
         messages = [{"role": "system", "content": "sys"}]
         for _ in range(COLLAPSE_PRESERVE_RECENT + 3):
-            messages.append({"role": "tool", "content": "[cleared]"})
+            messages.append({"role": "tool", "content": marker})
         _context_collapse(messages)
-        # [cleared] should remain [cleared], not be collapsed
+        # A cleared marker must survive layer 2 untouched.
         for m in messages[1:]:
-            assert m["content"] == "[cleared]"
+            assert m["content"] == marker
 
     def test_no_op_when_too_few_messages(self) -> None:
         messages = [
@@ -678,6 +680,135 @@ def test_stall_timeout_seconds_default_and_override(monkeypatch) -> None:
     assert _stall_timeout_seconds() == 42.0
     monkeypatch.delattr(loop_module, "STALL_TIMEOUT_SECONDS", raising=False)
     assert _stall_timeout_seconds() > 0
+
+
+# ---------------------------------------------------------------------------
+# tool_calls[].function.arguments must count toward compaction sizing/relief
+# ---------------------------------------------------------------------------
+
+def test_tail_cut_index_counts_tool_call_arguments() -> None:
+    """#tail-budget: a fat tool_call (empty content, huge arguments) must be
+    pushed into the folded head, not counted as ~10 tokens in the tail."""
+    from src.agent.loop import _tail_cut_index  # new helper: absent on pre-fix code
+
+    fat = "X" * 90_000  # ~22.5K tokens once arguments are counted
+    body = [
+        {"role": "user", "content": "old header"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "t", "arguments": fat}}
+            ],
+        },
+    ]
+    # Old content-only sizing: both messages fit the 20K budget -> cut at 0.
+    # New sizing: the call alone exceeds it -> cut at len(body), tail empty,
+    # the oversized call goes into the folded head.
+    assert _tail_cut_index(body) == len(body)
+    assert _tail_cut_index(body) != 0
+
+
+def test_context_collapse_stubs_args_of_cleared_paired_call() -> None:
+    """#layer-2: a tool_call whose paired result was [cleared] gets its huge
+    arguments folded to a valid JSON '{}' stub (call id/name preserved)."""
+    fat = "Y" * (COLLAPSE_TEXT_MIN * 3)
+    call_msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c9", "type": "function", "function": {"name": "f", "arguments": fat}}],
+    }
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u0"},
+        call_msg,  # index 2 — inside the collapse window
+        # The real layer-1 marker, not the old "[cleared]" literal: it embeds
+        # the payload length, so _result_data_gone matches it by prefix.
+        {"role": "tool", "tool_call_id": "c9", "content": _cleared_text(9000)},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "u3"},
+    ]
+    _context_collapse(msgs)
+    assert call_msg["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert call_msg["tool_calls"][0]["function"]["name"] == "f"
+
+
+def test_context_collapse_keeps_args_when_result_intact_or_pending() -> None:
+    """#layer-2 negative arm: arguments are NOT stubbed when the result still
+    carries data, nor when the call is pending (no result in the transcript)."""
+    fat = "Y" * (COLLAPSE_TEXT_MIN * 3)
+    c1 = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": fat}}],
+    }
+    c2 = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "g", "arguments": fat}}],
+    }
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u0"},
+        c1,  # index 2 — inside the collapse window
+        {"role": "tool", "tool_call_id": "c1", "content": "still have the data"},
+        c2,  # pending — result never arrived
+        {"role": "assistant", "content": "continue"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+    ]
+    _context_collapse(msgs)
+    assert c1["tool_calls"][0]["function"]["arguments"] == fat
+    assert c2["tool_calls"][0]["function"]["arguments"] == fat
+
+
+def test_context_collapse_stubs_args_for_fix_tool_pairs_stub_result() -> None:
+    """#adversarial: layer-3's ``_fix_tool_pairs`` stub result marker must also
+    count as 'result data gone' — a call that survived a layer-3 fold gets its
+    huge arguments stubbed too, not only microcompact's ``[cleared]``."""
+    from src.agent.loop import _STUB_RESULT_CONTENT
+
+    fat = "Y" * (COLLAPSE_TEXT_MIN * 3)
+    call_msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c7", "type": "function", "function": {"name": "f", "arguments": fat}}],
+    }
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u0"},
+        call_msg,  # index 2 — inside the collapse window
+        {"role": "tool", "tool_call_id": "c7", "content": _STUB_RESULT_CONTENT},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "u3"},
+    ]
+    _context_collapse(msgs)
+    assert call_msg["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+def test_msg_estimate_chars_counts_dict_arguments() -> None:
+    """#adversarial: dict (non-string) arguments must count toward sizing,
+    consistent with ``estimate_tokens``' full serialization gate."""
+    from src.agent.loop import _msg_estimate_chars
+
+    big_dict = {"q": "X" * 4000}
+    msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "f", "arguments": big_dict}}],
+    }
+    assert _msg_estimate_chars(msg) >= 4000
+    assert _msg_estimate_chars({"role": "user", "content": "hi"}) >= 2
 
 
 class TestMicrocompactMarkerIsStable:
