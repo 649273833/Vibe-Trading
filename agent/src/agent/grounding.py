@@ -284,6 +284,23 @@ _RANGE_TAIL = r"(?:\s*[-–—~～至到]\s*[-+]?\d[\d,]*(?:\.\d+)?)?"
 _PERCENT_RANGE_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?\s*[%％]"
 )
+# A percentage-POINT delta is not a quoted price. "~3.6pp below Penumbra"
+# describes a margin gap; left unmasked the ".6" is consumed as a decimal
+# and the number reaches the OHLC comparator, which then rejects an
+# otherwise correct fundamentals answer and demands `get_market_data` to
+# substantiate a claim that has nothing to do with price.
+# The trailing "%" spellings are already handled above; this covers the
+# percentage-point spellings, which the percent masks never matched.
+# The Chinese units take an optional measure word ("3.6 个百分点" is the
+# ordinary spelling; bare "3.6 百分点" is the rare one) and are matched
+# without a trailing \b: after a CJK character \b requires a non-word
+# character to follow, so "下降 3.6 个百分点，主因…" would not match. The
+# ASCII units keep \b, which is what stops "3.6ppm" being read as pp.
+_PERCENTAGE_POINT_RE = re.compile(
+    r"[-+~≈]?\s*\d[\d,]*(?:\.\d+)?\s*"
+    r"(?:(?:pp|ppt|ppts|bps|bp)\b|个?(?:百分点|基点))",
+    re.IGNORECASE,
+)
 # Localized calendar text carries digits that the ISO pattern above leaves
 # behind: "8 月 3 日" otherwise contributes 8 and 3 as candidate prices.
 _LOCALIZED_DATE_RE = re.compile(
@@ -2634,6 +2651,7 @@ class GroundingLedger:
         masked = _SHORT_DATE_RE.sub(" ", masked)
         masked = _DASH_DATE_RE.sub(" ", masked)
         masked = _PERCENT_RANGE_RE.sub(" ", masked)
+        masked = _PERCENTAGE_POINT_RE.sub(" ", masked)
         masked = _ORDER_LEVEL_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
