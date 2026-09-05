@@ -112,14 +112,25 @@ def _run_card_data_sources(config: Dict[str, Any], loader: Any) -> List[str]:
 # ─── Market detection (lightweight, for signal alignment only) ───
 
 _CRYPTO_RE = _re.compile(r"^[A-Z]+-USDT$|^[A-Z]+/USDT$", _re.I)
-_FOREX_RE = _re.compile(r"^[A-Z]{3}/[A-Z]{3}$|^[A-Z]{6}\.FX$")
+# Forex / metals in their explicit Yahoo notations, plus the bare-6-char
+# whitelist for XAUUSD / XAGUSD / XPTUSD / XPDUSD and G10 currencies. Mirrors
+# ``backtest.engines._market_hooks._MARKET_PATTERNS`` so the ffill-limit
+# decision (``10`` for cross-market vs ``5`` for single-market) reflects the
+# same market classification the engine composite would assign.
+_FX_RE = _re.compile(
+    r"^[A-Z]{3}/[A-Z]{3}$"
+    r"|^[A-Z]{6}\.FX$"
+    r"|^[A-Z]{6}=X$"
+    r"|^(?:XAU|XAG|XPT|XPD|EUR|GBP|JPY|CHF|CAD|AUD|NZD|USD)[A-Z]{3}$",
+    _re.I,
+)
 
 
 def _detect_market_for_align(code: str) -> str:
     """Lightweight market detection for ffill_limit calculation."""
     if _CRYPTO_RE.match(code):
         return "crypto"
-    if _FOREX_RE.match(code):
+    if _FX_RE.match(code):
         return "forex"
     return "equity"
 
