@@ -1170,13 +1170,7 @@ class AgentLoop:
                 # tool history available for the model to reference instead of
                 # having every result past the most recent few cleared.
                 if tokens > int(_token_threshold() * 0.5):
-                    unreadable_tools = _microcompact(messages)
-                    if unreadable_tools:
-                        # The dedup ledger may only point the model at results
-                        # that are still in context; a cleared result is not,
-                        # so those tools become callable again.
-                        self._called_ok.difference_update(unreadable_tools)
-                        trace.write({"type": "microcompact_cleared", "iter": iteration, "tools": unreadable_tools})
+                    self._microcompact_and_unblock(messages, trace, iteration)
                     tokens = estimate_tokens(messages)
 
                 # Layer 2: context collapse (fold long text, zero API cost)
@@ -2506,6 +2500,36 @@ class AgentLoop:
             "was to create or update a file, a plain-text answer without the "
             "file write is a failure."
         )
+
+    def _microcompact_and_unblock(self, messages: list, trace: TraceWriter, iteration: int) -> list[str]:
+        """Run layer-1 microcompact and re-open the tools it made unreadable.
+
+        The dedup ledger may only point the model at a result that is still in
+        context. Once microcompact clears every result a tool produced, the
+        "already completed successfully, use the previous result" skip is
+        pointing at ``[cleared]``, which is how #1343 deadlocked: the model
+        needed the numbers, could not see them, re-called, and was blocked 44
+        times.
+
+        Args:
+            messages: Message list, mutated in place by the compaction.
+            trace: Run trace; a ``microcompact_cleared`` event is written
+                whenever the ledger is re-opened, because this layer used to
+                act silently and left no evidence for diagnosis.
+            iteration: Current ReAct iteration, recorded on the trace event.
+
+        Returns:
+            The tool names re-opened, for callers and tests to assert on.
+        """
+        unreadable_tools = _microcompact(messages)
+        if unreadable_tools:
+            self._called_ok.difference_update(unreadable_tools)
+            trace.write({
+                "type": "microcompact_cleared",
+                "iter": iteration,
+                "tools": unreadable_tools,
+            })
+        return unreadable_tools
 
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
         """Build a stable key identifying a deterministic tool invocation.
