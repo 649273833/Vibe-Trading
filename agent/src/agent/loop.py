@@ -63,6 +63,13 @@ COLLAPSE_TEXT_MIN = 2400
 COLLAPSE_HEAD = 900
 COLLAPSE_TAIL = 500
 
+# Placeholder contents that mean a tool result's real data was compacted
+# away. Two sources: ``_microcompact`` clears old results in place to
+# ``_CLEARED_CONTENT``, and ``_fix_tool_pairs`` inserts a ``_STUB_RESULT_CONTENT``
+# stub for a call whose result a layer-3 fold consumed.
+_CLEARED_CONTENT = "[cleared]"
+_STUB_RESULT_CONTENT = "[Result from earlier context — see summary above]"
+
 TAIL_TOKEN_BUDGET = 20_000
 SUMMARY_CHUNK_CHARS = 80_000
 
@@ -446,7 +453,16 @@ def _microcompact(messages: list) -> None:
     for msg in tool_msgs[:-KEEP_RECENT]:
         content = msg.get("content", "")
         if isinstance(content, str) and len(content) > 100:
-            msg["content"] = "[cleared]"
+            msg["content"] = _CLEARED_CONTENT
+
+
+def _result_data_gone(content: Any) -> bool:
+    """True when ``content`` is a placeholder meaning the tool result's real
+    data was compacted away (microcompact's ``[cleared]``, or the stub that
+    ``_fix_tool_pairs`` inserts after a layer-3 fold)."""
+    return isinstance(content, str) and (
+        content == _CLEARED_CONTENT or content == _STUB_RESULT_CONTENT
+    )
 
 
 def _context_collapse(messages: list) -> None:
@@ -464,7 +480,7 @@ def _context_collapse(messages: list) -> None:
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
-        if content == "[cleared]":
+        if _result_data_gone(content):
             continue
         head = content[:COLLAPSE_HEAD]
         tail = content[-COLLAPSE_TAIL:]
@@ -481,7 +497,7 @@ def _context_collapse(messages: list) -> None:
     cleared_ids = {
         m.get("tool_call_id")
         for m in messages
-        if m.get("role") == "tool" and m.get("content") == "[cleared]"
+        if m.get("role") == "tool" and _result_data_gone(m.get("content"))
     }
     for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
         for tc in msg.get("tool_calls") or []:
@@ -508,10 +524,10 @@ def _msg_estimate_chars(msg: dict) -> int:
     size = len(str(msg.get("content", "")))
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function")
-        if isinstance(fn, dict):
-            args = fn.get("arguments")
-            if isinstance(args, str):
-                size += len(args)
+        if isinstance(fn, dict) and fn.get("arguments") is not None:
+            # Sized via ``str`` (matches ``estimate_tokens``' full-serialization
+            # gate) so dict/object arguments count instead of being ignored.
+            size += len(str(fn["arguments"]))
     return size
 
 
@@ -586,7 +602,7 @@ def _fix_tool_pairs(messages: list) -> None:
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "name": tc.get("function", {}).get("name", "unknown"),
-                    "content": "[Result from earlier context — see summary above]",
+                    "content": _STUB_RESULT_CONTENT,
                 }
                 inserts.append((idx + 1, stub))
                 result_ids.add(tc_id)

@@ -682,3 +682,46 @@ def test_context_collapse_keeps_args_when_result_intact_or_pending() -> None:
     _context_collapse(msgs)
     assert c1["tool_calls"][0]["function"]["arguments"] == fat
     assert c2["tool_calls"][0]["function"]["arguments"] == fat
+
+
+def test_context_collapse_stubs_args_for_fix_tool_pairs_stub_result() -> None:
+    """#adversarial: layer-3's ``_fix_tool_pairs`` stub result marker must also
+    count as 'result data gone' — a call that survived a layer-3 fold gets its
+    huge arguments stubbed too, not only microcompact's ``[cleared]``."""
+    from src.agent.loop import _STUB_RESULT_CONTENT
+
+    fat = "Y" * (COLLAPSE_TEXT_MIN * 3)
+    call_msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c7", "type": "function", "function": {"name": "f", "arguments": fat}}],
+    }
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u0"},
+        call_msg,  # index 2 — inside the collapse window
+        {"role": "tool", "tool_call_id": "c7", "content": _STUB_RESULT_CONTENT},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "u3"},
+    ]
+    _context_collapse(msgs)
+    assert call_msg["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+def test_msg_estimate_chars_counts_dict_arguments() -> None:
+    """#adversarial: dict (non-string) arguments must count toward sizing,
+    consistent with ``estimate_tokens``' full serialization gate."""
+    from src.agent.loop import _msg_estimate_chars
+
+    big_dict = {"q": "X" * 4000}
+    msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "f", "arguments": big_dict}}],
+    }
+    assert _msg_estimate_chars(msg) >= 4000
+    assert _msg_estimate_chars({"role": "user", "content": "hi"}) >= 2
