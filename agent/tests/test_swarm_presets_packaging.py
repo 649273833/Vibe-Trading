@@ -249,7 +249,7 @@ def test_every_preset_tool_exists_in_local_registry() -> None:
         for agent in preset["agents"]:
             for tool_name in agent.get("tools") or []:
                 assert registry.get(tool_name), (
-                    f"{entry['name']}/{agent.id} requests tool {tool_name!r} "
+                    f"{entry['name']}/{agent['id']} requests tool {tool_name!r} "
                     "that the local registry does not provide; the worker "
                     "whitelist would silently drop it (#1343)."
                 )
