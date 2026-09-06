@@ -8,6 +8,7 @@ LLM provider failure is critical (blocks startup).
 from __future__ import annotations
 
 import os
+import platform
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import List, Optional
@@ -183,6 +184,16 @@ def _check_okx() -> CheckResult:
 
 def _check_yfinance() -> CheckResult:
     """Check yfinance availability."""
+    # yfinance's fast_info path SIGBUS-crashes the interpreter on Apple
+    # Silicon (an uncatchable signal, not an exception). Skip the probe there
+    # rather than take down server startup on the affected machines.
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        return CheckResult(
+            name="yfinance",
+            status="skipped",
+            message="probe skipped on Apple Silicon (fast_info SIGBUS)",
+            impact="",
+        )
     try:
         import yfinance  # noqa: F401
     except ImportError:
