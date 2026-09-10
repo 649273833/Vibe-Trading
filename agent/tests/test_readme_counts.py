@@ -70,7 +70,7 @@ BADGE_ORDER = ("skills", "brokers", "presets", "alphas", "engines", "quantlib")
 # Without that guard the count tests only prove the five READMEs agree with
 # each other, which they did while all five were uniformly wrong — eToro
 # shipped as the 13th connector and the pin stayed at 12.
-EXPECTED_BROKERS = 13
+EXPECTED_BROKERS = 14
 
 
 def _read(name: str) -> str:
@@ -299,7 +299,9 @@ def _keyless_agent_tool_count() -> int:
     Measured in a child interpreter, not in-process: ``_discover_subclasses``
     walks ``BaseTool.__subclasses__()`` and caches the result, so a stub tool
     class defined by any earlier test in the session would be counted too
-    (the full suite measured 107 where a clean process measures 106). Shell
+    (when this was written the full suite measured 107 against a clean
+    process's 106 — do not read those as the current count, only as the size
+    of the contamination). Shell
     tools stay off (as they are for ``serve``), and every credential-gated
     tool is hidden by clearing its gate, so the number does not depend on
     which API keys happen to be configured on the machine running the suite.
@@ -546,3 +548,52 @@ def test_all_readmes_agree_with_each_other() -> None:
     for index, key in enumerate(BADGE_ORDER):
         stale = [name for name, badges in per_file.items() if str(counts[key]) not in badges[index]]
         assert not stale, f"{key}: {stale} disagree with the other locales"
+
+
+# ── loader tree line ──────────────────────────────────────────────────────
+
+_LOADER_TREE_RE = re.compile(
+    r"├── loaders/\s*#\s*(?P<count>\d+)\s*\S*[:：]\s*(?P<names>.+)"
+)
+# The six READMEs each carry a repo-tree line that both COUNTS and NAMES the
+# loaders. Nothing pinned it, so it drifted: it read "24 sources" and omitted
+# nobitex, wallex and tickerall while the registry held 27. The count tests
+# only proved the READMEs agreed with each other, and they agreed while all six
+# were wrong — the same failure mode the broker pin above was added for.
+#
+# This asserts against the live registry rather than a constant, so the tree
+# line cannot drift from the code without a test naming the missing source.
+
+
+def _readme_loader_names(text: str) -> list[str]:
+    """Return the loader names a README's tree line lists, in order."""
+    match = _LOADER_TREE_RE.search(text)
+    assert match, "no loaders tree line found"
+    raw = match.group("names")
+    # zh/ja use the ideographic comma; the rest use ASCII.
+    names = [part.strip() for part in re.split(r"[,、]", raw)]
+    return [n for n in names if n]
+
+
+@pytest.mark.parametrize("readme", READMES)
+def test_readme_loader_tree_line_matches_the_registry(readme: str) -> None:
+    """Every README's loaders line must name exactly the registered sources."""
+    from backtest.loaders.registry import LOADER_REGISTRY, _ensure_registered
+
+    _ensure_registered()
+    registered = set(LOADER_REGISTRY)
+
+    text = _read(readme)
+    match = _LOADER_TREE_RE.search(text)
+    assert match, f"{readme}: no loaders tree line"
+    listed = _readme_loader_names(text)
+
+    assert set(listed) == registered, (
+        f"{readme}: tree line names {sorted(set(listed) ^ registered)} "
+        "differently from the loader registry"
+    )
+    assert len(listed) == len(registered), f"{readme}: duplicate name in the tree line"
+    assert int(match.group("count")) == len(registered), (
+        f"{readme}: tree line says {match.group('count')} sources, "
+        f"the registry has {len(registered)}"
+    )

@@ -31,6 +31,7 @@ from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
+from src.agent.tool_progress import RECOVERY_MESSAGE, ToolProgress
 from src.agent.tools import ToolRegistry
 from src.agent.trace import TraceWriter
 from src.core.state import RunStateStore
@@ -245,11 +246,21 @@ def _normalize_llm_usage(usage: Any) -> dict[str, int] | None:
         total_tokens = input_tokens + output_tokens
     if not (input_tokens or output_tokens or total_tokens):
         return None
-    return {
+    normalized: dict[str, int] = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
     }
+    details = usage.get("input_token_details")
+    if isinstance(details, dict):
+        if details.get("cache_read") is not None:
+            normalized["cache_read_tokens"] = _coerce_usage_int(details["cache_read"])
+        creation_keys = ("cache_creation", "ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+        if any(details.get(key) is not None for key in creation_keys):
+            normalized["cache_creation_tokens"] = sum(
+                _coerce_usage_int(details.get(key)) for key in creation_keys
+            )
+    return normalized
 
 
 def _new_llm_usage_summary(llm: Any) -> dict[str, Any]:
@@ -287,6 +298,9 @@ def _record_llm_usage(
     totals["output_tokens"] = int(totals.get("output_tokens") or 0) + normalized["output_tokens"]
     totals["total_tokens"] = int(totals.get("total_tokens") or 0) + normalized["total_tokens"]
     totals["calls"] = int(totals.get("calls") or 0) + 1
+    for key in ("cache_read_tokens", "cache_creation_tokens"):
+        if key in normalized:
+            totals[key] = int(totals.get(key) or 0) + normalized[key]
     summary.setdefault("per_iteration", []).append({"iter": iteration, **normalized})
     summary["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -861,8 +875,6 @@ def _looks_like_tool_call_syntax(content: str) -> bool:
     )
 
 
-
-
 # Task target-file detection: a user message usually names the file to
 # create or update ("update C:\\...\\plan.md"). If a run approaches its
 # iteration cap without having written that file, the loop must remind the
@@ -1122,6 +1134,7 @@ class AgentLoop:
         # 5-9x each (2026-08-20 INTC run) because it could no longer see its
         # own verification records.
         self._called_identical: dict[tuple[str, str], str] = {}
+        self._tool_progress = ToolProgress()
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -1217,6 +1230,7 @@ class AgentLoop:
         self._last_activity_wall = _time.time()
         self._run_done = threading.Event()
         self._called_identical = {}
+        self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
 
         state_store = RunStateStore()
@@ -1276,6 +1290,7 @@ class AgentLoop:
 
         iteration = 0
         final_content = ""
+        no_progress_reason: str | None = None
         content_filter_count = 0
         consecutive_content_filter_count = 0
         content_filter_circuit_breaker = False
@@ -1886,6 +1901,31 @@ class AgentLoop:
                     response.tool_calls, context, messages, trace, react_trace, current_iter,
                 )
 
+                if (
+                    not self._cancel_event.is_set()
+                    and self._tool_progress.finish_iteration()
+                ):
+                    no_progress_reason = "no_progress: " + RECOVERY_MESSAGE
+                    final_content = RECOVERY_MESSAGE
+                    trace.write(
+                        {
+                            "type": "no_progress",
+                            "iter": current_iter,
+                            "iterations_without_progress": self._tool_progress.stalled_iterations,
+                        }
+                    )
+                    trace.write_text_entry(
+                        {"type": "answer", "iter": current_iter},
+                        field="content",
+                        value=final_content,
+                        offload_kind=f"answer-{current_iter}",
+                    )
+                    react_trace.append({"type": "answer", "content": final_content})
+                    self._emit(
+                        "text_delta", {"delta": final_content, "iter": current_iter}
+                    )
+                    break
+
                 # Layer 3: compress after all tools have executed
                 if compact_requested:
                     logger.info("Manual compact triggered by model")
@@ -1927,6 +1967,10 @@ class AgentLoop:
             final_reason = "cancelled by user"
             state_store.mark_cancelled(run_dir, final_reason)
             final_status = "cancelled"
+        elif no_progress_reason is not None:
+            final_reason = no_progress_reason
+            state_store.mark_failure(run_dir, final_reason)
+            final_status = "failed"
         elif content_filter_circuit_breaker:
             final_reason = (
                 f"content_filter_circuit_breaker: "
@@ -2148,6 +2192,24 @@ class AgentLoop:
             # un-serialisable call would collapse into a single identity and
             # the second one would be skipped without ever running.
             dedup_key = self._identical_call_key(tc.name, tc.arguments)
+            if dedup_key is not None and self._tool_progress.is_blocked(dedup_key):
+                failed_result = json.dumps(
+                    {
+                        "status": "error",
+                        "skipped": True,
+                        "reason": "This exact call already failed repeatedly in this run. Change strategy or ask the user for help.",
+                    }
+                )
+                self._record_blocked_tool_call(
+                    tc,
+                    failed_result,
+                    context,
+                    messages,
+                    trace,
+                    react_trace,
+                    iteration,
+                )
+                continue
             if (
                 dedup_key is not None
                 and dedup_key in self._called_ok
@@ -2309,7 +2371,7 @@ class AgentLoop:
         react_trace: list,
         iteration: int,
     ) -> None:
-        """Record an identity-gated call without invoking its implementation.
+        """Record a blocked call without invoking its implementation.
 
         Args:
             tc: Provider tool-call object.
@@ -2850,6 +2912,14 @@ class AgentLoop:
         self._last_activity_wall = _time.time()
 
         success = _is_tool_success(result)
+        if update_memory:
+            self._tool_progress.record(
+                tc.name,
+                self._identical_call_key(tc.name, tc.arguments),
+                result,
+                success=success,
+                is_readonly=self._is_tool_readonly(tc.name),
+            )
         if success:
             recorded_key = self._identical_call_key(tc.name, tc.arguments)
             if recorded_key is not None:

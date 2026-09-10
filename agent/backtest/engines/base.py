@@ -32,6 +32,8 @@ from backtest.loaders.rsshub_events import (
     feed_specs_from_config,
 )
 from backtest.loaders.tushare_fundamentals import (
+    SUBDAILY_POLICIES,
+    SubdailyPitError,
     TushareFundamentalProvider,
     enrich_price_frames_with_fundamentals,
 )
@@ -409,6 +411,12 @@ def _maybe_enrich_fundamentals(
     if not fields_by_table:
         return data_map
 
+    subdaily = str(config.get("fundamental_subdaily", "reject")).strip().lower()
+    if subdaily not in SUBDAILY_POLICIES:
+        raise ValueError(
+            f"fundamental_subdaily must be one of {SUBDAILY_POLICIES}, got {subdaily!r}"
+        )
+
     try:
         provider = TushareFundamentalProvider()
         return enrich_price_frames_with_fundamentals(
@@ -417,7 +425,14 @@ def _maybe_enrich_fundamentals(
             fields_by_table,
             as_of=config.get("end_date", ""),
             periods=config.get("fundamental_periods"),
+            subdaily=subdaily,
         )
+    except SubdailyPitError:
+        # A contract error (an intraday frame under the default reject policy)
+        # is the caller's to fix and must not be reworded as a provider
+        # failure. Narrow on purpose: a stray ValueError from inside the
+        # enrichment is a failure and keeps the wrapped message.
+        raise
     except Exception as exc:
         raise RuntimeError(
             f"fundamental_fields requested but Tushare enrichment failed: {exc}"
@@ -764,6 +779,20 @@ class BaseEngine(ABC):
             "unfilled_plan_rejections_by_symbol": by_symbol,
         }
 
+    def _engine_diagnostics(self) -> Dict[str, Any]:
+        """Per-engine facts about how this run was priced.
+
+        Default empty. An engine overrides this to state something the metrics
+        cannot be derived from — currently ChinaFuturesEngine reporting which
+        products it priced on a generic default instead of a table entry
+        (#1393), where the alternative is a number that looks like data.
+
+        Returns:
+            Extra keys merged into the metrics dict; empty when there is
+            nothing to declare.
+        """
+        return {}
+
     def _on_plan_rejected(self, symbol: str, reason: str, timestamp: pd.Timestamp) -> None:
         """Observe a silently rejected opening-order plan.
 
@@ -990,6 +1019,7 @@ class BaseEngine(ABC):
                 m["total_return"] - benchmark_metadata["benchmark_return"], 6
             )
         m.update(self._plan_rejection_metrics())
+        m.update(self._engine_diagnostics())
         if self.rebalance_mask is not None:
             m["rebalance_mask"] = self.rebalance_mask
             m["rebalance_bars_executed"] = self.rebalance_bars_executed
